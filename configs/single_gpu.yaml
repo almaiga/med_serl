@@ -1,0 +1,117 @@
+# =============================================================================
+# MedSeRL Single GPU Configuration
+# =============================================================================
+#
+# Configuration for training MedSeRL on a single GPU setup.
+# Optimized for machines with 1 GPU (24GB+ VRAM recommended).
+#
+# Requirements: 10.1, 10.2, 10.3
+#
+# Usage:
+#   python -m src.training.train_serl --config configs/single_gpu.yaml
+#
+# =============================================================================
+
+# Model Paths
+model:
+  base_model_path: ""  # Required: Path to MedGemma-4B model
+  scribe_model_path: null  # Defaults to base_model_path
+  doctor_model_path: null  # Defaults to base_model_path
+  reference_model_path: null  # Defaults to base_model_path
+
+# Data Paths
+data:
+  medec_data_path: "data_raw/MEDEC"
+  output_dir: "outputs/medserl_single_gpu"
+  checkpoint_dir: null  # Defaults to output_dir/checkpoints
+  log_dir: null  # Defaults to output_dir/logs
+
+# Training Hyperparameters
+hyperparameters:
+  learning_rate: 5.0e-7
+  batch_size: 4  # Smaller batch for single GPU (must be divisible by 4)
+  kl_coef: 1.0e-4
+  gamma: 0.99
+  clip_range: 0.2
+  max_grad_norm: 1.0
+  warmup_steps: 100
+
+# Training Schedule
+schedule:
+  num_episodes: 1000
+  eval_frequency: 50
+  checkpoint_frequency: 100
+  sft_epochs: 1
+  max_steps_per_episode: 512
+
+# Infrastructure Configuration
+infrastructure:
+  # Single GPU setup
+  num_gpus: 1
+  num_vllm_engines: 1
+  tensor_parallel_size: 1
+  ray_num_cpus: 4
+  
+  # Logging
+  use_wandb: false
+  wandb_project: "medserl"
+
+# Reward Configuration
+reward:
+  structural_reward: 0.1
+  correct_classification_reward: 1.0
+  false_negative_penalty: -1.0
+  false_positive_penalty: -1.5
+
+# OpenRLHF Specific Settings
+openrlhf:
+  # Resource allocation for single GPU
+  actor_num_nodes: 1
+  actor_num_gpus_per_node: 1
+  ref_num_nodes: 1
+  ref_num_gpus_per_node: 1
+  reward_num_nodes: 1
+  reward_num_gpus_per_node: 0  # CPU-based reward
+  
+  # vLLM settings optimized for single GPU
+  vllm_gpu_memory_utilization: 0.85
+  vllm_sync_backend: "nccl"
+  
+  # Batch sizes for single GPU
+  micro_train_batch_size: 1
+  micro_rollout_batch_size: 2
+  rollout_batch_size: 16
+  n_samples_per_prompt: 1
+  
+  # Sequence lengths
+  prompt_max_len: 1024
+  generate_max_len: 1024
+  
+  # DeepSpeed settings
+  zero_stage: 3
+  
+  # Memory optimization flags
+  colocate_all_models: true
+  gradient_checkpointing: true
+  adam_offload: true
+  flash_attn: true
+  packing_samples: true
+  normalize_reward: true
+  enforce_eager: true
+  vllm_enable_sleep: true
+  deepspeed_enable_sleep: true
+  
+  # Precision
+  bf16: true
+
+# Advanced Settings
+advanced:
+  # Use mock agents for testing without GPU
+  use_mock_agents: false
+  
+  # Skip SFT warm-up phase
+  skip_sft: false
+  
+  # Reward server settings
+  reward_server_port: 8000
+  reward_server_host: "localhost"

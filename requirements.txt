@@ -1,0 +1,49 @@
+# MedSeRL - Medical Error Detection with Self-Play RL
+# Requirements file
+
+# Core ML/DL frameworks
+torch>=2.6.0
+transformers>=4.51.3
+accelerate
+datasets
+
+# RL Training Infrastructure
+deepspeed>=0.16.6
+ray[default]>=2.43.0
+peft
+loralib
+
+# Inference
+vllm>=0.8.4
+
+# Attention optimization
+flash-attn>=2.7.4.post1
+einops
+
+# Data processing
+pandas
+numpy
+jsonlines
+
+# Testing
+pytest>=7.0.0
+hypothesis>=6.0.0
+
+# Logging and monitoring
+wandb
+tensorboard
+tqdm
+
+# Utilities
+pynvml>=12.0.0
+optree>=0.13.0
+packaging
+bitsandbytes
+optimum
+
+# Math verification (for evaluation)
+math-verify[antlr4_13_2]
+rouge_score
+
+# Development
+isort

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.class
+.hypothesis/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+med_serl/
+outputs/
+.env
+.kiro
+.hypothesis
+.kiro

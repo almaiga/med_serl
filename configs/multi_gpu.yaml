@@ -1,0 +1,143 @@
+# =============================================================================
+# MedSeRL Multi-GPU Configuration
+# =============================================================================
+#
+# Configuration for training MedSeRL on a multi-GPU setup.
+# Optimized for machines with 4-8 GPUs.
+#
+# Requirements: 10.1, 10.2, 10.3
+#
+# Usage:
+#   python -m src.training.train_serl --config configs/multi_gpu.yaml
+#
+# For 8 GPU setup:
+#   NUM_GPUS=8 python -m src.training.train_serl --config configs/multi_gpu.yaml
+#
+# =============================================================================
+
+# Model Paths
+model:
+  base_model_path: ""  # Required: Path to MedGemma-4B model
+  scribe_model_path: null  # Defaults to base_model_path
+  doctor_model_path: null  # Defaults to base_model_path
+  reference_model_path: null  # Defaults to base_model_path
+
+# Data Paths
+data:
+  medec_data_path: "data_raw/MEDEC"
+  output_dir: "outputs/medserl_multi_gpu"
+  checkpoint_dir: null  # Defaults to output_dir/checkpoints
+  log_dir: null  # Defaults to output_dir/logs
+
+# Training Hyperparameters
+hyperparameters:
+  learning_rate: 5.0e-7
+  batch_size: 16  # Larger batch for multi-GPU (must be divisible by 4)
+  kl_coef: 1.0e-4
+  gamma: 0.99
+  clip_range: 0.2
+  max_grad_norm: 1.0
+  warmup_steps: 100
+
+# Training Schedule
+schedule:
+  num_episodes: 1000
+  eval_frequency: 50
+  checkpoint_frequency: 100
+  sft_epochs: 1
+  max_steps_per_episode: 512
+
+# Infrastructure Configuration
+infrastructure:
+  # Multi-GPU setup (adjust based on available GPUs)
+  num_gpus: 4  # Can be overridden with NUM_GPUS env var
+  num_vllm_engines: 4
+  tensor_parallel_size: 1  # Set to 2 for larger models
+  ray_num_cpus: 16
+  
+  # Logging
+  use_wandb: true
+  wandb_project: "medserl"
+
+# Reward Configuration
+reward:
+  structural_reward: 0.1
+  correct_classification_reward: 1.0
+  false_negative_penalty: -1.0
+  false_positive_penalty: -1.5
+
+# OpenRLHF Specific Settings
+openrlhf:
+  # Resource allocation for multi-GPU
+  # Each component gets dedicated GPUs for parallel processing
+  actor_num_nodes: 1
+  actor_num_gpus_per_node: 4
+  ref_num_nodes: 1
+  ref_num_gpus_per_node: 4
+  reward_num_nodes: 1
+  reward_num_gpus_per_node: 0  # CPU-based reward
+  
+  # vLLM settings optimized for multi-GPU
+  vllm_gpu_memory_utilization: 0.6  # Lower to allow model colocation
+  vllm_sync_backend: "nccl"
+  
+  # Batch sizes for multi-GPU (larger batches)
+  micro_train_batch_size: 1
+  micro_rollout_batch_size: 4
+  rollout_batch_size: 64
+  n_samples_per_prompt: 4
+  
+  # Sequence lengths
+  prompt_max_len: 1024
+  generate_max_len: 1024
+  
+  # DeepSpeed settings
+  zero_stage: 3
+  
+  # Memory optimization flags
+  colocate_all_models: true
+  gradient_checkpointing: true
+  adam_offload: true
+  flash_attn: true
+  packing_samples: true
+  normalize_reward: true
+  enforce_eager: true
+  vllm_enable_sleep: true
+  deepspeed_enable_sleep: true
+  
+  # Precision
+  bf16: true
+
+# Advanced Settings
+advanced:
+  # Use mock agents for testing without GPU
+  use_mock_agents: false
+  
+  # Skip SFT warm-up phase
+  skip_sft: false
+  
+  # Reward server settings
+  reward_server_port: 8000
+  reward_server_host: "localhost"
+
+# =============================================================================
+# Scaling Guidelines
+# =============================================================================
+#
+# For 8 GPUs:
+#   - Set actor_num_gpus_per_node: 8
+#   - Set ref_num_gpus_per_node: 8
+#   - Set vllm_num_engines: 8
+#   - Set rollout_batch_size: 128
+#   - Set n_samples_per_prompt: 8
+#
+# For tensor parallelism (larger models):
+#   - Set tensor_parallel_size: 2 (for 2-way TP)
+#   - Reduce vllm_num_engines accordingly
+#
+# For multi-node training:
+#   - Set actor_num_nodes: <num_nodes>
+#   - Set ref_num_nodes: <num_nodes>
+#   - Configure Ray cluster across nodes
+#
+# =============================================================================
