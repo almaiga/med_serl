@@ -63,25 +63,32 @@ else
     echo "✓ Miniconda3 installed successfully"
 fi
 
-# Always initialize conda for current session
+# Always initialize conda for current session (use full path)
 eval "$(${INSTALL_DIR}/bin/conda shell.bash hook)"
 echo ""
 
-# Step 2: Create conda environment (fully automated, no prompts)
-echo "Step 2: Setting up conda environment '${ENV_NAME}'..."
+# Step 2: Accept Conda TOS (required for new Miniconda versions)
+echo "Step 2: Accepting Conda Terms of Service..."
+${INSTALL_DIR}/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
+${INSTALL_DIR}/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+echo "✓ Conda TOS accepted"
+echo ""
+
+# Step 3: Create conda environment (fully automated, no prompts)
+echo "Step 3: Setting up conda environment '${ENV_NAME}'..."
 if [ -d "${ENV_DIR}" ]; then
     echo "✓ Environment already exists at ${ENV_DIR}"
     echo "  (To recreate, manually run: rm -rf ${ENV_DIR})"
 else
     echo "Creating new environment..."
-    conda create -y -p "${ENV_DIR}" python=3.10
+    ${INSTALL_DIR}/bin/conda create -y -p "${ENV_DIR}" python=3.10
     echo "✓ Environment created at ${ENV_DIR}"
 fi
 echo ""
 
-# Step 3: Activate environment and install requirements
-echo "Step 3: Installing Python packages..."
-conda activate "${ENV_DIR}"
+# Step 4: Activate environment and install requirements
+echo "Step 4: Installing Python packages..."
+${INSTALL_DIR}/bin/conda activate "${ENV_DIR}"
 
 echo "Python: $(which python)"
 echo "Python version: $(python --version)"
@@ -94,20 +101,27 @@ export PIP_CACHE_DIR="${PIP_CACHE_DIR}"
 # Upgrade pip
 pip install --upgrade pip -q
 
-# Install requirements
+# Install requirements in correct order
+# flash-attn requires torch to be installed first and needs special handling
+
 if [ -f "requirements.txt" ]; then
-    echo "Installing from requirements.txt..."
+    echo "Installing packages from requirements.txt..."
     pip install --cache-dir "${PIP_CACHE_DIR}" -r requirements.txt
     echo "✓ Requirements installed"
 else
     echo "⚠️  requirements.txt not found, installing core packages..."
-    pip install --cache-dir "${PIP_CACHE_DIR}" torch transformers accelerate datasets pandas numpy hypothesis pytest tqdm wandb
+    pip install --cache-dir "${PIP_CACHE_DIR}" torch transformers accelerate datasets pandas numpy hypothesis pytest tqdm wandb einops
     echo "✓ Core packages installed"
 fi
+
+echo ""
+echo "⚠️  NOTE: flash-attn is not installed automatically (build issues)."
+echo "   To install it manually after setup:"
+echo "   pip install --no-build-isolation flash-attn"
 echo ""
 
-# Step 4: Hugging Face authentication (saved in /workspace for persistence)
-echo "Step 4: Configuring Hugging Face authentication..."
+# Step 5: Hugging Face authentication (saved in /workspace for persistence)
+echo "Step 5: Configuring Hugging Face authentication..."
 mkdir -p "${HF_HOME_DIR}"
 export HF_HOME="${HF_HOME_DIR}"
 
@@ -138,8 +152,8 @@ else
 fi
 echo ""
 
-# Step 5: Verify installation
-echo "Step 5: Verifying installation..."
+# Step 6: Verify installation
+echo "Step 6: Verifying installation..."
 python -c "import torch; print(f'✓ PyTorch {torch.__version__}')"
 python -c "import transformers; print(f'✓ Transformers {transformers.__version__}')"
 python -c "import torch; print(f'✓ CUDA available: {torch.cuda.is_available()}')"
