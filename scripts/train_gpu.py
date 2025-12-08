@@ -222,32 +222,48 @@ def run_rl_phase(
     output_dir: str,
     num_episodes: int = 100,
     batch_size: int = 16,
-    learning_rate: float = 1e-5,
+    learning_rate: float = 5e-7,
+    kl_coef: float = 1e-4,
     max_length: int = 1024,
     log_interactions: bool = True,
 ):
     """
-    Run RL training phase with actual gradient updates.
+    Run RL training with REINFORCE++ (baseline + KL penalty).
 
-    Uses a simplified REINFORCE implementation for single-GPU training.
-    For multi-GPU, use the OpenRLHF script instead.
+    REINFORCE++ adds:
+    1. Running average baseline for variance reduction
+    2. KL divergence penalty to prevent drift from SFT model
+    3. Reward normalization for stability
+    4. Gradient clipping
+
+    Based on SeRL parameters: lr=5e-7, kl_coef=1e-4, normalize_reward=True
     """
     import torch
+    import copy
     from torch.optim import AdamW
     from torch.amp import autocast, GradScaler
     from src.training.reward_engine import calculate_reward
     from src.training.interaction_logger import InteractionLogger
 
     print("\n" + "=" * 60)
-    print("Phase 2: RL Training (REINFORCE)")
+    print("Phase 2: RL Training (REINFORCE++)")
     print("=" * 60)
     print(f"Episodes: {num_episodes}")
     print(f"Batch size: {batch_size}")
+    print(f"Learning rate: {learning_rate}")
+    print(f"KL coefficient: {kl_coef}")
 
     device = next(model.parameters()).device
 
-    # Setup optimizer
-    optimizer = AdamW(model.parameters(), lr=learning_rate)
+    # Create reference model (frozen copy for KL penalty)
+    print("Creating reference model for KL penalty...")
+    ref_model = copy.deepcopy(model)
+    ref_model.eval()
+    for param in ref_model.parameters():
+        param.requires_grad = False
+
+    # Setup optimizer (SeRL uses 5e-7)
+    optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
     scaler = GradScaler('cuda')
 
     # Setup interaction logger
@@ -258,26 +274,27 @@ def run_rl_phase(
             session_name=datetime.now().strftime("%Y%m%d_%H%M%S"),
         )
 
-    # Training loop
+    # Training state
     model.train()
     total_rewards = []
+    baseline = 0.0  # Running average baseline
+    baseline_decay = 0.95  # EMA decay for baseline
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     for episode in range(num_episodes):
-        # Get batch from balanced quadrant
         batch = processor.get_quadrant_batch(batch_size=batch_size)
 
         episode_rewards = []
-        episode_loss = 0.0
+        batch_data = []
 
+        # === ROLLOUT PHASE: Generate responses and collect rewards ===
         for i, sample in enumerate(batch):
             note = sample.get("original_text", sample.get("text", ""))
             ground_truth = sample.get("meta", sample.get("ground_truth", {}))
             quadrant = sample.get("quadrant", "unknown")
 
-            # Format prompt
             prompt = format_prompt(note)
-
-            # Tokenize
             inputs = tokenizer(
                 prompt,
                 return_tensors="pt",
@@ -286,9 +303,8 @@ def run_rl_phase(
                 padding=True,
             ).to(device)
 
-            # Generate with gradient tracking
-            with autocast('cuda', dtype=torch.bfloat16):
-                # Forward pass to get logits
+            # Generate without gradients
+            with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
                     max_new_tokens=256,
@@ -300,15 +316,12 @@ def run_rl_phase(
                     output_scores=True,
                 )
 
-            # Decode output
             generated_ids = outputs.sequences[0][inputs["input_ids"].shape[1]:]
             generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-            # Calculate reward
             reward = calculate_reward(generated_text, ground_truth)
             episode_rewards.append(reward)
 
-            # Log interaction
             if interaction_logger:
                 interaction_logger.log_interaction(
                     episode=episode,
@@ -320,39 +333,84 @@ def run_rl_phase(
                     reward=reward,
                 )
 
-            # REINFORCE loss: -reward * log_prob
-            # Simplified: use cross-entropy on generated tokens weighted by reward
-            if reward != 0:
-                with autocast('cuda', dtype=torch.bfloat16):
-                    # Get log probs for generated sequence
-                    labels = outputs.sequences.clone()
-                    labels[:, :inputs["input_ids"].shape[1]] = -100  # Mask prompt
+            batch_data.append({
+                'inputs': inputs,
+                'sequences': outputs.sequences,
+                'reward': reward,
+            })
 
-                    loss_outputs = model(
-                        input_ids=outputs.sequences,
-                        labels=labels,
-                    )
-                    # Weight loss by negative reward (maximize reward)
-                    weighted_loss = -reward * loss_outputs.loss
+        # === ADVANTAGE COMPUTATION ===
+        mean_reward = sum(episode_rewards) / len(episode_rewards)
 
-                scaler.scale(weighted_loss).backward()
-                episode_loss += weighted_loss.item()
+        # Compute advantages with baseline subtraction
+        advantages = [d['reward'] - baseline for d in batch_data]
+
+        # Normalize advantages (critical for stability)
+        if len(advantages) > 1:
+            adv_mean = sum(advantages) / len(advantages)
+            adv_var = sum((a - adv_mean) ** 2 for a in advantages) / len(advantages)
+            adv_std = max(adv_var ** 0.5, 1e-8)
+            advantages = [(a - adv_mean) / adv_std for a in advantages]
+
+        # === POLICY UPDATE PHASE ===
+        optimizer.zero_grad()
+        total_policy_loss = 0.0
+        total_kl_loss = 0.0
+
+        for data, advantage in zip(batch_data, advantages):
+            sequences = data['sequences']
+            input_ids = data['inputs']['input_ids']
+            prompt_len = input_ids.shape[1]
+
+            # Create labels (mask prompt tokens)
+            labels = sequences.clone()
+            labels[:, :prompt_len] = -100
+
+            with autocast('cuda', dtype=torch.bfloat16):
+                # Policy model forward pass
+                policy_outputs = model(input_ids=sequences, labels=labels)
+                policy_loss = policy_outputs.loss
+
+                # Reference model forward pass for KL
+                with torch.no_grad():
+                    ref_outputs = ref_model(input_ids=sequences, labels=labels)
+                    ref_loss = ref_outputs.loss
+
+                # KL divergence approximation: KL ≈ (policy_loss - ref_loss)
+                # This is a simplified KL estimate based on log-prob difference
+                kl_div = policy_loss - ref_loss
+
+                # REINFORCE++ loss: -advantage * log_prob + kl_coef * KL
+                reinforce_loss = -advantage * policy_loss
+                kl_penalty = kl_coef * kl_div
+                total_loss = (reinforce_loss + kl_penalty) / batch_size
+
+            scaler.scale(total_loss).backward()
+            total_policy_loss += reinforce_loss.item()
+            total_kl_loss += kl_div.item()
+
+        # Gradient clipping
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
         # Update weights
         scaler.step(optimizer)
         scaler.update()
-        optimizer.zero_grad()
+
+        # Update baseline (EMA)
+        baseline = baseline_decay * baseline + (1 - baseline_decay) * mean_reward
 
         # Track metrics
-        mean_reward = sum(episode_rewards) / len(episode_rewards)
         total_rewards.append(mean_reward)
+        avg_kl = total_kl_loss / batch_size
 
         # Log progress
         if (episode + 1) % 10 == 0 or episode == 0:
             print(
                 f"Episode {episode + 1}/{num_episodes} | "
-                f"Mean Reward: {mean_reward:.3f} | "
-                f"Loss: {episode_loss:.4f}"
+                f"Reward: {mean_reward:.3f} | "
+                f"Baseline: {baseline:.3f} | "
+                f"KL: {avg_kl:.4f}"
             )
 
         # Save checkpoint periodically
@@ -370,8 +428,13 @@ def run_rl_phase(
     if interaction_logger:
         interaction_logger.close()
 
+    # Clean up reference model
+    del ref_model
+    torch.cuda.empty_cache()
+
+    avg_reward = sum(total_rewards) / len(total_rewards) if total_rewards else 0
     print(f"\nRL training complete. Final checkpoint: {final_path}")
-    print(f"Mean reward over training: {sum(total_rewards) / len(total_rewards):.3f}")
+    print(f"Mean reward over training: {avg_reward:.3f}")
 
     return final_path
 
@@ -421,7 +484,8 @@ def main():
     parser.add_argument("--sft_epochs", type=int, default=3, help="SFT epochs (default: 3)")
     parser.add_argument("--rl_episodes", type=int, default=100, help="RL episodes")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
-    parser.add_argument("--learning_rate", type=float, default=2e-5, help="Learning rate")
+    parser.add_argument("--learning_rate", type=float, default=2e-5, help="SFT learning rate")
+    parser.add_argument("--rl_lr", type=float, default=5e-7, help="RL learning rate (SeRL uses 5e-7)")
 
     # Options
     parser.add_argument("--use_4bit", action="store_true", help="Use 4-bit quantization")
@@ -490,7 +554,8 @@ def main():
             output_dir=rl_output,
             num_episodes=args.rl_episodes,
             batch_size=args.batch_size,
-            learning_rate=args.learning_rate / 10,  # Lower LR for RL
+            learning_rate=args.rl_lr,
+            kl_coef=1e-4,  # SeRL default
         )
 
     print("\n" + "=" * 60)
