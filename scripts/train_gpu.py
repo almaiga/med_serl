@@ -128,11 +128,26 @@ def run_sft_phase(
     print("Phase 1: SFT Warm-Up")
     print("=" * 60)
 
-    # Prepare data
+    # Prepare data with contrastive pairs (INCORRECT + CORRECT from same note)
     sft_examples = prepare_sft_data(processor)
-    if num_samples > 0:
-        sft_examples = sft_examples[:num_samples]
-    print(f"Training samples: {len(sft_examples)}")
+    print(f"Total contrastive pairs: {len(sft_examples)}")
+
+    # Count CORRECT vs INCORRECT
+    correct_count = sum(1 for ex in sft_examples if ex.error_type == "Correct")
+    incorrect_count = len(sft_examples) - correct_count
+    print(f"  INCORRECT samples: {incorrect_count}")
+    print(f"  CORRECT samples: {correct_count}")
+
+    if num_samples > 0 and num_samples < len(sft_examples):
+        # Sample balanced subset
+        import random
+        incorrect = [ex for ex in sft_examples if ex.error_type != "Correct"]
+        correct = [ex for ex in sft_examples if ex.error_type == "Correct"]
+        half = num_samples // 2
+        sft_examples = random.sample(incorrect, min(half, len(incorrect))) + \
+                       random.sample(correct, min(half, len(correct)))
+        random.shuffle(sft_examples)
+        print(f"Using {len(sft_examples)} balanced samples")
 
     # Convert to HF format
     hf_data = convert_sft_examples_to_hf_format(sft_examples)
@@ -378,8 +393,8 @@ def main():
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=256,
-        help="Number of samples (-1 for all)",
+        default=512,
+        help="Number of SFT samples (-1 for all contrastive pairs)",
     )
     parser.add_argument(
         "--medec_path",
@@ -389,7 +404,7 @@ def main():
     )
 
     # Training
-    parser.add_argument("--sft_epochs", type=int, default=1, help="SFT epochs")
+    parser.add_argument("--sft_epochs", type=int, default=3, help="SFT epochs (default: 3)")
     parser.add_argument("--rl_episodes", type=int, default=100, help="RL episodes")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=2e-5, help="Learning rate")
