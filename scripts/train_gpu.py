@@ -295,12 +295,16 @@ def run_rl_phase(
     2. KL divergence using log_probs - ref_log_probs (k1 estimator)
     3. KL penalty integrated into reward signal
     4. Advantage normalization across batch
+    5. Batched forward passes for better GPU utilization
 
     SeRL parameters: lr=5e-7, kl_coef=1e-4
     """
+    import json
+    import time
     import torch
     import copy
     from torch.optim import AdamW
+    from torch.nn.utils.rnn import pad_sequence
     from tqdm import tqdm
     from src.training.reward_engine import calculate_reward
     from src.training.interaction_logger import InteractionLogger
@@ -333,42 +337,62 @@ def run_rl_phase(
             session_name=datetime.now().strftime("%Y%m%d_%H%M%S"),
         )
 
+    # Setup metrics logger
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    metrics_file = os.path.join(output_dir, "rl_metrics.jsonl")
+    metrics_summary_file = os.path.join(output_dir, "rl_summary.json")
+
     # Training state
     model.train()
+    all_metrics = []
     total_rewards = []
-
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    start_time = time.time()
 
     # Progress bar for episodes
     pbar = tqdm(range(num_episodes), desc="RL Training", unit="ep")
 
     for episode in pbar:
+        episode_start = time.time()
         batch = processor.get_quadrant_batch(batch_size=batch_size)
 
         episode_rewards = []
         batch_data = []
+        all_prompts = []
+        all_ground_truths = []
 
-        # === ROLLOUT PHASE: Generate responses and collect data ===
-        for i, sample in enumerate(batch):
+        # === ROLLOUT PHASE: Generate responses ===
+        # Prepare all prompts first
+        for sample in batch:
             note = sample.get("original_text", sample.get("text", ""))
             ground_truth = sample.get("meta", sample.get("ground_truth", {}))
-            quadrant = sample.get("quadrant", "unknown")
+            all_prompts.append(format_prompt(note))
+            all_ground_truths.append(ground_truth)
 
-            prompt = format_prompt(note)
-            inputs = tokenizer(
-                prompt,
-                return_tensors="pt",
-                truncation=True,
-                max_length=max_length,
-                padding=True,
-            ).to(device)
+        # Tokenize all prompts together
+        all_inputs = tokenizer(
+            all_prompts,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_length,
+            padding=True,
+        ).to(device)
 
-            prompt_len = inputs["input_ids"].shape[1]
+        # Generate for each sample (generation is hard to batch due to variable lengths)
+        with torch.no_grad():
+            for i in range(len(batch)):
+                sample = batch[i]
+                note = sample.get("original_text", sample.get("text", ""))
+                quadrant = sample.get("quadrant", "unknown")
+                ground_truth = all_ground_truths[i]
 
-            # Generate without gradients
-            with torch.no_grad():
+                # Get single sample inputs
+                input_ids = all_inputs["input_ids"][i:i+1]
+                attention_mask = all_inputs["attention_mask"][i:i+1]
+                prompt_len = (attention_mask[0] == 1).sum().item()
+
                 outputs = model.generate(
-                    **inputs,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
                     max_new_tokens=256,
                     do_sample=True,
                     temperature=0.7,
@@ -377,152 +401,129 @@ def run_rl_phase(
                     eos_token_id=tokenizer.eos_token_id,
                 )
 
-            sequences = outputs  # (1, seq_len)
-            generated_ids = sequences[0][prompt_len:]
-            generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-
-            # Calculate task reward
-            reward = calculate_reward(generated_text, ground_truth)
-            episode_rewards.append(reward)
-
-            if interaction_logger:
-                interaction_logger.log_interaction(
-                    episode=episode,
-                    batch_idx=i,
-                    note=note[:500],
-                    quadrant=quadrant,
-                    ground_truth=ground_truth,
-                    model_output=generated_text,
-                    reward=reward,
+                sequences = outputs
+                generated_ids = sequences[0][prompt_len:]
+                generated_text = tokenizer.decode(
+                    generated_ids, skip_special_tokens=True
                 )
 
-            # Create action mask (1 for response tokens, 0 for prompt)
-            seq_len = sequences.shape[1]
-            action_mask = torch.zeros(1, seq_len - 1, device=device)
-            response_len = seq_len - prompt_len
-            if response_len > 0:
-                action_mask[0, prompt_len - 1:seq_len - 1] = 1.0
+                # Calculate task reward
+                reward = calculate_reward(generated_text, ground_truth)
+                episode_rewards.append(reward)
 
-            batch_data.append({
-                'sequences': sequences,
-                'attention_mask': inputs["attention_mask"],
-                'action_mask': action_mask,
-                'prompt_len': prompt_len,
-                'reward': reward,
-            })
+                if interaction_logger:
+                    interaction_logger.log_interaction(
+                        episode=episode,
+                        batch_idx=i,
+                        note=note[:500],
+                        quadrant=quadrant,
+                        ground_truth=ground_truth,
+                        model_output=generated_text,
+                        reward=reward,
+                    )
 
-        # === COMPUTE LOG PROBS AND KL ===
-        all_action_log_probs = []
-        all_ref_log_probs = []
-        all_kl = []
-        all_action_masks = []
+                # Create action mask
+                seq_len = sequences.shape[1]
+                action_mask = torch.zeros(1, seq_len - 1, device=device)
+                response_len = seq_len - prompt_len
+                if response_len > 0:
+                    action_mask[0, prompt_len - 1:seq_len - 1] = 1.0
 
+                batch_data.append({
+                    'sequences': sequences,
+                    'action_mask': action_mask,
+                    'prompt_len': prompt_len,
+                    'reward': reward,
+                })
+
+        # === BATCHED FORWARD PASS FOR LOG PROBS ===
+        # Pad sequences to same length for batched processing
+        max_seq_len = max(d['sequences'].shape[1] for d in batch_data)
+        padded_sequences = []
+        padded_action_masks = []
+
+        for data in batch_data:
+            seq = data['sequences'][0]
+            mask = data['action_mask'][0]
+
+            # Pad sequence
+            pad_len = max_seq_len - seq.shape[0]
+            if pad_len > 0:
+                seq = torch.cat([
+                    seq,
+                    torch.full((pad_len,), tokenizer.pad_token_id, device=device)
+                ])
+            padded_sequences.append(seq)
+
+            # Pad action mask (for seq_len - 1)
+            mask_pad_len = max_seq_len - 1 - mask.shape[0]
+            if mask_pad_len > 0:
+                mask = torch.cat([mask, torch.zeros(mask_pad_len, device=device)])
+            padded_action_masks.append(mask)
+
+        # Stack into batches
+        batched_sequences = torch.stack(padded_sequences)  # (B, max_seq_len)
+        batched_action_masks = torch.stack(padded_action_masks)  # (B, max_seq_len-1)
+
+        # Shift for next-token prediction
+        input_seqs = batched_sequences[:, :-1]  # (B, max_seq_len-1)
+        target_seqs = batched_sequences[:, 1:]  # (B, max_seq_len-1)
+
+        # Batched forward pass for reference model (no grad)
         with torch.no_grad():
-            for data in batch_data:
-                sequences = data['sequences']
-                action_mask = data['action_mask']
+            ref_outputs = ref_model(input_ids=input_seqs)
+            ref_logits = ref_outputs.logits.float()
+            ref_log_probs = log_probs_from_logits(ref_logits, target_seqs)
 
-                # Shift sequences for next-token prediction
-                # Input: tokens[:-1], Target: tokens[1:]
-                input_seq = sequences[:, :-1]
-                target_seq = sequences[:, 1:]
-
-                # Policy model forward pass
-                policy_outputs = model(input_ids=input_seq)
-                policy_logits = policy_outputs.logits.float()
-
-                # Reference model forward pass
-                ref_outputs = ref_model(input_ids=input_seq)
-                ref_logits = ref_outputs.logits.float()
-
-                # Compute log probs for the actual tokens generated
-                # Using SeRL's log_probs_from_logits
-                policy_log_probs = log_probs_from_logits(
-                    policy_logits, target_seq, temperature=1.0
-                )
-                ref_log_probs = log_probs_from_logits(
-                    ref_logits, target_seq, temperature=1.0
-                )
-
-                # Compute KL divergence per token using SeRL's k1 estimator
-                # KL = log_probs - ref_log_probs (can be negative per token,
-                # but mean should be >= 0)
-                kl = compute_approx_kl(
-                    policy_log_probs, ref_log_probs, kl_estimator="k1"
-                )
-
-                all_action_log_probs.append(policy_log_probs)
-                all_ref_log_probs.append(ref_log_probs)
-                all_kl.append(kl)
-                all_action_masks.append(action_mask)
-
-        # === COMPUTE ADVANTAGES (SeRL reinforce_baseline style) ===
-        # Get rewards as tensor
+        # === COMPUTE ADVANTAGES ===
         rewards_tensor = torch.tensor(
             [d['reward'] for d in batch_data],
             device=device, dtype=torch.float32
         )
-
-        # Baseline subtraction (mean across batch) - SeRL reinforce_baseline
         advantages = rewards_tensor - rewards_tensor.mean()
-
-        # Normalize advantages
         if len(advantages) > 1:
             adv_std = advantages.std().clamp(min=1e-8)
             advantages = advantages / adv_std
 
-        # === POLICY UPDATE PHASE ===
+        # === BATCHED POLICY UPDATE ===
         optimizer.zero_grad()
 
+        # Forward pass with gradients
+        policy_outputs = model(input_ids=input_seqs)
+        policy_logits = policy_outputs.logits.float()
+        policy_log_probs = log_probs_from_logits(policy_logits, target_seqs)
+
+        # Compute KL per token
+        kl = compute_approx_kl(policy_log_probs, ref_log_probs, kl_estimator="k1")
+
+        # Compute loss for each sample in batch
         total_policy_loss = 0.0
         total_kl_value = 0.0
 
-        for idx, (data, advantage) in enumerate(zip(batch_data, advantages)):
-            sequences = data['sequences']
-            action_mask = all_action_masks[idx]
+        for idx in range(len(batch_data)):
+            action_mask = batched_action_masks[idx:idx+1]
+            advantage = advantages[idx]
 
-            # Shift sequences for next-token prediction
-            input_seq = sequences[:, :-1]
-            target_seq = sequences[:, 1:]
+            # Masked log probs for this sample
+            sample_log_probs = policy_log_probs[idx:idx+1] * action_mask
+            sample_kl = kl[idx:idx+1]
 
-            # Policy model forward pass (with gradients this time)
-            policy_outputs = model(input_ids=input_seq)
-            policy_logits = policy_outputs.logits.float()
+            # Sum log probs over response
+            response_log_prob = sample_log_probs.sum()
 
-            # Compute log probs
-            policy_log_probs = log_probs_from_logits(
-                policy_logits, target_seq, temperature=1.0
-            )
+            # Mean KL over response tokens
+            kl_mean = masked_mean(sample_kl, action_mask, dim=-1).mean()
 
-            # Get reference log probs (already computed, no grad needed)
-            ref_log_probs = all_ref_log_probs[idx]
-
-            # Compute KL per token (SeRL k1 estimator)
-            kl = compute_approx_kl(policy_log_probs, ref_log_probs, kl_estimator="k1")
-
-            # Apply action mask to get only response token log probs
-            masked_log_probs = policy_log_probs * action_mask
-
-            # Sum log probs over response tokens (log prob of full response)
-            response_log_prob = masked_log_probs.sum()
-
-            # Mean KL over response tokens (masked)
-            kl_mean = masked_mean(kl, action_mask, dim=-1).mean()
-
-            # REINFORCE loss: -advantage * log_prob(response)
-            # Plus KL penalty integrated into the objective
-            # SeRL computes: reward_with_kl = reward - kl_coef * kl
-            # Then uses that for advantage computation
-            # Here we add KL penalty directly to loss
+            # REINFORCE loss
             policy_loss = -advantage * response_log_prob
             kl_penalty = kl_coef * kl_mean
 
-            # Total loss for this sample
-            loss = (policy_loss + kl_penalty) / batch_size
-            loss.backward()
-
-            total_policy_loss += policy_loss.item()
+            total_policy_loss += policy_loss
             total_kl_value += kl_mean.item()
+
+        # Average loss and backprop
+        total_loss = (total_policy_loss / batch_size) + (kl_coef * total_kl_value / batch_size)
+        total_loss.backward()
 
         # Gradient clipping
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -530,16 +531,34 @@ def run_rl_phase(
         # Update weights
         optimizer.step()
 
-        # Track metrics
+        # === METRICS TRACKING ===
+        episode_time = time.time() - episode_start
         mean_reward = sum(episode_rewards) / len(episode_rewards)
         total_rewards.append(mean_reward)
         avg_kl = total_kl_value / batch_size
+        running_avg_reward = sum(total_rewards) / len(total_rewards)
 
-        # Update progress bar with current metrics
+        # Log metrics for this episode
+        episode_metrics = {
+            "episode": episode,
+            "mean_reward": mean_reward,
+            "avg_kl": avg_kl,
+            "running_avg_reward": running_avg_reward,
+            "episode_time_sec": episode_time,
+            "total_time_sec": time.time() - start_time,
+            "rewards": episode_rewards,
+        }
+        all_metrics.append(episode_metrics)
+
+        # Append to metrics file
+        with open(metrics_file, "a") as f:
+            f.write(json.dumps(episode_metrics) + "\n")
+
+        # Update progress bar
         pbar.set_postfix({
             'reward': f'{mean_reward:.3f}',
             'kl': f'{avg_kl:.4f}',
-            'avg_r': f'{sum(total_rewards)/len(total_rewards):.3f}'
+            'avg_r': f'{running_avg_reward:.3f}'
         })
 
         # Save checkpoint periodically
@@ -560,13 +579,30 @@ def run_rl_phase(
     if interaction_logger:
         interaction_logger.close()
 
+    # Save summary metrics
+    total_time = time.time() - start_time
+    summary = {
+        "total_episodes": num_episodes,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "kl_coef": kl_coef,
+        "final_avg_reward": sum(total_rewards) / len(total_rewards) if total_rewards else 0,
+        "best_episode_reward": max(total_rewards) if total_rewards else 0,
+        "total_time_sec": total_time,
+        "avg_time_per_episode": total_time / num_episodes,
+        "reward_history": total_rewards,
+    }
+    with open(metrics_summary_file, "w") as f:
+        json.dump(summary, f, indent=2)
+
     # Clean up reference model
     del ref_model
     torch.cuda.empty_cache()
 
-    avg_reward = sum(total_rewards) / len(total_rewards) if total_rewards else 0
+    avg_reward = summary["final_avg_reward"]
     print(f"\nRL training complete. Final checkpoint: {final_path}")
     print(f"Mean reward over training: {avg_reward:.3f}")
+    print(f"Metrics saved to: {metrics_file}")
 
     return final_path
 
