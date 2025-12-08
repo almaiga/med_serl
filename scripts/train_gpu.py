@@ -343,6 +343,7 @@ def run_rl_phase(
     # Training state
     model.train()
     total_rewards = []
+    all_metrics = []
     start_time = time.time()
 
     # Progress bar for episodes
