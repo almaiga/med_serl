@@ -609,11 +609,29 @@ def run_rl_phase(
 
 def format_prompt(note: str) -> str:
     """Format clinical note as prompt."""
-    return f"""You are a medical error detection assistant. Analyze the following clinical note and determine if it contains any medical errors. Consider diagnosis, management, treatment, pharmacotherapy, and causal organism. Provide your reasoning in <think> tags, then your final answer as CORRECT or INCORRECT in <answer> tags.
+    return f"""You are a medical error detection assistant. Analyze the following clinical note for medical errors in diagnosis, management, treatment, pharmacotherapy, or causal organism identification.
 
 Clinical Note:
 {note}
 
+Instructions:
+1. First, provide your reasoning inside <think> tags
+2. Then, give your final answer inside <answer> tags as either CORRECT (no errors) or INCORRECT (contains errors)
+
+Example format:
+<think>
+[Your analysis here]
+</think>
+<answer>CORRECT</answer>
+
+or
+
+<think>
+[Your analysis here]
+</think>
+<answer>INCORRECT</answer>
+
+Now analyze the clinical note above:
 """
 
 

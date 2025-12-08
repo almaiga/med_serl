@@ -194,13 +194,41 @@ class InteractionLogger:
         )
         reasoning = thinking_match.group(1).strip() if thinking_match else None
 
-        # Extract answer (CORRECT/INCORRECT)
+        # Extract answer - try multiple formats
+        # 1. Try <answer> tags first (preferred)
         answer_match = re.search(
             r'<answer>\s*(CORRECT|INCORRECT)\s*</answer>', output, re.IGNORECASE
         )
-        verdict = answer_match.group(1).upper() if answer_match else None
+        if answer_match:
+            return answer_match.group(1).upper(), reasoning
 
-        return verdict, reasoning
+        # 2. Try <verdict> tags (legacy format)
+        verdict_match = re.search(
+            r'<verdict>\s*([^<]+)\s*</verdict>', output, re.IGNORECASE
+        )
+        if verdict_match:
+            verdict_content = verdict_match.group(1).lower().strip()
+            if any(p in verdict_content for p in [
+                'no error', 'correct', 'accurate', 'no obvious error'
+            ]):
+                return 'CORRECT', reasoning
+            elif 'error' in verdict_content or 'incorrect' in verdict_content:
+                return 'INCORRECT', reasoning
+
+        # 3. Look for clear indicators in text
+        output_lower = output.lower()
+        if any(p in output_lower for p in [
+            'no errors detected', 'no errors found', 'no error',
+            'appears correct', 'is correct'
+        ]):
+            return 'CORRECT', reasoning
+        elif any(p in output_lower for p in [
+            'error detected', 'error found', 'contains error',
+            'found an error', 'identified an error'
+        ]):
+            return 'INCORRECT', reasoning
+
+        return None, reasoning
     
     def _evaluate_correctness(
         self, verdict: Optional[str], ground_truth: Dict[str, Any]

@@ -75,7 +75,11 @@ def parse_answer(output: str) -> Optional[str]:
     """
     Extract the answer from model output.
 
-    Looks for <answer>CORRECT</answer> or <answer>INCORRECT</answer>
+    Looks for various formats:
+    - <answer>CORRECT</answer> or <answer>INCORRECT</answer>
+    - <verdict>...</verdict> with error/correct keywords
+    - Answer: CORRECT/INCORRECT
+    - Standalone "No errors" or "Error detected" phrases
 
     Args:
         output: The raw model output string
@@ -86,17 +90,59 @@ def parse_answer(output: str) -> Optional[str]:
     if not output:
         return None
 
-    # Try <answer> tags first
+    output_lower = output.lower()
+
+    # Try <answer> tags first (preferred format)
     pattern = r'<answer>\s*(CORRECT|INCORRECT)\s*</answer>'
     match = re.search(pattern, output, re.IGNORECASE)
     if match:
         return match.group(1).upper()
+
+    # Try <verdict> tags (legacy/alternative format)
+    verdict_pattern = r'<verdict>\s*([^<]+)\s*</verdict>'
+    verdict_match = re.search(verdict_pattern, output, re.IGNORECASE)
+    if verdict_match:
+        verdict_content = verdict_match.group(1).lower().strip()
+        # Check for error indicators
+        if any(phrase in verdict_content for phrase in [
+            'no error', 'no errors', 'correct', 'accurate', 'appropriate',
+            'no clinical error', 'no obvious error', 'appears to be accurate',
+            'well-written', 'no immediately apparent error'
+        ]):
+            return 'CORRECT'
+        elif any(phrase in verdict_content for phrase in [
+            'error', 'incorrect', 'mistake', 'wrong', 'inaccurate'
+        ]):
+            return 'INCORRECT'
 
     # Fallback: look for Answer: CORRECT/INCORRECT
     pattern = r'Answer:\s*(CORRECT|INCORRECT)'
     match = re.search(pattern, output, re.IGNORECASE)
     if match:
         return match.group(1).upper()
+
+    # Last resort: look for clear indicators in the text
+    # Check for "no errors" type phrases (indicates CORRECT)
+    no_error_patterns = [
+        r'no\s+(?:obvious\s+)?errors?\s+(?:detected|found|identified)',
+        r'no\s+(?:medical\s+)?errors?',
+        r'appears?\s+(?:to\s+be\s+)?(?:correct|accurate)',
+        r'(?:the\s+)?note\s+(?:is\s+)?(?:correct|accurate)',
+    ]
+    for pattern in no_error_patterns:
+        if re.search(pattern, output_lower):
+            return 'CORRECT'
+
+    # Check for "error found" type phrases (indicates INCORRECT)
+    error_patterns = [
+        r'error\s+(?:detected|found|identified)',
+        r'(?:found|identified|detected)\s+(?:a|an|the)?\s*error',
+        r'contains?\s+(?:a|an)?\s*(?:medical\s+)?error',
+        r'there\s+(?:is|are)\s+(?:a|an)?\s*error',
+    ]
+    for pattern in error_patterns:
+        if re.search(pattern, output_lower):
+            return 'INCORRECT'
 
     return None
 
