@@ -295,7 +295,6 @@ def run_rl_phase(
     2. KL divergence using log_probs - ref_log_probs (k1 estimator)
     3. KL penalty integrated into reward signal
     4. Advantage normalization across batch
-    5. Batched forward passes for better GPU utilization
 
     SeRL parameters: lr=5e-7, kl_coef=1e-4
     """
@@ -304,7 +303,6 @@ def run_rl_phase(
     import torch
     import copy
     from torch.optim import AdamW
-    from torch.nn.utils.rnn import pad_sequence
     from tqdm import tqdm
     from src.training.reward_engine import calculate_reward
     from src.training.interaction_logger import InteractionLogger
@@ -326,7 +324,7 @@ def run_rl_phase(
     for param in ref_model.parameters():
         param.requires_grad = False
 
-    # Setup optimizer (SeRL uses 5e-7)
+    # Setup optimizer
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
 
     # Setup interaction logger
@@ -344,7 +342,6 @@ def run_rl_phase(
 
     # Training state
     model.train()
-    all_metrics = []
     total_rewards = []
     start_time = time.time()
 
@@ -357,42 +354,28 @@ def run_rl_phase(
 
         episode_rewards = []
         batch_data = []
-        all_prompts = []
-        all_ground_truths = []
 
-        # === ROLLOUT PHASE: Generate responses ===
-        # Prepare all prompts first
-        for sample in batch:
+        # === ROLLOUT PHASE: Generate responses and compute ref log probs ===
+        for i, sample in enumerate(batch):
             note = sample.get("original_text", sample.get("text", ""))
             ground_truth = sample.get("meta", sample.get("ground_truth", {}))
-            all_prompts.append(format_prompt(note))
-            all_ground_truths.append(ground_truth)
+            quadrant = sample.get("quadrant", "unknown")
 
-        # Tokenize all prompts together
-        all_inputs = tokenizer(
-            all_prompts,
-            return_tensors="pt",
-            truncation=True,
-            max_length=max_length,
-            padding=True,
-        ).to(device)
+            prompt = format_prompt(note)
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=max_length,
+                padding=True,
+            ).to(device)
 
-        # Generate for each sample (generation is hard to batch due to variable lengths)
-        with torch.no_grad():
-            for i in range(len(batch)):
-                sample = batch[i]
-                note = sample.get("original_text", sample.get("text", ""))
-                quadrant = sample.get("quadrant", "unknown")
-                ground_truth = all_ground_truths[i]
+            prompt_len = inputs["input_ids"].shape[1]
 
-                # Get single sample inputs
-                input_ids = all_inputs["input_ids"][i:i+1]
-                attention_mask = all_inputs["attention_mask"][i:i+1]
-                prompt_len = (attention_mask[0] == 1).sum().item()
-
+            # Generate response
+            with torch.no_grad():
                 outputs = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
+                    **inputs,
                     max_new_tokens=256,
                     do_sample=True,
                     temperature=0.7,
@@ -401,79 +384,51 @@ def run_rl_phase(
                     eos_token_id=tokenizer.eos_token_id,
                 )
 
-                sequences = outputs
-                generated_ids = sequences[0][prompt_len:]
-                generated_text = tokenizer.decode(
-                    generated_ids, skip_special_tokens=True
+            sequences = outputs
+            generated_ids = sequences[0][prompt_len:]
+            generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+            # Calculate reward
+            reward = calculate_reward(generated_text, ground_truth)
+            episode_rewards.append(reward)
+
+            # Log interaction
+            if interaction_logger:
+                interaction_logger.log_interaction(
+                    episode=episode,
+                    batch_idx=i,
+                    note=note[:500],
+                    quadrant=quadrant,
+                    ground_truth=ground_truth,
+                    model_output=generated_text,
+                    reward=reward,
                 )
 
-                # Calculate task reward
-                reward = calculate_reward(generated_text, ground_truth)
-                episode_rewards.append(reward)
+            # Create action mask
+            seq_len = sequences.shape[1]
+            action_mask = torch.zeros(1, seq_len - 1, device=device)
+            response_len = seq_len - prompt_len
+            if response_len > 0:
+                action_mask[0, prompt_len - 1:seq_len - 1] = 1.0
 
-                if interaction_logger:
-                    interaction_logger.log_interaction(
-                        episode=episode,
-                        batch_idx=i,
-                        note=note[:500],
-                        quadrant=quadrant,
-                        ground_truth=ground_truth,
-                        model_output=generated_text,
-                        reward=reward,
-                    )
+            # Compute reference log probs (no grad, done during rollout)
+            input_seq = sequences[:, :-1]
+            target_seq = sequences[:, 1:]
 
-                # Create action mask
-                seq_len = sequences.shape[1]
-                action_mask = torch.zeros(1, seq_len - 1, device=device)
-                response_len = seq_len - prompt_len
-                if response_len > 0:
-                    action_mask[0, prompt_len - 1:seq_len - 1] = 1.0
+            with torch.no_grad():
+                ref_outputs = ref_model(input_ids=input_seq)
+                ref_logits = ref_outputs.logits.float()
+                ref_log_probs = log_probs_from_logits(ref_logits, target_seq)
 
-                batch_data.append({
-                    'sequences': sequences,
-                    'action_mask': action_mask,
-                    'prompt_len': prompt_len,
-                    'reward': reward,
-                })
+            batch_data.append({
+                'sequences': sequences,
+                'action_mask': action_mask,
+                'ref_log_probs': ref_log_probs,
+                'reward': reward,
+            })
 
-        # === BATCHED FORWARD PASS FOR LOG PROBS ===
-        # Pad sequences to same length for batched processing
-        max_seq_len = max(d['sequences'].shape[1] for d in batch_data)
-        padded_sequences = []
-        padded_action_masks = []
-
-        for data in batch_data:
-            seq = data['sequences'][0]
-            mask = data['action_mask'][0]
-
-            # Pad sequence
-            pad_len = max_seq_len - seq.shape[0]
-            if pad_len > 0:
-                seq = torch.cat([
-                    seq,
-                    torch.full((pad_len,), tokenizer.pad_token_id, device=device)
-                ])
-            padded_sequences.append(seq)
-
-            # Pad action mask (for seq_len - 1)
-            mask_pad_len = max_seq_len - 1 - mask.shape[0]
-            if mask_pad_len > 0:
-                mask = torch.cat([mask, torch.zeros(mask_pad_len, device=device)])
-            padded_action_masks.append(mask)
-
-        # Stack into batches
-        batched_sequences = torch.stack(padded_sequences)  # (B, max_seq_len)
-        batched_action_masks = torch.stack(padded_action_masks)  # (B, max_seq_len-1)
-
-        # Shift for next-token prediction
-        input_seqs = batched_sequences[:, :-1]  # (B, max_seq_len-1)
-        target_seqs = batched_sequences[:, 1:]  # (B, max_seq_len-1)
-
-        # Batched forward pass for reference model (no grad)
-        with torch.no_grad():
-            ref_outputs = ref_model(input_ids=input_seqs)
-            ref_logits = ref_outputs.logits.float()
-            ref_log_probs = log_probs_from_logits(ref_logits, target_seqs)
+            # Clear cache after each sample
+            torch.cuda.empty_cache()
 
         # === COMPUTE ADVANTAGES ===
         rewards_tensor = torch.tensor(
@@ -485,51 +440,45 @@ def run_rl_phase(
             adv_std = advantages.std().clamp(min=1e-8)
             advantages = advantages / adv_std
 
-        # === BATCHED POLICY UPDATE ===
+        # === POLICY UPDATE (one sample at a time to save memory) ===
         optimizer.zero_grad()
-
-        # Forward pass with gradients
-        policy_outputs = model(input_ids=input_seqs)
-        policy_logits = policy_outputs.logits.float()
-        policy_log_probs = log_probs_from_logits(policy_logits, target_seqs)
-
-        # Compute KL per token
-        kl = compute_approx_kl(policy_log_probs, ref_log_probs, kl_estimator="k1")
-
-        # Compute loss for each sample in batch
-        total_policy_loss = 0.0
         total_kl_value = 0.0
 
-        for idx in range(len(batch_data)):
-            action_mask = batched_action_masks[idx:idx+1]
-            advantage = advantages[idx]
+        for idx, (data, advantage) in enumerate(zip(batch_data, advantages)):
+            sequences = data['sequences']
+            action_mask = data['action_mask']
+            ref_log_probs = data['ref_log_probs']
 
-            # Masked log probs for this sample
-            sample_log_probs = policy_log_probs[idx:idx+1] * action_mask
-            sample_kl = kl[idx:idx+1]
+            # Forward pass
+            input_seq = sequences[:, :-1]
+            target_seq = sequences[:, 1:]
 
-            # Sum log probs over response
-            response_log_prob = sample_log_probs.sum()
+            policy_outputs = model(input_ids=input_seq)
+            policy_logits = policy_outputs.logits.float()
+            policy_log_probs = log_probs_from_logits(policy_logits, target_seq)
 
-            # Mean KL over response tokens
-            kl_mean = masked_mean(sample_kl, action_mask, dim=-1).mean()
+            # Compute KL
+            kl = compute_approx_kl(policy_log_probs, ref_log_probs, kl_estimator="k1")
 
-            # REINFORCE loss
-            policy_loss = -advantage * response_log_prob
-            kl_penalty = kl_coef * kl_mean
+            # Masked log probs
+            masked_log_probs = policy_log_probs * action_mask
+            response_log_prob = masked_log_probs.sum()
 
-            total_policy_loss += policy_loss
+            # Mean KL
+            kl_mean = masked_mean(kl, action_mask, dim=-1).mean()
+
+            # REINFORCE loss with KL penalty
+            loss = (-advantage * response_log_prob + kl_coef * kl_mean) / batch_size
+            loss.backward()
+
             total_kl_value += kl_mean.item()
 
-        # Average loss and backprop
-        total_loss = (total_policy_loss / batch_size) + (kl_coef * total_kl_value / batch_size)
-        total_loss.backward()
-
-        # Gradient clipping
+        # Gradient clipping and update
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        # Update weights
         optimizer.step()
+
+        # Clear cache
+        torch.cuda.empty_cache()
 
         # === METRICS TRACKING ===
         episode_time = time.time() - episode_start
@@ -538,7 +487,7 @@ def run_rl_phase(
         avg_kl = total_kl_value / batch_size
         running_avg_reward = sum(total_rewards) / len(total_rewards)
 
-        # Log metrics for this episode
+        # Log metrics
         episode_metrics = {
             "episode": episode,
             "mean_reward": mean_reward,
