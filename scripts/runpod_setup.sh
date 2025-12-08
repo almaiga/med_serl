@@ -88,7 +88,7 @@ echo ""
 
 # Step 4: Activate environment and install requirements
 echo "Step 4: Installing Python packages..."
-${INSTALL_DIR}/bin/conda activate "${ENV_DIR}"
+source "${INSTALL_DIR}/bin/activate" "${ENV_DIR}"
 
 echo "Python: $(which python)"
 echo "Python version: $(python --version)"
