@@ -52,70 +52,125 @@ class RewardMetadata:
 
 def has_thinking_section(output: str) -> bool:
     """
-    Check if the model output contains a <thinking> section.
+    Check if the model output contains a <think> section.
 
     Args:
         output: The raw model output string
 
     Returns:
-        True if output contains <thinking>...</thinking> tags
+        True if output contains <think>...</think> tags
 
     Requirements: 5.1
     """
     if not output:
         return False
 
-    # Check for <thinking> tag (case-insensitive)
-    pattern = r'<thinking>.*?</thinking>'
+    # Check for <think> or <thinking> tag (case-insensitive)
+    pattern = r'<think(?:ing)?>.*?</think(?:ing)?>'
     match = re.search(pattern, output, re.DOTALL | re.IGNORECASE)
     return match is not None
 
 
-def parse_verdict(output: str) -> Optional[str]:
+def parse_answer(output: str) -> Optional[str]:
     """
-    Extract the verdict content from model output.
+    Extract the answer from model output.
+
+    Looks for <answer>CORRECT</answer> or <answer>INCORRECT</answer>
 
     Args:
         output: The raw model output string
 
     Returns:
-        The content of the <verdict> section, or None if not found
-
-    Requirements: 5.1
+        'CORRECT', 'INCORRECT', or None if not found
     """
     if not output:
         return None
 
-    # Extract content between <verdict> tags (case-insensitive)
-    pattern = r'<verdict>(.*?)</verdict>'
-    match = re.search(pattern, output, re.DOTALL | re.IGNORECASE)
+    # Try <answer> tags first
+    pattern = r'<answer>\s*(CORRECT|INCORRECT)\s*</answer>'
+    match = re.search(pattern, output, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
 
+    # Fallback: look for Answer: CORRECT/INCORRECT
+    pattern = r'Answer:\s*(CORRECT|INCORRECT)'
+    match = re.search(pattern, output, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+
+    return None
+
+
+def parse_error_type(output: str) -> Optional[str]:
+    """
+    Extract the error type from model output.
+
+    Looks for <error_type>...</error_type>
+
+    Args:
+        output: The raw model output string
+
+    Returns:
+        The error type string, or None if not found
+    """
+    if not output:
+        return None
+
+    pattern = r'<error_type>\s*([^<]+)\s*</error_type>'
+    match = re.search(pattern, output, re.IGNORECASE)
     if match:
         return match.group(1).strip()
+
+    return None
+
+
+def parse_verdict(output: str) -> Optional[str]:
+    """
+    Legacy function - Extract verdict from model output.
+    Now wraps parse_answer for backward compatibility.
+    """
+    answer = parse_answer(output)
+    if answer == "INCORRECT":
+        return "Error"
+    elif answer == "CORRECT":
+        return "No Error"
     return None
 
 
 def _is_error_prediction(verdict: str) -> bool:
     """
-    Determine if a verdict indicates an error was detected.
+    Determine if prediction indicates an error was detected.
 
     Args:
-        verdict: The verdict string content
+        verdict: The verdict/answer string
 
     Returns:
-        True if verdict indicates an error, False otherwise
+        True if predicting INCORRECT (has error), False otherwise
     """
     if not verdict:
         return False
 
-    verdict_lower = verdict.lower()
+    verdict_upper = verdict.upper().strip()
 
-    # Check for "No Clinical Error" or "No Error" first
-    if "no clinical error" in verdict_lower or "no error" in verdict_lower:
+    # Direct answer format
+    if verdict_upper == "INCORRECT":
+        return True
+    if verdict_upper == "CORRECT":
         return False
 
-    # Check if it contains "error" (indicating an error was found)
-    return "error" in verdict_lower
+    # Legacy format fallback
+    verdict_lower = verdict.lower()
+
+    no_error_phrases = [
+        "no clinical error", "no error", "no errors",
+        "correct", "accurate", "appropriate"
+    ]
+
+    for phrase in no_error_phrases:
+        if phrase in verdict_lower:
+            return False
+
+    return "error" in verdict_lower or "incorrect" in verdict_lower
 
 
 def _extract_error_type_from_verdict(verdict: str) -> Optional[str]:
@@ -198,9 +253,9 @@ def calculate_reward(
     if has_thinking_section(model_output):
         structural_reward = STRUCTURAL_REWARD
 
-    # 2. Parse the verdict to determine prediction
-    verdict = parse_verdict(model_output)
-    predicted_error = _is_error_prediction(verdict) if verdict else False
+    # 2. Parse the answer to determine prediction
+    answer = parse_answer(model_output)
+    predicted_error = (answer == "INCORRECT") if answer else False
 
     # Get ground truth
     actual_has_error = ground_truth.get("has_error", False)
@@ -208,34 +263,26 @@ def calculate_reward(
 
     # 3. Calculate outcome reward based on classification correctness
     if actual_has_error:
-        # Ground truth: Note contains an error
+        # Ground truth: Note contains an error (should predict INCORRECT)
         if predicted_error:
-            # Predicted error - check if error type matches
-            predicted_type = None
-            if verdict:
-                predicted_type = _extract_error_type_from_verdict(verdict)
-
-            # Requirements: 5.2 - Award +1.0 if identifies specific error type
+            # Check if error type matches for bonus
+            predicted_type = parse_error_type(model_output)
             if predicted_type and actual_error_type:
                 if predicted_type.lower() == actual_error_type.lower():
-                    outcome_reward = CORRECT_CLASSIFICATION_REWARD
+                    outcome_reward = CORRECT_CLASSIFICATION_REWARD  # Full reward
                 else:
-                    # Detected error but wrong type - no reward, no penalty
-                    outcome_reward = 0.0
+                    # Detected error but wrong type - partial credit
+                    outcome_reward = CORRECT_CLASSIFICATION_REWARD * 0.5
             else:
-                # Detected error but no type specified - credit for detection
-                outcome_reward = CORRECT_CLASSIFICATION_REWARD
+                outcome_reward = CORRECT_CLASSIFICATION_REWARD  # True positive
         else:
-            # Requirements: 5.3 - Penalize -1.0 if prediction states "No Error"
-            outcome_reward = FALSE_NEGATIVE_PENALTY
+            outcome_reward = FALSE_NEGATIVE_PENALTY  # Missed the error
     else:
-        # Ground truth: Note is clean (no error)
+        # Ground truth: Note is clean (should predict CORRECT)
         if not predicted_error:
-            # Requirements: 5.4 - Award +1.0 if states "No Clinical Error"
-            outcome_reward = CORRECT_CLASSIFICATION_REWARD
+            outcome_reward = CORRECT_CLASSIFICATION_REWARD  # True negative
         else:
-            # Requirements: 5.5 - Penalize -1.5 if incorrectly identifies error
-            outcome_reward = FALSE_POSITIVE_PENALTY
+            outcome_reward = FALSE_POSITIVE_PENALTY  # False alarm
 
     # Requirements: 5.6 - Return sum of structural, outcome, and penalty
     total_reward = structural_reward + outcome_reward

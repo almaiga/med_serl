@@ -34,51 +34,62 @@ def prepare_sft_data(
     system_prompt: Optional[str] = None
 ) -> List[SFTExample]:
     """
-    Prepare SFT training data from MEDEC error samples.
-    
-    Filters MEDEC training data for error_flag=1 only and formats
-    targets with <thinking> and <verdict> sections.
-    
+    Prepare balanced SFT training data using contrastive pairs from MEDEC.
+
+    Each error row provides TWO training examples:
+    1. INCORRECT: The original text with the error
+    2. CORRECT: The corrected_text with the error fixed
+
+    This contrastive approach teaches the model the precise difference
+    between correct and incorrect clinical notes.
+
     Args:
         data_processor: MedicalDataProcessor with loaded MEDEC data
         system_prompt: Optional system prompt to prepend to inputs
-        
+
     Returns:
-        List of SFTExample objects ready for training
-        
-    Requirements:
-        - 6.1: Use only MEDEC training samples with error_flag=1
-        - 6.2: Format targets with <thinking> and <verdict> sections
-        - 6.5: Include analysis of specific error type in thinking section
+        List of SFTExample objects (balanced CORRECT/INCORRECT)
     """
+    import random
+
     sft_examples = []
-    
-    # Get error pool (already filtered for error_flag=1 by data processor)
-    # Requirements 6.1: Use only samples with error_flag=1
     error_pool = data_processor.get_error_pool()
-    
+
     for entry in error_pool:
-        text = entry.get('text', '')
+        text_with_error = entry.get('text', '')
+        corrected_text = entry.get('corrected_text', '')
         error_type = entry.get('error_type', 'Unknown')
+        error_sentence = entry.get('error_sentence', '')
+        corrected_sentence = entry.get('corrected_sentence', '')
         text_id = entry.get('text_id', '')
-        
-        if not text.strip():
+
+        if not text_with_error.strip():
             continue
-        
-        # Format input prompt
-        input_text = format_sft_input(text, system_prompt)
-        
-        # Format target with <thinking> and <verdict> sections
-        # Requirements 6.2, 6.5
-        target_text = format_sft_target(error_type)
-        
+
+        # 1. INCORRECT example: text with error
+        input_incorrect = format_sft_input(text_with_error, system_prompt)
+        target_incorrect = format_target_incorrect(
+            error_type, error_sentence, corrected_sentence
+        )
         sft_examples.append(SFTExample(
-            input_text=input_text,
-            target_text=target_text,
+            input_text=input_incorrect,
+            target_text=target_incorrect,
             error_type=error_type,
-            text_id=text_id
+            text_id=f"{text_id}_incorrect"
         ))
-    
+
+        # 2. CORRECT example: corrected text (if available)
+        if corrected_text and corrected_text.strip():
+            input_correct = format_sft_input(corrected_text, system_prompt)
+            target_correct = format_target_correct()
+            sft_examples.append(SFTExample(
+                input_text=input_correct,
+                target_text=target_correct,
+                error_type="Correct",
+                text_id=f"{text_id}_correct"
+            ))
+
+    random.shuffle(sft_examples)
     return sft_examples
 
 
@@ -88,45 +99,92 @@ def format_sft_input(
 ) -> str:
     """
     Format a clinical note as an SFT input prompt.
-    
+
     Args:
         clinical_note: The clinical note text to analyze
         system_prompt: Optional system prompt to prepend
-        
+
     Returns:
         Formatted input string for the model
     """
     default_system = (
         "You are a medical error detection assistant. Analyze the following "
-        "clinical note for potential medical errors. Examine each of the five "
-        "error types: Diagnosis, Management, Treatment, Pharmacotherapy, and "
-        "Causal Organism. Provide your analysis in a <thinking> section, then "
-        "give your verdict in a <verdict> section."
+        "clinical note and determine if it contains any medical errors. "
+        "Consider diagnosis, management, treatment, pharmacotherapy, and "
+        "causal organism. Provide your reasoning in <think> tags, then your "
+        "final answer as CORRECT or INCORRECT in <answer> tags."
     )
-    
+
     system = system_prompt or default_system
-    
-    return f"{system}\n\nClinical Note:\n{clinical_note}\n\nAnalysis:"
+    return f"{system}\n\nClinical Note:\n{clinical_note}\n\n"
+
+
+def format_target_incorrect(
+    error_type: str,
+    error_sentence: str,
+    corrected_sentence: str
+) -> str:
+    """
+    Format target for an INCORRECT note with medical reasoning.
+
+    Args:
+        error_type: Type of error (Diagnosis, Pharmacotherapy, etc.)
+        error_sentence: The sentence containing the error
+        corrected_sentence: What it should say
+
+    Returns:
+        Formatted target with reasoning, answer, and error_type
+    """
+    normalized_type = _normalize_error_type_for_output(error_type)
+
+    # Build reasoning that explains the error
+    if error_sentence and corrected_sentence:
+        reasoning = (
+            f"Reviewing this clinical note for medical errors. "
+            f"I found a {normalized_type} error. "
+            f"The note states: \"{error_sentence.strip()}\" "
+            f"However, this should be: \"{corrected_sentence.strip()}\" "
+            f"This represents an incorrect {normalized_type.lower()} "
+            f"that could impact patient care."
+        )
+    else:
+        reasoning = (
+            f"Reviewing this clinical note for medical errors. "
+            f"I identified a {normalized_type} error in this note. "
+            f"The clinical reasoning or prescribed approach contains "
+            f"an inaccuracy that could affect patient outcomes."
+        )
+
+    return (
+        f"<think>\n{reasoning}\n</think>\n"
+        f"<answer>INCORRECT</answer>\n"
+        f"<error_type>{normalized_type}</error_type>"
+    )
+
+
+def format_target_correct() -> str:
+    """
+    Format target for a CORRECT note.
+
+    Returns:
+        Formatted target with reasoning and answer
+    """
+    reasoning = (
+        "Reviewing this clinical note for medical errors. "
+        "The diagnosis is consistent with the presented symptoms "
+        "and clinical findings. The management plan is appropriate "
+        "for the condition. The prescribed treatments and medications "
+        "are suitable. No errors identified in diagnosis, management, "
+        "treatment, pharmacotherapy, or causal organism identification."
+    )
+    return f"<think>\n{reasoning}\n</think>\n<answer>CORRECT</answer>"
 
 
 def format_sft_target(error_type: str) -> str:
     """
-    Format the target output with <thinking> and <verdict> sections.
-    
-    The thinking section includes analysis of the specific error type
-    as required by Requirement 6.5.
-    
-    Args:
-        error_type: The type of error present in the note
-        
-    Returns:
-        Formatted target string with thinking and verdict sections
-        
-    Requirements:
-        - 6.2: Format with <thinking> and <verdict> sections
-        - 6.5: Include analysis of specific error type in thinking
+    Legacy function - formats target for error samples only.
+    Use format_target_incorrect() or format_target_correct() instead.
     """
-    # Normalize error type for consistent output
     normalized_type = _normalize_error_type_for_output(error_type)
     
     # Generate thinking section that analyzes the specific error type

@@ -185,21 +185,21 @@ class InteractionLogger:
         return interactions
     
     def _parse_output(self, output: str) -> tuple[Optional[str], Optional[str]]:
-        """Extract verdict and reasoning from model output."""
+        """Extract answer and reasoning from model output."""
         import re
-        
-        # Extract thinking
+
+        # Extract thinking (supports both <think> and <thinking>)
         thinking_match = re.search(
-            r'<thinking>(.*?)</thinking>', output, re.DOTALL
+            r'<think(?:ing)?>(.*?)</think(?:ing)?>', output, re.DOTALL
         )
         reasoning = thinking_match.group(1).strip() if thinking_match else None
-        
-        # Extract verdict
-        verdict_match = re.search(
-            r'<verdict>(.*?)</verdict>', output, re.DOTALL
+
+        # Extract answer (CORRECT/INCORRECT)
+        answer_match = re.search(
+            r'<answer>\s*(CORRECT|INCORRECT)\s*</answer>', output, re.IGNORECASE
         )
-        verdict = verdict_match.group(1).strip() if verdict_match else None
-        
+        verdict = answer_match.group(1).upper() if answer_match else None
+
         return verdict, reasoning
     
     def _evaluate_correctness(
@@ -208,10 +208,11 @@ class InteractionLogger:
         """Determine if prediction was correct."""
         if verdict is None:
             return False, "parse_error"
-        
+
         has_error = ground_truth.get("has_error", False)
-        predicted_error = "error" in verdict.lower() and "no" not in verdict.lower()
-        
+        # verdict is now "CORRECT" or "INCORRECT"
+        predicted_error = (verdict == "INCORRECT")
+
         if has_error and predicted_error:
             return True, "true_positive"
         elif not has_error and not predicted_error:
