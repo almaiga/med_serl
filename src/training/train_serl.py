@@ -113,16 +113,21 @@ def format_sft_input(
     Returns:
         Formatted input string for the model
     """
-    default_system = (
+    # Default prompt matches the RL training prompt in train_gpu.py
+    default_prompt = (
         "You are a medical error detection assistant. Analyze the following "
-        "clinical note and determine if it contains any medical errors. "
-        "Consider diagnosis, management, treatment, pharmacotherapy, and "
-        "causal organism. Provide your reasoning in <think> tags, then your "
-        "final answer as CORRECT or INCORRECT in <answer> tags."
+        "clinical note for medical errors in diagnosis, management, treatment, "
+        "pharmacotherapy, or causal organism identification.\n\n"
+        f"Clinical Note:\n{clinical_note}\n\n"
+        "Instructions:\n"
+        "1. First, provide your reasoning inside <think> tags\n"
+        "2. Then, give your final answer inside <answer> tags as either "
+        "CORRECT (no errors) or INCORRECT (contains errors)\n\n"
     )
 
-    system = system_prompt or default_system
-    return f"{system}\n\nClinical Note:\n{clinical_note}\n\n"
+    if system_prompt:
+        return f"{system_prompt}\n\nClinical Note:\n{clinical_note}\n\n"
+    return default_prompt
 
 
 def format_target_incorrect(
