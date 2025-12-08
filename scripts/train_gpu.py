@@ -362,7 +362,7 @@ def run_rl_phase(
             ground_truth = sample.get("meta", sample.get("ground_truth", {}))
             quadrant = sample.get("quadrant", "unknown")
 
-            prompt = format_prompt(note)
+            prompt = format_prompt_for_chat(note, tokenizer)
             inputs = tokenizer(
                 prompt,
                 return_tensors="pt",
@@ -373,21 +373,32 @@ def run_rl_phase(
 
             prompt_len = inputs["input_ids"].shape[1]
 
+            # Get stop token IDs for </answer>
+            stop_strings = ["</answer>", "```", "\n\n\n"]
+            
             # Generate response
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=256,
+                    max_new_tokens=512,  # Increased for reasoning
                     do_sample=True,
                     temperature=0.7,
                     top_p=0.9,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
+                    stop_strings=stop_strings,
+                    tokenizer=tokenizer,  # Required for stop_strings
                 )
 
             sequences = outputs
             generated_ids = sequences[0][prompt_len:]
             generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+            
+            # Clean up generated text - stop at </answer> if present
+            if "</answer>" in generated_text:
+                generated_text = generated_text.split("</answer>")[0] + "</answer>"
+            elif "```" in generated_text:
+                generated_text = generated_text.split("```")[0].strip()
 
             # Calculate reward
             reward = calculate_reward(generated_text, ground_truth)
@@ -557,31 +568,50 @@ def run_rl_phase(
     return final_path
 
 
+def format_prompt_for_chat(note: str, tokenizer) -> str:
+    """Format clinical note using MedGemma chat template."""
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a medical error detection assistant. Analyze clinical notes for errors in diagnosis, management, treatment, pharmacotherapy, or causal organism identification. Respond with your reasoning in <think> tags, then your verdict in <answer> tags as CORRECT or INCORRECT."
+        },
+        {
+            "role": "user", 
+            "content": f"""Analyze this clinical note for medical errors:
+
+{note}
+
+Respond with:
+<think>[Your analysis]</think>
+<answer>CORRECT or INCORRECT</answer>"""
+        }
+    ]
+    
+    # Use chat template if available
+    if hasattr(tokenizer, 'apply_chat_template'):
+        return tokenizer.apply_chat_template(
+            messages, 
+            tokenize=False, 
+            add_generation_prompt=True
+        )
+    else:
+        # Fallback for tokenizers without chat template
+        return f"""<start_of_turn>system
+{messages[0]['content']}<end_of_turn>
+<start_of_turn>user
+{messages[1]['content']}<end_of_turn>
+<start_of_turn>model
+"""
+
+
 def format_prompt(note: str) -> str:
-    """Format clinical note as prompt."""
-    return f"""You are a medical error detection assistant. Analyze the following clinical note for medical errors in diagnosis, management, treatment, pharmacotherapy, or causal organism identification.
+    """Legacy format - kept for compatibility but prefer format_prompt_for_chat."""
+    return f"""You are a medical error detection assistant. Analyze the following clinical note for medical errors.
 
 Clinical Note:
 {note}
 
-Instructions:
-1. First, provide your reasoning inside <think> tags
-2. Then, give your final answer inside <answer> tags as either CORRECT (no errors) or INCORRECT (contains errors)
-
-Example format:
-<think>
-[Your analysis here]
-</think>
-<answer>CORRECT</answer>
-
-or
-
-<think>
-[Your analysis here]
-</think>
-<answer>INCORRECT</answer>
-
-Now analyze the clinical note above:
+Respond with <think>[analysis]</think> then <answer>CORRECT</answer> or <answer>INCORRECT</answer>:
 """
 
 
