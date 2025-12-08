@@ -521,6 +521,7 @@ class MedSERLTrainer:
         self._init_data_processor()
         self._init_agents()
         self._init_logging()
+        self._init_interaction_logger()
 
         print("MedSeRL Trainer initialized")
         print(f"  Model: {config.model_path}")
@@ -581,6 +582,18 @@ class MedSERLTrainer:
             print(f"  W&B: {self.config.wandb_project}")
         elif self.config.use_wandb:
             print("  W&B: Not available (wandb not installed)")
+
+    def _init_interaction_logger(self) -> None:
+        """Initialize interaction logger for tracking model behavior."""
+        from src.training.interaction_logger import InteractionLogger
+
+        interactions_dir = os.path.join(self.config.output_dir, "interactions")
+        self.interaction_logger = InteractionLogger(
+            output_dir=interactions_dir,
+            session_name=self.config.wandb_run_name,
+            log_all=True
+        )
+        print(f"  Interactions: {interactions_dir}")
 
     def run_sft_warmup(self) -> str:
         """
@@ -651,6 +664,8 @@ class MedSERLTrainer:
                 print(f"Episode {episode + 1}/{self.config.num_episodes} - "
                       f"Reward: {metrics.get('mean_reward', 0):.3f}")
 
+        # Save interaction summary
+        self.interaction_logger.close()
         print("\nRL Training complete!")
 
     def _run_episode(self) -> Dict[str, float]:
@@ -676,12 +691,27 @@ class MedSERLTrainer:
         notes = [item["transformed_text"] for item in transformed_batch]
         doctor_outputs = self.doctor_agent.analyze_batch(notes)
 
-        # 7.3: Compute rewards
+        # 7.3: Compute rewards and log interactions
         rewards = []
-        for output, item in zip(doctor_outputs, transformed_batch):
+        for i, (output, item) in enumerate(zip(doctor_outputs, transformed_batch)):
             ground_truth = item["ground_truth"]
             reward = calculate_reward(output, ground_truth)
             rewards.append(reward)
+
+            # Log interaction for analysis
+            self.interaction_logger.log_interaction(
+                episode=self.episode,
+                batch_idx=i,
+                note=item["transformed_text"],
+                quadrant=item.get("quadrant", "unknown"),
+                ground_truth=ground_truth,
+                model_output=output,
+                reward=reward,
+                metadata={
+                    "original_text_id": item.get("text_id"),
+                    "transformation_type": item.get("transformation_type")
+                }
+            )
 
         # 7.4: Weight update would happen here via OpenRLHF
         # This is handled by the OpenRLHF integration script
@@ -820,7 +850,8 @@ def rl_training_loop(
     eval_frequency: int = 50,
     checkpoint_frequency: int = 100,
     output_dir: str = "outputs/rl",
-    use_wandb: bool = False
+    use_wandb: bool = False,
+    log_interactions: bool = True
 ) -> Dict[str, List[float]]:
     """
     Standalone RL training loop function.
@@ -842,6 +873,7 @@ def rl_training_loop(
         checkpoint_frequency: Save checkpoint every N episodes
         output_dir: Output directory for checkpoints
         use_wandb: Whether to log to Weights & Biases
+        log_interactions: Whether to log model interactions for analysis
 
     Returns:
         Dictionary containing training history (rewards, metrics)
@@ -862,6 +894,14 @@ def rl_training_loop(
         "eval_accuracy": [],
         "eval_reward": []
     }
+
+    # Initialize interaction logger
+    interaction_logger = None
+    if log_interactions:
+        from src.training.interaction_logger import InteractionLogger
+        interaction_logger = InteractionLogger(
+            output_dir=os.path.join(output_dir, "interactions")
+        )
 
     # Initialize W&B if requested
     wandb_run = None
@@ -886,12 +926,24 @@ def rl_training_loop(
         notes = [item["transformed_text"] for item in transformed_batch]
         doctor_outputs = doctor_agent.analyze_batch(notes)
 
-        # 7.3: Compute rewards
+        # 7.3: Compute rewards and log interactions
         rewards = []
-        for output, item in zip(doctor_outputs, transformed_batch):
+        for i, (output, item) in enumerate(zip(doctor_outputs, transformed_batch)):
             ground_truth = item["ground_truth"]
             reward = reward_fn(output, ground_truth)
             rewards.append(reward)
+
+            # Log interaction
+            if interaction_logger:
+                interaction_logger.log_interaction(
+                    episode=episode,
+                    batch_idx=i,
+                    note=item["transformed_text"],
+                    quadrant=item.get("quadrant", "unknown"),
+                    ground_truth=ground_truth,
+                    model_output=output,
+                    reward=reward
+                )
 
         # 7.4, 7.5: Weight updates handled by OpenRLHF
         # In standalone mode, we just track metrics
@@ -921,6 +973,10 @@ def rl_training_loop(
         # 7.5: Increment episode counter (implicit in loop)
 
     print(f"\nRL training complete! Final mean reward: {history['mean_reward'][-1]:.3f}")
+
+    # Save interaction summary
+    if interaction_logger:
+        interaction_logger.close()
 
     if wandb_run:
         wandb_run.finish()
