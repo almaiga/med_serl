@@ -215,6 +215,66 @@ def run_sft_phase(
     return checkpoint_path
 
 
+def compute_approx_kl(log_probs, log_probs_base, kl_estimator="k1"):
+    """
+    Compute the approximate KL divergence between two distributions.
+    Copied from SeRL: openrlhf/models/utils.py
+    Schulman blog: http://joschu.net/blog/kl-approx.html
+
+    Args:
+        log_probs: Log probabilities of the new distribution.
+        log_probs_base: Log probabilities of the base distribution.
+    """
+    if kl_estimator == "k1":
+        # k1: Simple log ratio (can be negative for individual tokens)
+        log_ratio = log_probs.float() - log_probs_base.float()
+
+    # The k2 estimator is the non negative kl approximation
+    elif kl_estimator == "k2":
+        log_ratio = log_probs.float() - log_probs_base.float()
+        log_ratio = log_ratio**2 / 2.0
+
+    # The k3 estimator is the non negative kl approximation
+    # This is always >= 0
+    elif kl_estimator == "k3":
+        log_ratio = log_probs.float() - log_probs_base.float()
+        log_ratio = -log_ratio
+        log_ratio = log_ratio.exp() - 1 - log_ratio
+    else:
+        raise ValueError(f"Unknown kl_estimator: {kl_estimator}")
+
+    return log_ratio
+
+
+def log_probs_from_logits(logits, labels, temperature=1.0):
+    """
+    Compute log probabilities from logits for given labels.
+    Copied from SeRL: openrlhf/models/utils.py
+    """
+    import torch.nn.functional as F
+
+    if temperature != 1.0:
+        logits = logits / temperature
+
+    # Compute log softmax and gather the log probs for the labels
+    log_probs = F.log_softmax(logits, dim=-1)
+    log_probs_labels = log_probs.gather(
+        dim=-1, index=labels.unsqueeze(-1)
+    ).squeeze(-1)
+
+    return log_probs_labels
+
+
+def masked_mean(tensor, mask, dim=None):
+    """
+    Compute masked mean.
+    Copied from SeRL: openrlhf/models/utils.py
+    """
+    if mask is None:
+        return tensor.mean(dim=dim)
+    return (tensor * mask).sum(dim=dim) / mask.sum(dim=dim).clamp(min=1e-8)
+
+
 def run_rl_phase(
     model,
     tokenizer,
@@ -230,18 +290,18 @@ def run_rl_phase(
     """
     Run RL training with REINFORCE++ (baseline + KL penalty).
 
-    REINFORCE++ adds:
-    1. Running average baseline for variance reduction
-    2. KL divergence penalty to prevent drift from SFT model
-    3. Reward normalization for stability
-    4. Gradient clipping
+    Based on SeRL implementation with proper:
+    1. Per-token log probability computation
+    2. KL divergence using log_probs - ref_log_probs (k1 estimator)
+    3. KL penalty integrated into reward signal
+    4. Advantage normalization across batch
 
-    Based on SeRL parameters: lr=5e-7, kl_coef=1e-4, normalize_reward=True
+    SeRL parameters: lr=5e-7, kl_coef=1e-4
     """
     import torch
     import copy
     from torch.optim import AdamW
-    from torch.amp import autocast, GradScaler
+    from tqdm import tqdm
     from src.training.reward_engine import calculate_reward
     from src.training.interaction_logger import InteractionLogger
 
@@ -264,7 +324,6 @@ def run_rl_phase(
 
     # Setup optimizer (SeRL uses 5e-7)
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
-    scaler = GradScaler('cuda')
 
     # Setup interaction logger
     interaction_logger = None
@@ -277,18 +336,19 @@ def run_rl_phase(
     # Training state
     model.train()
     total_rewards = []
-    baseline = 0.0  # Running average baseline
-    baseline_decay = 0.95  # EMA decay for baseline
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    for episode in range(num_episodes):
+    # Progress bar for episodes
+    pbar = tqdm(range(num_episodes), desc="RL Training", unit="ep")
+
+    for episode in pbar:
         batch = processor.get_quadrant_batch(batch_size=batch_size)
 
         episode_rewards = []
         batch_data = []
 
-        # === ROLLOUT PHASE: Generate responses and collect rewards ===
+        # === ROLLOUT PHASE: Generate responses and collect data ===
         for i, sample in enumerate(batch):
             note = sample.get("original_text", sample.get("text", ""))
             ground_truth = sample.get("meta", sample.get("ground_truth", {}))
@@ -303,6 +363,8 @@ def run_rl_phase(
                 padding=True,
             ).to(device)
 
+            prompt_len = inputs["input_ids"].shape[1]
+
             # Generate without gradients
             with torch.no_grad():
                 outputs = model.generate(
@@ -312,13 +374,14 @@ def run_rl_phase(
                     temperature=0.7,
                     top_p=0.9,
                     pad_token_id=tokenizer.pad_token_id,
-                    return_dict_in_generate=True,
-                    output_scores=True,
+                    eos_token_id=tokenizer.eos_token_id,
                 )
 
-            generated_ids = outputs.sequences[0][inputs["input_ids"].shape[1]:]
+            sequences = outputs  # (1, seq_len)
+            generated_ids = sequences[0][prompt_len:]
             generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
 
+            # Calculate task reward
             reward = calculate_reward(generated_text, ground_truth)
             episode_rewards.append(reward)
 
@@ -333,85 +396,151 @@ def run_rl_phase(
                     reward=reward,
                 )
 
+            # Create action mask (1 for response tokens, 0 for prompt)
+            seq_len = sequences.shape[1]
+            action_mask = torch.zeros(1, seq_len - 1, device=device)
+            response_len = seq_len - prompt_len
+            if response_len > 0:
+                action_mask[0, prompt_len - 1:seq_len - 1] = 1.0
+
             batch_data.append({
-                'inputs': inputs,
-                'sequences': outputs.sequences,
+                'sequences': sequences,
+                'attention_mask': inputs["attention_mask"],
+                'action_mask': action_mask,
+                'prompt_len': prompt_len,
                 'reward': reward,
             })
 
-        # === ADVANTAGE COMPUTATION ===
-        mean_reward = sum(episode_rewards) / len(episode_rewards)
+        # === COMPUTE LOG PROBS AND KL ===
+        all_action_log_probs = []
+        all_ref_log_probs = []
+        all_kl = []
+        all_action_masks = []
 
-        # Compute advantages with baseline subtraction
-        advantages = [d['reward'] - baseline for d in batch_data]
+        with torch.no_grad():
+            for data in batch_data:
+                sequences = data['sequences']
+                action_mask = data['action_mask']
 
-        # Normalize advantages (critical for stability)
+                # Shift sequences for next-token prediction
+                # Input: tokens[:-1], Target: tokens[1:]
+                input_seq = sequences[:, :-1]
+                target_seq = sequences[:, 1:]
+
+                # Policy model forward pass
+                policy_outputs = model(input_ids=input_seq)
+                policy_logits = policy_outputs.logits.float()
+
+                # Reference model forward pass
+                ref_outputs = ref_model(input_ids=input_seq)
+                ref_logits = ref_outputs.logits.float()
+
+                # Compute log probs for the actual tokens generated
+                # Using SeRL's log_probs_from_logits
+                policy_log_probs = log_probs_from_logits(
+                    policy_logits, target_seq, temperature=1.0
+                )
+                ref_log_probs = log_probs_from_logits(
+                    ref_logits, target_seq, temperature=1.0
+                )
+
+                # Compute KL divergence per token using SeRL's k1 estimator
+                # KL = log_probs - ref_log_probs (can be negative per token,
+                # but mean should be >= 0)
+                kl = compute_approx_kl(
+                    policy_log_probs, ref_log_probs, kl_estimator="k1"
+                )
+
+                all_action_log_probs.append(policy_log_probs)
+                all_ref_log_probs.append(ref_log_probs)
+                all_kl.append(kl)
+                all_action_masks.append(action_mask)
+
+        # === COMPUTE ADVANTAGES (SeRL reinforce_baseline style) ===
+        # Get rewards as tensor
+        rewards_tensor = torch.tensor(
+            [d['reward'] for d in batch_data],
+            device=device, dtype=torch.float32
+        )
+
+        # Baseline subtraction (mean across batch) - SeRL reinforce_baseline
+        advantages = rewards_tensor - rewards_tensor.mean()
+
+        # Normalize advantages
         if len(advantages) > 1:
-            adv_mean = sum(advantages) / len(advantages)
-            adv_var = sum((a - adv_mean) ** 2 for a in advantages) / len(advantages)
-            adv_std = max(adv_var ** 0.5, 1e-8)
-            advantages = [(a - adv_mean) / adv_std for a in advantages]
+            adv_std = advantages.std().clamp(min=1e-8)
+            advantages = advantages / adv_std
 
         # === POLICY UPDATE PHASE ===
         optimizer.zero_grad()
+
         total_policy_loss = 0.0
-        total_kl_loss = 0.0
+        total_kl_value = 0.0
 
-        for data, advantage in zip(batch_data, advantages):
+        for idx, (data, advantage) in enumerate(zip(batch_data, advantages)):
             sequences = data['sequences']
-            input_ids = data['inputs']['input_ids']
-            prompt_len = input_ids.shape[1]
+            action_mask = all_action_masks[idx]
 
-            # Create labels (mask prompt tokens)
-            labels = sequences.clone()
-            labels[:, :prompt_len] = -100
+            # Shift sequences for next-token prediction
+            input_seq = sequences[:, :-1]
+            target_seq = sequences[:, 1:]
 
-            with autocast('cuda', dtype=torch.bfloat16):
-                # Policy model forward pass
-                policy_outputs = model(input_ids=sequences, labels=labels)
-                policy_loss = policy_outputs.loss
+            # Policy model forward pass (with gradients this time)
+            policy_outputs = model(input_ids=input_seq)
+            policy_logits = policy_outputs.logits.float()
 
-                # Reference model forward pass for KL
-                with torch.no_grad():
-                    ref_outputs = ref_model(input_ids=sequences, labels=labels)
-                    ref_loss = ref_outputs.loss
+            # Compute log probs
+            policy_log_probs = log_probs_from_logits(
+                policy_logits, target_seq, temperature=1.0
+            )
 
-                # KL divergence approximation: KL ≈ (policy_loss - ref_loss)
-                # This is a simplified KL estimate based on log-prob difference
-                kl_div = policy_loss - ref_loss
+            # Get reference log probs (already computed, no grad needed)
+            ref_log_probs = all_ref_log_probs[idx]
 
-                # REINFORCE++ loss: -advantage * log_prob + kl_coef * KL
-                reinforce_loss = -advantage * policy_loss
-                kl_penalty = kl_coef * kl_div
-                total_loss = (reinforce_loss + kl_penalty) / batch_size
+            # Compute KL per token (SeRL k1 estimator)
+            kl = compute_approx_kl(policy_log_probs, ref_log_probs, kl_estimator="k1")
 
-            scaler.scale(total_loss).backward()
-            total_policy_loss += reinforce_loss.item()
-            total_kl_loss += kl_div.item()
+            # Apply action mask to get only response token log probs
+            masked_log_probs = policy_log_probs * action_mask
+
+            # Sum log probs over response tokens (log prob of full response)
+            response_log_prob = masked_log_probs.sum()
+
+            # Mean KL over response tokens (masked)
+            kl_mean = masked_mean(kl, action_mask, dim=-1).mean()
+
+            # REINFORCE loss: -advantage * log_prob(response)
+            # Plus KL penalty integrated into the objective
+            # SeRL computes: reward_with_kl = reward - kl_coef * kl
+            # Then uses that for advantage computation
+            # Here we add KL penalty directly to loss
+            policy_loss = -advantage * response_log_prob
+            kl_penalty = kl_coef * kl_mean
+
+            # Total loss for this sample
+            loss = (policy_loss + kl_penalty) / batch_size
+            loss.backward()
+
+            total_policy_loss += policy_loss.item()
+            total_kl_value += kl_mean.item()
 
         # Gradient clipping
-        scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
         # Update weights
-        scaler.step(optimizer)
-        scaler.update()
-
-        # Update baseline (EMA)
-        baseline = baseline_decay * baseline + (1 - baseline_decay) * mean_reward
+        optimizer.step()
 
         # Track metrics
+        mean_reward = sum(episode_rewards) / len(episode_rewards)
         total_rewards.append(mean_reward)
-        avg_kl = total_kl_loss / batch_size
+        avg_kl = total_kl_value / batch_size
 
-        # Log progress
-        if (episode + 1) % 10 == 0 or episode == 0:
-            print(
-                f"Episode {episode + 1}/{num_episodes} | "
-                f"Reward: {mean_reward:.3f} | "
-                f"Baseline: {baseline:.3f} | "
-                f"KL: {avg_kl:.4f}"
-            )
+        # Update progress bar with current metrics
+        pbar.set_postfix({
+            'reward': f'{mean_reward:.3f}',
+            'kl': f'{avg_kl:.4f}',
+            'avg_r': f'{sum(total_rewards)/len(total_rewards):.3f}'
+        })
 
         # Save checkpoint periodically
         if (episode + 1) % 50 == 0:
@@ -419,6 +548,9 @@ def run_rl_phase(
             model.save_pretrained(ckpt_path)
             tokenizer.save_pretrained(ckpt_path)
             print(f"  Checkpoint saved: {ckpt_path}")
+
+    # Close progress bar
+    pbar.close()
 
     # Final save
     final_path = os.path.join(output_dir, "rl_final")
