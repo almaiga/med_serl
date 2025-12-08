@@ -2,6 +2,12 @@
 # MedSeRL Training Script
 # Runs training in a detached screen session
 
+# Install screen if not available
+if ! command -v screen &> /dev/null; then
+    echo "Installing screen..."
+    apt-get update && apt-get install -y screen
+fi
+
 SESSION_NAME="train_screen"
 
 # Create screen session and run training
