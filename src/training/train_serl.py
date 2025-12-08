@@ -53,9 +53,15 @@ def prepare_sft_data(
     import random
 
     sft_examples = []
-    error_pool = data_processor.get_error_pool()
+    
+    # Use raw_data to access corrected_text (not available in error_pool)
+    raw_data = data_processor.get_raw_data()
 
-    for entry in error_pool:
+    for entry in raw_data:
+        # Only process entries with errors (error_flag == 1)
+        if entry.get('error_flag', 0) != 1:
+            continue
+            
         text_with_error = entry.get('text', '')
         corrected_text = entry.get('corrected_text', '')
         error_type = entry.get('error_type', 'Unknown')

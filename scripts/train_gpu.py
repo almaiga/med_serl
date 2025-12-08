@@ -19,8 +19,14 @@ Usage:
 import argparse
 import os
 import sys
+import warnings
 from pathlib import Path
 from datetime import datetime
+
+# Suppress warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*torch.cuda.amp.*deprecated.*")
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -139,15 +145,23 @@ def run_sft_phase(
     print(f"  CORRECT samples: {correct_count}")
 
     if num_samples > 0 and num_samples < len(sft_examples):
-        # Sample balanced subset
+        # Sample subset - balance if both types available, otherwise use what we have
         import random
         incorrect = [ex for ex in sft_examples if ex.error_type != "Correct"]
         correct = [ex for ex in sft_examples if ex.error_type == "Correct"]
-        half = num_samples // 2
-        sft_examples = random.sample(incorrect, min(half, len(incorrect))) + \
-                       random.sample(correct, min(half, len(correct)))
+        
+        if correct and incorrect:
+            # Balance between correct and incorrect
+            half = num_samples // 2
+            sft_examples = random.sample(incorrect, min(half, len(incorrect))) + \
+                           random.sample(correct, min(half, len(correct)))
+        else:
+            # Only one type available - use all of that type up to num_samples
+            available = incorrect or correct
+            sft_examples = random.sample(available, min(num_samples, len(available)))
+        
         random.shuffle(sft_examples)
-        print(f"Using {len(sft_examples)} balanced samples")
+        print(f"Using {len(sft_examples)} samples")
 
     # Convert to HF format
     hf_data = convert_sft_examples_to_hf_format(sft_examples)
@@ -220,7 +234,7 @@ def run_rl_phase(
     """
     import torch
     from torch.optim import AdamW
-    from torch.cuda.amp import autocast, GradScaler
+    from torch.amp import autocast, GradScaler
     from src.training.reward_engine import calculate_reward
     from src.training.interaction_logger import InteractionLogger
 
@@ -234,7 +248,7 @@ def run_rl_phase(
 
     # Setup optimizer
     optimizer = AdamW(model.parameters(), lr=learning_rate)
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
 
     # Setup interaction logger
     interaction_logger = None
@@ -273,7 +287,7 @@ def run_rl_phase(
             ).to(device)
 
             # Generate with gradient tracking
-            with autocast(dtype=torch.bfloat16):
+            with autocast('cuda', dtype=torch.bfloat16):
                 # Forward pass to get logits
                 outputs = model.generate(
                     **inputs,
@@ -309,7 +323,7 @@ def run_rl_phase(
             # REINFORCE loss: -reward * log_prob
             # Simplified: use cross-entropy on generated tokens weighted by reward
             if reward != 0:
-                with autocast(dtype=torch.bfloat16):
+                with autocast('cuda', dtype=torch.bfloat16):
                     # Get log probs for generated sequence
                     labels = outputs.sequences.clone()
                     labels[:, :inputs["input_ids"].shape[1]] = -100  # Mask prompt
