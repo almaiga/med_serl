@@ -23,8 +23,8 @@ python scripts/train_gpu.py \
     --num_samples 512 \
     --sft_epochs 3 \
     --rl_episodes 50 \
-    --batch_size 16 \
-    --rl_lr 7e-7 \
+    --batch_size 8 \
+    --rl_lr 5e-7 \
     --use_self_instruction \
     --si_rouge_threshold 0.7 \
     --si_difficulty_lower 0.2 \
