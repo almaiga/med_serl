@@ -126,12 +126,12 @@ class InteractionLogger:
             timestamp=datetime.now().isoformat(),
             episode=episode,
             batch_idx=batch_idx,
-            note=note[:500] + "..." if len(note) > 500 else note,  # Truncate long notes
+            note=note,  # Full note for debugging
             quadrant=quadrant,
             ground_truth=ground_truth,
             model_output=model_output,
             parsed_verdict=parsed_verdict,
-            parsed_reasoning=parsed_reasoning[:300] if parsed_reasoning else None,
+            parsed_reasoning=parsed_reasoning,  # Full reasoning
             reward=reward,
             reward_breakdown=reward_breakdown,
             correct=correct,
