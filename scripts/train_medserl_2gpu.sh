@@ -9,6 +9,10 @@
 
 set -x
 
+# Activate conda environment
+source /workspace/miniconda3/bin/activate
+conda activate med_serl
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
@@ -70,18 +74,23 @@ echo "Save: $SAVE_PATH"
 # Stop any existing Ray and start fresh
 echo "Restarting Ray cluster..."
 ray stop --force 2>/dev/null || true
-sleep 2
-ray start --head --node-ip-address 0.0.0.0 --num-gpus $NUM_GPUS --dashboard-host 0.0.0.0
-sleep 10  # Give Ray more time to initialize agents
+sleep 3
+
+# Start Ray with dashboard disabled to avoid agent issues
+ray start --head --node-ip-address 127.0.0.1 --num-gpus $NUM_GPUS --include-dashboard false
+sleep 5
+
+# Verify Ray is running
+ray status
 
 start_time=$(date +%s)
 
 # Use SeRL's OpenRLHF (reference install)
 OPENRLHF_DIR="$PROJECT_ROOT/SeRL/openrlhf"
 
-ray job submit --address="http://127.0.0.1:8265" \
-    --runtime-env-json="{\"working_dir\": \"$OPENRLHF_DIR\"}" \
-    -- python3 -m openrlhf.cli.train_ppo_ray \
+# Run directly with python instead of ray job submit (avoids dashboard agent)
+cd "$OPENRLHF_DIR"
+python3 -m openrlhf.cli.train_ppo_ray \
     --ref_num_nodes 1 \
     --ref_num_gpus_per_node $NUM_GPUS \
     --reward_num_nodes 1 \
