@@ -287,7 +287,6 @@ def run_rl_phase(
     max_length: int = 1024,
     log_interactions: bool = True,
     use_self_instruction: bool = False,
-    self_instruction_ratio: float = 0.3,
     self_instruction_config: dict = None,
 ):
     """
@@ -318,8 +317,6 @@ def run_rl_phase(
     print(f"Learning rate: {learning_rate}")
     print(f"KL coefficient: {kl_coef}")
     print(f"Self-instruction: {use_self_instruction}")
-    if use_self_instruction:
-        print(f"Self-instruction ratio: {self_instruction_ratio}")
 
     device = next(model.parameters()).device
 
@@ -737,12 +734,7 @@ def main():
         action="store_true",
         help="Enable self-instruction (Scribe generates synthetic cases)"
     )
-    parser.add_argument(
-        "--self_instruction_ratio",
-        type=float,
-        default=0.3,
-        help="Ratio of self-instructed samples in each batch (0.0-1.0)"
-    )
+
     # SeRL-aligned self-instruction config
     parser.add_argument(
         "--si_rouge_threshold",
