@@ -28,6 +28,7 @@ CKPT_PATH="${CKPT_PATH:-$SAVE_PATH/checkpoints}"
 mkdir -p "$SAVE_PATH" "$CKPT_PATH"
 mkdir -p "$SAVE_PATH/eval_outputs" "$SAVE_PATH/train_samples"
 mkdir -p "$SAVE_PATH/filtered_data" "$SAVE_PATH/evolution_data"
+mkdir -p "$SAVE_PATH/tensorboard"
 
 # Reward functions (YOUR project)
 REWARD_MAJ="$PROJECT_ROOT/src/training/medec_maj_reward.py"
@@ -138,7 +139,8 @@ ray job submit --address="http://127.0.0.1:8265" \
     --few_shot_generation_batch_size 4 \
     --num_episodes $NUM_EPISODES \
     --instructions_num_per_iteration $INSTR_PER_ITER \
-    --wandb_run_name "$RUN_NAME"
+    --use_tensorboard "$SAVE_PATH/tensorboard" \
+    --logging_steps 1
 
 end_time=$(date +%s)
 echo "=== Done in $((end_time - start_time))s ==="
