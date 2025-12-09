@@ -764,19 +764,19 @@ def main():
         "--si_rouge_threshold",
         type=float,
         default=0.7,
-        help="Rouge-L threshold for diversity filtering (SeRL default: 0.7)"
+        help="Rouge-L threshold for diversity filtering (SeRL default: 0.7)",
     )
     parser.add_argument(
         "--si_difficulty_lower",
         type=float,
         default=0.2,
-        help="Lower bound for difficulty filtering (SeRL default: 0.2)"
+        help="Lower bound for difficulty filtering (SeRL default: 0.2)",
     )
     parser.add_argument(
         "--si_difficulty_upper",
         type=float,
         default=0.8,
-        help="Upper bound for difficulty filtering (SeRL default: 0.8)"
+        help="Upper bound for difficulty filtering (SeRL default: 0.8)",
     )
     parser.add_argument(
         "--output_dir",

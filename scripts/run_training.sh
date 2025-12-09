@@ -17,15 +17,16 @@ source miniconda3/bin/activate
 cd med_serl
 conda activate med_serl
 
+# 2x RTX 6000 Pro optimized settings
 python scripts/train_gpu.py \
     --model_path google/medgemma-4b-it \
     --num_samples 512 \
     --sft_epochs 3 \
     --rl_episodes 50 \
-    --batch_size 8 \
-    --rl_lr 5e-7 \
+    --batch_size 16 \
+    --rl_lr 7e-7 \
     --use_self_instruction \
-    --self_instruction_ratio 0.5 \
+    --self_instruction_ratio 0.3 \
     --si_rouge_threshold 0.7 \
     --si_difficulty_lower 0.2 \
     --si_difficulty_upper 0.8
