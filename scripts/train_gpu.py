@@ -833,7 +833,6 @@ def main():
             learning_rate=args.rl_lr,
             kl_coef=1e-4,  # SeRL default
             use_self_instruction=args.use_self_instruction,
-            self_instruction_ratio=args.self_instruction_ratio,
             self_instruction_config=si_config,
         )
 
