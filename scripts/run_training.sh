@@ -25,7 +25,10 @@ python scripts/train_gpu.py \
     --batch_size 8 \
     --rl_lr 5e-7 \
     --use_self_instruction \
-    --self_instruction_ratio 0.5
+    --self_instruction_ratio 0.5 \
+    --si_rouge_threshold 0.7 \
+    --si_difficulty_lower 0.2 \
+    --si_difficulty_upper 0.8
 
 exec bash
 '

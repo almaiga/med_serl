@@ -288,6 +288,7 @@ def run_rl_phase(
     log_interactions: bool = True,
     use_self_instruction: bool = False,
     self_instruction_ratio: float = 0.3,
+    self_instruction_config: dict = None,
 ):
     """
     Run RL training with REINFORCE++ (baseline + KL penalty).
@@ -321,6 +322,30 @@ def run_rl_phase(
         print(f"Self-instruction ratio: {self_instruction_ratio}")
 
     device = next(model.parameters()).device
+
+    # Initialize self-instruction state if enabled (SeRL-aligned)
+    si_state = None
+    si_config = None
+    if use_self_instruction:
+        from src.training.self_instruction import (
+            initialize_self_instruction,
+            generate_and_filter_batch,
+            get_self_instruction_stats,
+            DEFAULT_CONFIG
+        )
+        
+        # Get seed samples from processor
+        seed_error_samples = processor.error_pool[:200]  # Use subset as seed
+        seed_correct_samples = processor.clean_pool[:200]
+        
+        # Initialize with optional config overrides
+        si_config = self_instruction_config or DEFAULT_CONFIG.copy()
+        si_state, si_config = initialize_self_instruction(
+            seed_error_samples=seed_error_samples,
+            seed_correct_samples=seed_correct_samples,
+            config=si_config
+        )
+        print(f"Self-instruction config: {si_config}")
 
     # Create reference model (frozen copy for KL penalty)
     print("Creating reference model for KL penalty...")
@@ -358,105 +383,44 @@ def run_rl_phase(
         episode_start = time.time()
         
         # === BATCH GENERATION ===
-        # Mix MEDEC samples with self-instructed samples if enabled
-        if use_self_instruction:
-            from src.training.self_instruction import (
-                generate_self_instruction_batch,
-                verify_self_instruction
-            )
-            
-            # Calculate split - MEDEC batch must be divisible by 4
+        # Mix MEDEC samples with self-instructed samples if enabled (SeRL-aligned)
+        if use_self_instruction and si_state is not None:
+            # Calculate split
             num_self_inst_target = int(batch_size * self_instruction_ratio)
             num_medec = batch_size - num_self_inst_target
+            
             # Round MEDEC up to nearest multiple of 4
             if num_medec % 4 != 0:
                 num_medec = ((num_medec // 4) + 1) * 4
                 num_self_inst_target = max(0, batch_size - num_medec)
-            # Buffer for failed verifications
-            num_self_inst_request = num_self_inst_target + 4 if num_self_inst_target > 0 else 0
             
             # Get MEDEC samples
             medec_batch = processor.get_quadrant_batch(batch_size=num_medec)
             
-            # Generate self-instructed samples with verification
+            # Generate self-instructed samples with SeRL filtering
+            # (Rouge-L diversity + difficulty bounds + dynamic accumulation)
             self_inst_batch = []
-            verified_count = 0
-            failed_count = 0
-            
             if num_self_inst_target > 0:
-                self_inst_prompts = generate_self_instruction_batch(
-                    batch_size=num_self_inst_request,
-                    error_ratio=0.5
-                )
-            else:
-                self_inst_prompts = []
-            
-            for si_prompt in self_inst_prompts:
-                if verified_count >= num_self_inst_target:
-                    break
-                    
-                # Generate clinical note
-                si_inputs = tokenizer(
-                    si_prompt["scribe_prompt"],
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=512,
-                ).to(device)
-                
-                with torch.no_grad():
-                    si_outputs = model.generate(
-                        **si_inputs,
-                        max_new_tokens=256,
-                        do_sample=True,
-                        temperature=0.8,
-                        pad_token_id=tokenizer.pad_token_id,
-                    )
-                
-                generated_note = tokenizer.decode(
-                    si_outputs[0][si_inputs["input_ids"].shape[1]:],
-                    skip_special_tokens=True
-                ).strip()
-                
-                # Skip empty or too short notes
-                if len(generated_note) < 50:
-                    failed_count += 1
-                    continue
-                
-                # Verify the generated note
-                verified, _ = verify_self_instruction(
+                self_inst_batch = generate_and_filter_batch(
                     model=model,
                     tokenizer=tokenizer,
-                    clinical_note=generated_note,
-                    prompt_metadata=si_prompt,
-                    device=device
+                    seed_error_samples=processor.error_pool[:200],
+                    seed_correct_samples=processor.clean_pool[:200],
+                    state=si_state,
+                    config=si_config,
+                    target_batch_size=num_self_inst_target,
+                    current_step=episode,
+                    device=device,
+                    max_attempts=num_self_inst_target * 3,  # Allow 3x attempts
+                    verbose=(episode % 10 == 0)  # Log every 10 episodes
                 )
-                
-                if verified:
-                    self_inst_batch.append({
-                        "original_text": generated_note,
-                        "text": generated_note,
-                        "meta": {
-                            "has_error": si_prompt["has_error"],
-                            "error_type": si_prompt.get("error_type"),
-                            "source": "self_instruction_verified"
-                        },
-                        "ground_truth": {
-                            "has_error": si_prompt["has_error"],
-                            "error_type": si_prompt.get("error_type"),
-                            "source": "self_instruction_verified"
-                        },
-                        "quadrant": "self_instruction"
-                    })
-                    verified_count += 1
-                else:
-                    failed_count += 1
             
-            # Log verification stats periodically
+            # Log self-instruction stats periodically
             if episode % 10 == 0:
-                total_attempted = verified_count + failed_count
-                if total_attempted > 0:
-                    rate = verified_count / total_attempted * 100
-                    print(f"  Self-instruction: {verified_count}/{total_attempted} verified ({rate:.0f}%)")
+                stats = get_self_instruction_stats(si_state)
+                print(f"  SI pool: {stats['pool_size']} samples "
+                      f"(errors={stats['error_count']}, correct={stats['correct_count']}, "
+                      f"avg_diff={stats['avg_difficulty']:.2f})")
             
             # Combine batches
             batch = medec_batch + self_inst_batch
@@ -795,6 +759,25 @@ def main():
         default=0.3,
         help="Ratio of self-instructed samples in each batch (0.0-1.0)"
     )
+    # SeRL-aligned self-instruction config
+    parser.add_argument(
+        "--si_rouge_threshold",
+        type=float,
+        default=0.7,
+        help="Rouge-L threshold for diversity filtering (SeRL default: 0.7)"
+    )
+    parser.add_argument(
+        "--si_difficulty_lower",
+        type=float,
+        default=0.2,
+        help="Lower bound for difficulty filtering (SeRL default: 0.2)"
+    )
+    parser.add_argument(
+        "--si_difficulty_upper",
+        type=float,
+        default=0.8,
+        help="Upper bound for difficulty filtering (SeRL default: 0.8)"
+    )
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -850,6 +833,20 @@ def main():
     # RL Phase
     if not args.skip_rl:
         rl_output = os.path.join(args.output_dir, "rl")
+        
+        # Build self-instruction config from args
+        si_config = None
+        if args.use_self_instruction:
+            si_config = {
+                "rouge_threshold": args.si_rouge_threshold,
+                "difficulty_lower": args.si_difficulty_lower,
+                "difficulty_upper": args.si_difficulty_upper,
+                "num_few_shot": 4,
+                "num_from_generated": 2,
+                "expiration_steps": 2,
+                "n_samples_for_difficulty": 4,
+            }
+        
         run_rl_phase(
             model=model,
             tokenizer=tokenizer,
@@ -861,6 +858,7 @@ def main():
             kl_coef=1e-4,  # SeRL default
             use_self_instruction=args.use_self_instruction,
             self_instruction_ratio=args.self_instruction_ratio,
+            self_instruction_config=si_config,
         )
 
     print("\n" + "=" * 60)
