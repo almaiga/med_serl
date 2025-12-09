@@ -365,23 +365,31 @@ def run_rl_phase(
                 verify_self_instruction
             )
             
-            # Calculate split - request extra to account for failed verifications
+            # Calculate split - MEDEC batch must be divisible by 4
             num_self_inst_target = int(batch_size * self_instruction_ratio)
-            num_self_inst_request = num_self_inst_target + 4  # Buffer
             num_medec = batch_size - num_self_inst_target
+            # Round MEDEC up to nearest multiple of 4
+            if num_medec % 4 != 0:
+                num_medec = ((num_medec // 4) + 1) * 4
+                num_self_inst_target = max(0, batch_size - num_medec)
+            # Buffer for failed verifications
+            num_self_inst_request = num_self_inst_target + 4 if num_self_inst_target > 0 else 0
             
             # Get MEDEC samples
             medec_batch = processor.get_quadrant_batch(batch_size=num_medec)
             
             # Generate self-instructed samples with verification
-            self_inst_prompts = generate_self_instruction_batch(
-                batch_size=num_self_inst_request,
-                error_ratio=0.5
-            )
-            
             self_inst_batch = []
             verified_count = 0
             failed_count = 0
+            
+            if num_self_inst_target > 0:
+                self_inst_prompts = generate_self_instruction_batch(
+                    batch_size=num_self_inst_request,
+                    error_ratio=0.5
+                )
+            else:
+                self_inst_prompts = []
             
             for si_prompt in self_inst_prompts:
                 if verified_count >= num_self_inst_target:
