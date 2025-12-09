@@ -383,50 +383,34 @@ def run_rl_phase(
         episode_start = time.time()
         
         # === BATCH GENERATION ===
-        # Mix MEDEC samples with self-instructed samples if enabled (SeRL-aligned)
+        # SeRL-aligned: 100% self-instruction when enabled (no mixing)
         if use_self_instruction and si_state is not None:
-            # Calculate split
-            num_self_inst_target = int(batch_size * self_instruction_ratio)
-            num_medec = batch_size - num_self_inst_target
-            
-            # Round MEDEC up to nearest multiple of 4
-            if num_medec % 4 != 0:
-                num_medec = ((num_medec // 4) + 1) * 4
-                num_self_inst_target = max(0, batch_size - num_medec)
-            
-            # Get MEDEC samples
-            medec_batch = processor.get_quadrant_batch(batch_size=num_medec)
-            
-            # Generate self-instructed samples with SeRL filtering
+            # Generate full batch from self-instruction with SeRL filtering
             # (Rouge-L diversity + difficulty bounds + dynamic accumulation)
-            self_inst_batch = []
-            if num_self_inst_target > 0:
-                self_inst_batch = generate_and_filter_batch(
-                    model=model,
-                    tokenizer=tokenizer,
-                    seed_error_samples=processor.error_pool[:200],
-                    seed_correct_samples=processor.clean_pool[:200],
-                    state=si_state,
-                    config=si_config,
-                    target_batch_size=num_self_inst_target,
-                    current_step=episode,
-                    device=device,
-                    max_attempts=num_self_inst_target * 3,  # Allow 3x attempts
-                    verbose=(episode % 10 == 0)  # Log every 10 episodes
-                )
-            
+            batch = generate_and_filter_batch(
+                model=model,
+                tokenizer=tokenizer,
+                seed_error_samples=processor.error_pool[:200],
+                seed_correct_samples=processor.clean_pool[:200],
+                state=si_state,
+                config=si_config,
+                target_batch_size=batch_size,
+                current_step=episode,
+                device=device,
+                max_attempts=batch_size * 3,  # Allow 3x attempts
+                verbose=(episode % 10 == 0),  # Log every 10 episodes
+            )
+
             # Log self-instruction stats periodically
             if episode % 10 == 0:
                 stats = get_self_instruction_stats(si_state)
-                print(f"  SI pool: {stats['pool_size']} samples "
-                      f"(errors={stats['error_count']}, correct={stats['correct_count']}, "
-                      f"avg_diff={stats['avg_difficulty']:.2f})")
-            
-            # Combine batches
-            batch = medec_batch + self_inst_batch
-            import random
-            random.shuffle(batch)
+                print(
+                    f"  SI pool: {stats['pool_size']} samples "
+                    f"(errors={stats['error_count']}, correct={stats['correct_count']}, "
+                    f"avg_diff={stats['avg_difficulty']:.2f})"
+                )
         else:
+            # Use MEDEC samples directly
             batch = processor.get_quadrant_batch(batch_size=batch_size)
 
         episode_rewards = []
