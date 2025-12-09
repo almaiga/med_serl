@@ -286,6 +286,8 @@ def run_rl_phase(
     kl_coef: float = 1e-4,
     max_length: int = 1024,
     log_interactions: bool = True,
+    use_self_instruction: bool = False,
+    self_instruction_ratio: float = 0.3,
 ):
     """
     Run RL training with REINFORCE++ (baseline + KL penalty).
@@ -314,6 +316,9 @@ def run_rl_phase(
     print(f"Batch size: {batch_size}")
     print(f"Learning rate: {learning_rate}")
     print(f"KL coefficient: {kl_coef}")
+    print(f"Self-instruction: {use_self_instruction}")
+    if use_self_instruction:
+        print(f"Self-instruction ratio: {self_instruction_ratio}")
 
     device = next(model.parameters()).device
 
@@ -351,7 +356,106 @@ def run_rl_phase(
 
     for episode in pbar:
         episode_start = time.time()
-        batch = processor.get_quadrant_batch(batch_size=batch_size)
+        
+        # === BATCH GENERATION ===
+        # Mix MEDEC samples with self-instructed samples if enabled
+        if use_self_instruction:
+            from src.training.self_instruction import (
+                generate_self_instruction_batch,
+                verify_self_instruction
+            )
+            
+            # Calculate split - request extra to account for failed verifications
+            num_self_inst_target = int(batch_size * self_instruction_ratio)
+            num_self_inst_request = num_self_inst_target + 4  # Buffer
+            num_medec = batch_size - num_self_inst_target
+            
+            # Get MEDEC samples
+            medec_batch = processor.get_quadrant_batch(batch_size=num_medec)
+            
+            # Generate self-instructed samples with verification
+            self_inst_prompts = generate_self_instruction_batch(
+                batch_size=num_self_inst_request,
+                error_ratio=0.5
+            )
+            
+            self_inst_batch = []
+            verified_count = 0
+            failed_count = 0
+            
+            for si_prompt in self_inst_prompts:
+                if verified_count >= num_self_inst_target:
+                    break
+                    
+                # Generate clinical note
+                si_inputs = tokenizer(
+                    si_prompt["scribe_prompt"],
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=512,
+                ).to(device)
+                
+                with torch.no_grad():
+                    si_outputs = model.generate(
+                        **si_inputs,
+                        max_new_tokens=256,
+                        do_sample=True,
+                        temperature=0.8,
+                        pad_token_id=tokenizer.pad_token_id,
+                    )
+                
+                generated_note = tokenizer.decode(
+                    si_outputs[0][si_inputs["input_ids"].shape[1]:],
+                    skip_special_tokens=True
+                ).strip()
+                
+                # Skip empty or too short notes
+                if len(generated_note) < 50:
+                    failed_count += 1
+                    continue
+                
+                # Verify the generated note
+                verified, _ = verify_self_instruction(
+                    model=model,
+                    tokenizer=tokenizer,
+                    clinical_note=generated_note,
+                    prompt_metadata=si_prompt,
+                    device=device
+                )
+                
+                if verified:
+                    self_inst_batch.append({
+                        "original_text": generated_note,
+                        "text": generated_note,
+                        "meta": {
+                            "has_error": si_prompt["has_error"],
+                            "error_type": si_prompt.get("error_type"),
+                            "source": "self_instruction_verified"
+                        },
+                        "ground_truth": {
+                            "has_error": si_prompt["has_error"],
+                            "error_type": si_prompt.get("error_type"),
+                            "source": "self_instruction_verified"
+                        },
+                        "quadrant": "self_instruction"
+                    })
+                    verified_count += 1
+                else:
+                    failed_count += 1
+            
+            # Log verification stats periodically
+            if episode % 10 == 0:
+                total_attempted = verified_count + failed_count
+                if total_attempted > 0:
+                    rate = verified_count / total_attempted * 100
+                    print(f"  Self-instruction: {verified_count}/{total_attempted} verified ({rate:.0f}%)")
+            
+            # Combine batches
+            batch = medec_batch + self_inst_batch
+            import random
+            random.shuffle(batch)
+        else:
+            batch = processor.get_quadrant_batch(batch_size=batch_size)
 
         episode_rewards = []
         batch_data = []
@@ -570,21 +674,33 @@ def run_rl_phase(
 
 def format_prompt_for_chat(note: str, tokenizer) -> str:
     """Format clinical note using MedGemma chat template."""
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a medical error detection assistant. Analyze clinical notes for errors in diagnosis, management, treatment, pharmacotherapy, or causal organism identification. Respond with your reasoning in <think> tags, then your verdict in <answer> tags as CORRECT or INCORRECT."
-        },
-        {
-            "role": "user", 
-            "content": f"""Analyze this clinical note for medical errors:
+    system_content = """You are a healthcare professional specializing in analyzing medical notes.
+
+Important: Medical notes should be presumed CORRECT unless there is an obvious, significant error.
+
+Your task is to identify only clear substitution errors in:
+- Diagnostic terms that significantly change the clinical meaning
+- Medication terms that would result in wrong treatment
+- Treatment protocols that are clearly contraindicated
+- Management plans that would harm the patient
+- Causal organism identification that is clearly wrong
+
+Classification criteria:
+- INCORRECT: Contains a clinically significant error that would change patient care
+- CORRECT: Default classification - use this unless there is a clear, significant error
+
+Note: Accept all reasonable medical terminology variations. When in doubt, classify as CORRECT."""
+
+    user_content = f"""Analyze this clinical note:
 
 {note}
 
-Respond with:
-<think>[Your analysis]</think>
-<answer>CORRECT or INCORRECT</answer>"""
-        }
+Provide brief reasoning in <think> tags, then your classification in <answer> tags.
+Remember: Default to CORRECT unless you find a clear, significant clinical error."""
+
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content}
     ]
     
     # Use chat template if available
@@ -606,12 +722,14 @@ Respond with:
 
 def format_prompt(note: str) -> str:
     """Legacy format - kept for compatibility but prefer format_prompt_for_chat."""
-    return f"""You are a medical error detection assistant. Analyze the following clinical note for medical errors.
+    return f"""You are a healthcare professional analyzing medical notes.
+Presume CORRECT unless there is an obvious, significant clinical error.
 
 Clinical Note:
 {note}
 
-Respond with <think>[analysis]</think> then <answer>CORRECT</answer> or <answer>INCORRECT</answer>:
+Provide <think>[brief analysis]</think> then <answer>CORRECT</answer> or <answer>INCORRECT</answer>.
+Default to CORRECT unless you find a clear error that would change patient care:
 """
 
 
@@ -658,6 +776,17 @@ def main():
     parser.add_argument("--use_lora", action="store_true", default=True, help="Use LoRA")
     parser.add_argument("--skip_sft", action="store_true", help="Skip SFT phase")
     parser.add_argument("--skip_rl", action="store_true", help="Skip RL phase")
+    parser.add_argument(
+        "--use_self_instruction",
+        action="store_true",
+        help="Enable self-instruction (Scribe generates synthetic cases)"
+    )
+    parser.add_argument(
+        "--self_instruction_ratio",
+        type=float,
+        default=0.3,
+        help="Ratio of self-instructed samples in each batch (0.0-1.0)"
+    )
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -722,6 +851,8 @@ def main():
             batch_size=args.batch_size,
             learning_rate=args.rl_lr,
             kl_coef=1e-4,  # SeRL default
+            use_self_instruction=args.use_self_instruction,
+            self_instruction_ratio=args.self_instruction_ratio,
         )
 
     print("\n" + "=" * 60)
