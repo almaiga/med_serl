@@ -22,10 +22,10 @@ python scripts/train_gpu.py \
     --num_samples 512 \
     --sft_epochs 3 \
     --rl_episodes 50 \
-    --batch_size 12 \
+    --batch_size 8 \
     --rl_lr 5e-7 \
     --use_self_instruction \
-    --self_instruction_ratio 0.34
+    --self_instruction_ratio 0.5
 
 exec bash
 '
