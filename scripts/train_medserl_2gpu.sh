@@ -67,12 +67,12 @@ echo "Model: $MODEL_PATH"
 echo "Data: $PROMPT_DATA"
 echo "Save: $SAVE_PATH"
 
-# Start Ray if needed
-if ! ray status &>/dev/null; then
-    echo "Starting Ray..."
-    ray start --head --node-ip-address 0.0.0.0 --num-gpus $NUM_GPUS
-    sleep 5
-fi
+# Stop any existing Ray and start fresh
+echo "Restarting Ray cluster..."
+ray stop --force 2>/dev/null || true
+sleep 2
+ray start --head --node-ip-address 0.0.0.0 --num-gpus $NUM_GPUS --dashboard-host 0.0.0.0
+sleep 10  # Give Ray more time to initialize agents
 
 start_time=$(date +%s)
 
