@@ -1,4 +1,4 @@
-#!/bin/bash
+loop#!/bin/bash
 # Run baseline MedGemma inference with few-shot ICL
 
 DATASET=${1:-"ms"}
@@ -17,6 +17,9 @@ echo "Session: $SESSION_NAME"
 echo "=========================================="
 
 screen -dmS $SESSION_NAME bash -c "
+source /workspace/miniconda3/bin/activate
+conda activate med_serl
+
 python scripts/inference_error_detection.py \
     --model_path google/medgemma-4b-it \
     --model_name medgemma_baseline \
