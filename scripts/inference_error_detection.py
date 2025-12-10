@@ -21,6 +21,13 @@ from typing import List, Dict, Tuple
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoProcessor, AutoModelForImageTextToText
 from tqdm import tqdm
 
+# Try to import PEFT for LoRA support
+try:
+    from peft import PeftModel, PeftConfig
+    PEFT_AVAILABLE = True
+except ImportError:
+    PEFT_AVAILABLE = False
+
 # Qwen3 special token IDs (from official documentation)
 THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
@@ -32,11 +39,36 @@ MODEL_TYPE_GEMMA = "gemma"  # Fine-tuned Gemma/MedGemma (text-only CausalLM)
 MODEL_TYPE_GENERIC = "generic"
 
 
+def is_lora_adapter(model_path: str) -> bool:
+    """Check if the path contains a LoRA adapter."""
+    adapter_config = os.path.join(model_path, "adapter_config.json")
+    return os.path.exists(adapter_config)
+
+
+def get_base_model_from_adapter(model_path: str) -> str:
+    """Get the base model name from adapter_config.json."""
+    adapter_config_path = os.path.join(model_path, "adapter_config.json")
+    if os.path.exists(adapter_config_path):
+        with open(adapter_config_path, 'r') as f:
+            config = json.load(f)
+        return config.get("base_model_name_or_path", "")
+    return ""
+
+
 def detect_model_type(model_path: str) -> str:
     """Detect model type from path/name or model config."""
     model_path_lower = model_path.lower()
+    
+    # Check if it's a LoRA adapter and get base model
+    if is_lora_adapter(model_path):
+        base_model = get_base_model_from_adapter(model_path)
+        if base_model:
+            model_path_lower = base_model.lower()
+    
     if "medgemma" in model_path_lower:
-        return MODEL_TYPE_MEDGEMMA
+        return MODEL_TYPE_GEMMA  # Fine-tuned MedGemma uses CausalLM
+    elif "gemma" in model_path_lower:
+        return MODEL_TYPE_GEMMA
     elif "qwen" in model_path_lower:
         return MODEL_TYPE_QWEN
     else:
@@ -53,7 +85,6 @@ def detect_model_type(model_path: str) -> str:
                 if "qwen" in model_type_str or "qwen" in arch_str:
                     return MODEL_TYPE_QWEN
                 elif "gemma" in model_type_str or "gemma" in arch_str:
-                    # Fine-tuned Gemma models use standard CausalLM, not multimodal
                     return MODEL_TYPE_GEMMA
             except Exception:
                 pass
@@ -65,7 +96,15 @@ def load_model_and_tokenizer(model_path: str, model_type: str):
     print(f"Loading model from: {model_path}")
     print(f"Model type: {model_type}")
     
-    if model_type == MODEL_TYPE_MEDGEMMA:
+    # Check if this is a LoRA adapter
+    is_adapter = is_lora_adapter(model_path)
+    if is_adapter:
+        if not PEFT_AVAILABLE:
+            raise ImportError("PEFT is required to load LoRA adapters. Install with: pip install peft")
+        base_model_path = get_base_model_from_adapter(model_path)
+        print(f"🔧 Detected LoRA adapter, base model: {base_model_path}")
+    
+    if model_type == MODEL_TYPE_MEDGEMMA and not is_adapter:
         # Original MedGemma uses AutoModelForImageTextToText and AutoProcessor
         model = AutoModelForImageTextToText.from_pretrained(
             model_path,
@@ -80,24 +119,46 @@ def load_model_and_tokenizer(model_path: str, model_type: str):
         print(f"✅ MedGemma multimodal model loaded successfully")
         return model, processor
     else:
-        # Qwen, fine-tuned Gemma, and other models use standard AutoModelForCausalLM
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            trust_remote_code=True
-        )
-        
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
+        # Load base model first if it's a LoRA adapter
+        if is_adapter:
+            base_model_path = get_base_model_from_adapter(model_path)
+            print(f"📦 Loading base model: {base_model_path}")
+            model = AutoModelForCausalLM.from_pretrained(
+                base_model_path,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                trust_remote_code=True
+            )
+            print(f"🔗 Loading LoRA adapter from: {model_path}")
+            model = PeftModel.from_pretrained(model, model_path)
+            # Merge adapter for faster inference
+            print(f"⚡ Merging adapter for faster inference...")
+            model = model.merge_and_unload()
+            
+            # Load tokenizer from adapter path (has chat template) or base model
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                trust_remote_code=True
+            )
+        else:
+            # Standard model loading
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                trust_remote_code=True
+            )
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                trust_remote_code=True
+            )
         
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         
         model_type_name = "Gemma" if model_type == MODEL_TYPE_GEMMA else model_type.capitalize()
-        print(f"✅ {model_type_name} model loaded successfully")
+        adapter_info = " (with LoRA)" if is_adapter else ""
+        print(f"✅ {model_type_name} model loaded successfully{adapter_info}")
         return model, tokenizer
 
 
