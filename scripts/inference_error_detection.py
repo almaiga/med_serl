@@ -27,18 +27,36 @@ IM_END_TOKEN_ID = 151645  # <|im_end|>
 
 # Model type detection
 MODEL_TYPE_QWEN = "qwen"
-MODEL_TYPE_MEDGEMMA = "medgemma"
+MODEL_TYPE_MEDGEMMA = "medgemma"  # Original multimodal MedGemma from HF
+MODEL_TYPE_GEMMA = "gemma"  # Fine-tuned Gemma/MedGemma (text-only CausalLM)
 MODEL_TYPE_GENERIC = "generic"
 
 
 def detect_model_type(model_path: str) -> str:
-    """Detect model type from path/name."""
+    """Detect model type from path/name or model config."""
     model_path_lower = model_path.lower()
     if "medgemma" in model_path_lower:
         return MODEL_TYPE_MEDGEMMA
     elif "qwen" in model_path_lower:
         return MODEL_TYPE_QWEN
     else:
+        # Check config.json for model type if it's a local path
+        config_path = os.path.join(model_path, "config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                model_type_str = config.get("model_type", "").lower()
+                architectures = config.get("architectures", [])
+                arch_str = " ".join(architectures).lower()
+                
+                if "qwen" in model_type_str or "qwen" in arch_str:
+                    return MODEL_TYPE_QWEN
+                elif "gemma" in model_type_str or "gemma" in arch_str:
+                    # Fine-tuned Gemma models use standard CausalLM, not multimodal
+                    return MODEL_TYPE_GEMMA
+            except Exception:
+                pass
         return MODEL_TYPE_GENERIC
 
 
@@ -48,7 +66,7 @@ def load_model_and_tokenizer(model_path: str, model_type: str):
     print(f"Model type: {model_type}")
     
     if model_type == MODEL_TYPE_MEDGEMMA:
-        # MedGemma uses AutoModelForImageTextToText and AutoProcessor
+        # Original MedGemma uses AutoModelForImageTextToText and AutoProcessor
         model = AutoModelForImageTextToText.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
@@ -59,10 +77,10 @@ def load_model_and_tokenizer(model_path: str, model_type: str):
             model_path,
             trust_remote_code=True
         )
-        print(f"✅ MedGemma model loaded successfully")
+        print(f"✅ MedGemma multimodal model loaded successfully")
         return model, processor
     else:
-        # Qwen and other models use standard AutoModelForCausalLM
+        # Qwen, fine-tuned Gemma, and other models use standard AutoModelForCausalLM
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
@@ -78,7 +96,8 @@ def load_model_and_tokenizer(model_path: str, model_type: str):
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         
-        print(f"✅ Model loaded successfully")
+        model_type_name = "Gemma" if model_type == MODEL_TYPE_GEMMA else model_type.capitalize()
+        print(f"✅ {model_type_name} model loaded successfully")
         return model, tokenizer
 
 
@@ -91,25 +110,40 @@ def load_test_data(dataset_name: str = "all") -> pd.DataFrame:
     """
     dfs = []
     
+    # Try multiple possible data paths
+    data_dirs = ["data_raw/MEDEC", "data_copy/MEDEC", "data/MEDEC"]
+    
     if dataset_name in ["ms", "all"]:
-        ms_path = "data_copy/MEDEC/MEDEC-MS/MEDEC-MS-TestSet-with-GroundTruth-and-ErrorType.csv"
-        if os.path.exists(ms_path):
-            df_ms = pd.read_csv(ms_path)
-            # Filter out rows with null Text ID
-            df_ms = df_ms[df_ms['Text ID'].notna()].copy()
-            df_ms['dataset'] = 'MS'
-            dfs.append(df_ms)
-            print(f"✅ Loaded MS test set: {len(df_ms)} examples")
+        ms_loaded = False
+        for data_dir in data_dirs:
+            ms_path = f"{data_dir}/MEDEC-MS/MEDEC-MS-TestSet-with-GroundTruth-and-ErrorType.csv"
+            if os.path.exists(ms_path):
+                df_ms = pd.read_csv(ms_path)
+                # Filter out rows with null Text ID
+                df_ms = df_ms[df_ms['Text ID'].notna()].copy()
+                df_ms['dataset'] = 'MS'
+                dfs.append(df_ms)
+                print(f"✅ Loaded MS test set: {len(df_ms)} examples from {ms_path}")
+                ms_loaded = True
+                break
+        if not ms_loaded and dataset_name == "ms":
+            print(f"⚠️ MS test set not found in any of: {data_dirs}")
     
     if dataset_name in ["uw", "all"]:
-        uw_path = "data_copy/MEDEC/MEDEC-UW/MEDEC-UW-TestSet-with-GroundTruth-and-ErrorType.csv"
-        if os.path.exists(uw_path):
-            df_uw = pd.read_csv(uw_path)
-            # Filter out rows with null Text ID
-            df_uw = df_uw[df_uw['Text ID'].notna()].copy()
-            df_uw['dataset'] = 'UW'
-            dfs.append(df_uw)
-            print(f"✅ Loaded UW test set: {len(df_uw)} examples")
+        uw_loaded = False
+        for data_dir in data_dirs:
+            uw_path = f"{data_dir}/MEDEC-UW/MEDEC-UW-TestSet-with-GroundTruth-and-ErrorType.csv"
+            if os.path.exists(uw_path):
+                df_uw = pd.read_csv(uw_path)
+                # Filter out rows with null Text ID
+                df_uw = df_uw[df_uw['Text ID'].notna()].copy()
+                df_uw['dataset'] = 'UW'
+                dfs.append(df_uw)
+                print(f"✅ Loaded UW test set: {len(df_uw)} examples from {uw_path}")
+                uw_loaded = True
+                break
+        if not uw_loaded and dataset_name == "uw":
+            print(f"⚠️ UW test set not found in any of: {data_dirs}")
     
     if not dfs:
         raise FileNotFoundError(f"No test data found for dataset: {dataset_name}")
@@ -503,6 +537,89 @@ def run_inference_qwen(
     return results
 
 
+def run_inference_gemma(
+    model,
+    tokenizer,
+    test_df: pd.DataFrame,
+    use_few_shot: bool = True,
+    use_cot: bool = True,
+    max_samples: int = None,
+    temperature: float = 0.3,
+    max_new_tokens: int = 512
+) -> List[Dict]:
+    """
+    Run inference on test data using fine-tuned Gemma/MedGemma model (text-only).
+    """
+    results = []
+    
+    # Limit samples if specified
+    if max_samples:
+        test_df = test_df.head(max_samples)
+    
+    model.eval()
+    
+    for idx, row in tqdm(test_df.iterrows(), total=len(test_df), desc="Running Gemma inference"):
+        note = row['Text']
+        ground_truth = row['Error Flag']  # 0 = Safe, 1 = Has Error
+        error_type = row.get('Error Type', '')
+        
+        # Build prompt (use generic format, not MedGemma multimodal format)
+        messages, _ = build_error_detection_prompt(note, use_few_shot, use_cot, MODEL_TYPE_GENERIC)
+        
+        # Apply chat template
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        
+        # Tokenize input
+        model_inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
+        input_length = model_inputs.input_ids.size(-1)
+        
+        # Generate
+        with torch.no_grad():
+            generated_ids = model.generate(
+                **model_inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature if temperature > 0 else None,
+                do_sample=temperature > 0,
+                top_p=0.95 if temperature > 0 else None,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id
+            )
+        
+        # Decode output
+        output_ids = generated_ids[0][input_length:]
+        content = tokenizer.decode(output_ids, skip_special_tokens=True)
+        
+        # Extract label and explanation (no thinking for Gemma)
+        thinking, predicted_label, explanation = parse_response("", content)
+        
+        # Convert ground truth to label
+        gt_label = "Harmful" if ground_truth == 1 else "Safe"
+        
+        # Check if prediction is correct
+        correct = (predicted_label == gt_label)
+        
+        results.append({
+            'text_id': row.get('Text ID', f'sample_{idx}'),
+            'dataset': row.get('dataset', 'unknown'),
+            'note': note,
+            'ground_truth_flag': int(ground_truth),
+            'ground_truth_label': gt_label,
+            'error_type': error_type,
+            'predicted_label': predicted_label,
+            'explanation': explanation,
+            'thinking': thinking,
+            'correct': correct,
+            'thinking_content': "",
+            'final_content': content
+        })
+    
+    return results
+
+
 def run_inference(
     model,
     tokenizer_or_processor,
@@ -522,6 +639,17 @@ def run_inference(
         return run_inference_medgemma(
             model=model,
             processor=tokenizer_or_processor,
+            test_df=test_df,
+            use_few_shot=use_few_shot,
+            use_cot=use_cot,
+            max_samples=max_samples,
+            temperature=temperature,
+            max_new_tokens=max_new_tokens
+        )
+    elif model_type == MODEL_TYPE_GEMMA:
+        return run_inference_gemma(
+            model=model,
+            tokenizer=tokenizer_or_processor,
             test_df=test_df,
             use_few_shot=use_few_shot,
             use_cot=use_cot,
@@ -584,7 +712,7 @@ def main():
     parser.add_argument("--model_name", type=str, default=None,
                        help="Name for this model in results (default: use model_path)")
     parser.add_argument("--model_type", type=str, default=None,
-                       choices=["qwen", "medgemma", "generic"],
+                       choices=["qwen", "medgemma", "gemma", "generic"],
                        help="Model type (auto-detected if not specified)")
     
     # Data arguments
