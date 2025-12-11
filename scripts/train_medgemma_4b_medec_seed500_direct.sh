@@ -59,6 +59,7 @@ python3 -m openrlhf.cli.train_ppo_ray \
    --deepspeed_enable_sleep \
    --wandb_run_name medgemma4b-medec-direct-$(date +%Y%m%d_%H%M%S) \
    --eval_output_root_dir ${WORKING_DIR}/train_eval_outputs_dir \
+   --train_samples_root_dir ${WORKING_DIR}/train_samples_dir \
    --filtered_data_root_dir ${WORKING_DIR}/train_online_filtered_data_dir \
    --eval_dataset ${PROJECT_ROOT}/data_processed/medec/test.jsonl \
    --self_reward_method bon_maj \
