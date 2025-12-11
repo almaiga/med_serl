@@ -25,7 +25,7 @@ python3 -m openrlhf.cli.train_ppo_ray \
    --vllm_tensor_parallel_size 1 \
    --vllm_gpu_memory_utilization 0.6 \
    --advantage_estimator reinforce \
-   --pretrain /workspace/models/medgemma-4b-it \
+   --pretrain google/medgemma-4b-it \
    --remote_rm_url ${SERL_ROOT}/openrlhf/reward_utils/med_maj_reward.py,${SERL_ROOT}/openrlhf/reward_utils/med_reward.py \
    --save_path ${PROJECT_ROOT}/outputs/medgemma_4b_medec_rl_seed500 \
    --ckpt_path ${PROJECT_ROOT}/outputs/medgemma_4b_medec_rl_seed500/checkpoints \
