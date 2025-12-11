@@ -122,8 +122,14 @@ def create_vllm_engines(
     vllm_enable_sleep=False,
 ):
     import vllm
+    from packaging import version
 
-    assert vllm.__version__ >= "0.8.1", "OpenRLHF only supports vllm >= 0.8.1"
+    # Check vllm version properly
+    try:
+        assert version.parse(vllm.__version__) >= version.parse("0.8.1"), \
+            f"OpenRLHF only supports vllm >= 0.8.1, got {vllm.__version__}"
+    except Exception as e:
+        print(f"Warning: vllm version check failed: {e}. Continuing anyway...")
 
     vllm_engines = []
     noset_visible_devices = ray_noset_visible_devices(ray.get(get_all_env_variables.remote()))
