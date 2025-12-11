@@ -10,12 +10,12 @@ start_time=$(date +%s)
 # ==================================================================
 # PATHS - UPDATE THESE FOR YOUR SERVER
 # ==================================================================
-PROJECT_ROOT="/path/to/your/med_serl"
+PROJECT_ROOT="/workspace/med_serl"
 SERL_ROOT="${PROJECT_ROOT}/SeRL"
 WORKING_DIR="${SERL_ROOT}/openrlhf"
 
 # Model paths
-PRETRAIN_MODEL="/path/to/your/medgemma-4b-it"  # Update this
+PRETRAIN_MODEL="/workspace/models/medgemma-4b-it"  # Update if different
 
 # Data paths
 SEED_DATA="${PROJECT_ROOT}/data_processed/medec/seed_500.jsonl"
@@ -31,18 +31,17 @@ CKPT_PATH="${SAVE_PATH}/checkpoints"
 EVAL_OUTPUT="${WORKING_DIR}/train_eval_outputs_dir"
 FILTERED_DATA="${WORKING_DIR}/train_online_filtered_data_dir"
 
-# Logging
-WANDB_KEY="YOUR_WANDB_KEY"  # Update this
-RUN_NAME="medgemma4b-medec-maj-seed500"
+# Logging (set WANDB_KEY to your key or remove --use_wandb flag below)
+WANDB_KEY=""  # Add your W&B key here if using
+RUN_NAME="medgemma4b-medec-maj-seed500-$(date +%Y%m%d_%H%M%S)"
 
 # ==================================================================
-# HARDWARE CONFIGURATION (adjust based on your GPUs)
+# HARDWARE CONFIGURATION (2x A100 80GB)
 # ==================================================================
-# For 4B model on 4x GPUs (e.g., 4x A6000 or similar)
-# If you have different GPUs, adjust accordingly
-REF_NUM_GPUS=2
-REWARD_NUM_GPUS=2
-ACTOR_NUM_GPUS=4
+# Optimized for 2x A100 80GB GPUs
+REF_NUM_GPUS=1
+REWARD_NUM_GPUS=1
+ACTOR_NUM_GPUS=2
 VLLM_NUM_ENGINES=2
 VLLM_TENSOR_PARALLEL=1
 
@@ -112,7 +111,6 @@ ray job submit --address="http://127.0.0.1:8265" \
    --enforce_eager \
    --vllm_enable_sleep \
    --deepspeed_enable_sleep \
-   --use_wandb ${WANDB_KEY} \
    --wandb_run_name ${RUN_NAME} \
    --eval_output_root_dir ${EVAL_OUTPUT} \
    --filtered_data_root_dir ${FILTERED_DATA} \
