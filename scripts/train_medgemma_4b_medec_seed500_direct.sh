@@ -15,20 +15,18 @@ cd "${WORKING_DIR}"
 
 # Run training directly
 # GPU allocation for 2 GPUs total:
-# - vLLM engines: share GPU 0 (0.6 utilization)
-# - Ref model: share GPU 0
-# - Reward model: share GPU 1  
-# - Actor/Critic: use both GPUs with ZeRO-3
+# - GPU 0: vLLM engine (0.3) + Actor (training) + Ref (colocated)
+# - GPU 1: Reward model + Critic
 python3 -m openrlhf.cli.train_ppo_ray \
    --ref_num_nodes 1 \
    --ref_num_gpus_per_node 1 \
    --reward_num_nodes 1 \
    --reward_num_gpus_per_node 1 \
    --actor_num_nodes 1 \
-   --actor_num_gpus_per_node 2 \
+   --actor_num_gpus_per_node 1 \
    --vllm_num_engines 1 \
    --vllm_tensor_parallel_size 1 \
-   --vllm_gpu_memory_utilization 0.4 \
+   --vllm_gpu_memory_utilization 0.3 \
    --colocate_actor_ref \
    --advantage_estimator reinforce \
    --pretrain google/medgemma-4b-it \
