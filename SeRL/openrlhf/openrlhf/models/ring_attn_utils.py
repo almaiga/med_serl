@@ -1,7 +1,38 @@
 import torch
 import torch.distributed as dist
-from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
-from flash_attn.utils.distributed import all_gather
+
+# Make flash_attn optional
+try:
+    from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
+    from flash_attn.utils.distributed import all_gather
+    FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    FLASH_ATTN_AVAILABLE = False
+    print("Warning: flash_attn not available, using fallback implementations")
+    
+    # Dummy implementations when flash_attn is not available
+    def index_first_axis(x, indices):
+        return x[indices]
+    
+    def pad_input(hidden_states, indices, batch, seqlen):
+        return hidden_states, indices, None, None, None
+    
+    def unpad_input(hidden_states, attention_mask):
+        return hidden_states, None, None, None, None, None
+    
+    def rearrange(tensor, pattern, **kwargs):
+        return tensor
+    
+    def all_gather(tensor, group=None):
+        # Simple all_gather fallback
+        if group is None:
+            group = dist.group.WORLD
+        world_size = dist.get_world_size(group)
+        if world_size == 1:
+            return [tensor]
+        tensor_list = [torch.zeros_like(tensor) for _ in range(world_size)]
+        dist.all_gather(tensor_list, tensor, group=group)
+        return tensor_list
 
 RING_ATTN_GROUP = None
 
