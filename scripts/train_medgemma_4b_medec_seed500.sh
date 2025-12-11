@@ -67,7 +67,7 @@ REWARD_DIFFICULTY_MAX=0.8
 # LAUNCH TRAINING
 # ==================================================================
 ray job submit --address="http://127.0.0.1:8265" \
-   --runtime-env-json="{\"working_dir\": \"${WORKING_DIR}\", \"excludes\":[\"dataset/\", \"evolution_generation_data_dir\", \"train_eval_outputs_dir/\", \"train_online_filtered_data_dir/\", \"train_samples_dir/\"]}" \
+   --runtime-env-json="{\"working_dir\": \"${WORKING_DIR}\", \"excludes\":[\"dataset/\", \"evolution_generation_data_dir\", \"train_eval_outputs_dir/\", \"train_online_filtered_data_dir/\", \"train_samples_dir/\", \"*.whl\", \"__pycache__/\", \"*.pyc\"]}" \
    -- python3 -m openrlhf.cli.train_ppo_ray \
    --ref_num_nodes 1 \
    --ref_num_gpus_per_node ${REF_NUM_GPUS} \
