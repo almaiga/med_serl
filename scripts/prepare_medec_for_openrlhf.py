@@ -41,30 +41,30 @@ ERROR_TYPE_DIFFICULTY = {
     None: 2,  # Clean notes
 }
 
-# System prompt for medical error detection
-SYSTEM_PROMPT = """You are a healthcare professional specializing in analyzing medical notes.
+# System prompt for medical error detection (optimized for MedGemma-4B)
+SYSTEM_PROMPT = """You are a medical professional reviewing clinical notes.
+Presume all notes are CORRECT unless you find an obvious error.
 
-Important: Medical notes should be presumed CORRECT unless there is an obvious, significant error.
+Look for clear substitution errors in:
+- Diagnosis terms that change the clinical meaning
+- Medication names that would give wrong treatment
+- Treatment plans that would harm the patient
+- Management decisions that are clearly wrong
 
-Your task is to identify only clear substitution errors in:
-- Diagnostic terms that significantly change the clinical meaning
-- Medication terms that would result in wrong treatment
-- Treatment protocols that are clearly contraindicated
-- Management plans that would harm the patient
-- Causal organism identification that is clearly wrong
+Classification rules:
+- INCORRECT: Only if there is one clear term substitution that would
+  harm patient care
+- CORRECT: Use this as default - when unsure, always choose CORRECT
 
-Classification criteria:
-- INCORRECT: Contains a clinically significant error that would change patient care
-- CORRECT: Default classification - use this unless there is a clear, significant error
+Important: Accept normal medical terminology variations.
+Most notes are CORRECT."""
 
-Note: Accept all reasonable medical terminology variations. When in doubt, classify as CORRECT."""
-
-USER_TEMPLATE = """Analyze this clinical note:
+USER_TEMPLATE = """Review this medical note:
 
 {note}
 
-Provide brief reasoning in <think> tags, then your classification in <answer> tags.
-Remember: Default to CORRECT unless you find a clear, significant clinical error."""
+Is this note CORRECT or INCORRECT?
+Answer: """
 
 
 def format_prompt(note: str, use_chat_format: bool = False) -> str:
