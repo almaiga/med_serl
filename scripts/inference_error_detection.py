@@ -224,25 +224,25 @@ def get_few_shot_examples() -> List[Dict[str, str]]:
         {
             "note": "A 53-year-old man comes to the physician because of a 1-day history of fever and chills, severe malaise, and cough with yellow-green sputum. He works as a commercial fisherman on Lake Superior. Current medications include metoprolol and warfarin. His temperature is 38.5 C (101.3 F), pulse is 96/min, respirations are 26/min, and blood pressure is 98/62 mm Hg. Examination shows increased fremitus and bronchial breath sounds over the right middle lung field. After reviewing imaging, the causal pathogen was determined to be Haemophilus influenzae. An x-ray of the chest showed consolidation of the right upper lobe.",
             "reasoning": "Analyzing this pneumonia case:\n1. Clinical presentation: fever, productive cough, vital signs showing tachypnea and hypotension\n2. Physical exam: increased fremitus and bronchial breath sounds in right middle lung field\n3. Imaging: consolidation of right UPPER lobe\n4. Stated pathogen: Haemophilus influenzae\n\nDiscrepancy detected: Physical exam findings are in the right MIDDLE lung field, but X-ray shows RIGHT UPPER lobe consolidation. This anatomical mismatch is concerning. Additionally, for a lobar pneumonia with these classic findings, Streptococcus pneumoniae is more likely than H. influenzae in an adult.",
-            "label": "Harmful",
+            "label": "INCORRECT",
             "explanation": "Anatomical discrepancy between physical exam (right middle field) and imaging (right upper lobe), plus incorrect pathogen identification"
         },
         {
             "note": "A 53-year-old man comes to the physician because of a 1-day history of fever and chills, severe malaise, and cough with yellow-green sputum. He works as a commercial fisherman on Lake Superior. Current medications include metoprolol and warfarin. His temperature is 38.5 C (101.3 F), pulse is 96/min, respirations are 26/min, and blood pressure is 98/62 mm Hg. Examination shows increased fremitus and bronchial breath sounds over the right middle lung field. An x-ray of the chest shows consolidation of the right upper lobe. The causal pathogen is Streptococcus pneumoniae.",
             "reasoning": "Reviewing this pneumonia case:\n1. Clinical presentation: acute onset fever, chills, productive cough with purulent sputum\n2. Vital signs: fever 38.5C, tachypnea (26/min), relative hypotension\n3. Physical exam: increased fremitus and bronchial breath sounds - classic for consolidation\n4. Imaging: right upper lobe consolidation\n5. Pathogen: Streptococcus pneumoniae\n\nAll findings are consistent with community-acquired pneumonia. S. pneumoniae is the most common cause of lobar pneumonia in adults. Physical exam and imaging findings align appropriately. No errors detected.",
-            "label": "Safe",
+            "label": "CORRECT",
             "explanation": "Consistent clinical presentation of community-acquired pneumonia with appropriate pathogen identification"
         },
         {
             "note": "A 9-year-old girl is brought to the pediatrician by her mother who reports that the girl has been complaining of genital itching over the past few days. She states she has noticed her daughter scratching her buttocks and anus for the past week; however, now she is scratching her groin quite profusely as well. The mother notices that symptoms seem to be worse at night. The girl is otherwise healthy, is up to date on her vaccinations, and feels well. She was recently treated with amoxicillin for a middle ear infection. The child also had a recent bout of diarrhea that was profuse and watery that seems to be improving. Her temperature is 98.5 F (36.9 C), pulse is 88/min, respirations are 18/min, and blood pressure is 110/72 mm Hg. Suspected of infection with Giardia lamblia.",
             "reasoning": "Analyzing this pediatric case:\n1. Chief complaint: perianal and genital itching, worse at night\n2. Key symptom: nocturnal pruritus (worse at night) - classic sign\n3. Location: anus, buttocks, groin\n4. Recent history: recent diarrhea (improving), recent antibiotics\n5. Suspected diagnosis: Giardia lamblia\n\nError identified: The clinical presentation strongly suggests pinworm (Enterobius vermicularis) infection, NOT Giardia. Nocturnal perianal itching is pathognomonic for pinworms. Giardia causes GI symptoms (diarrhea, bloating) but not the characteristic nighttime perianal itching. This is a diagnostic error.",
-            "label": "Harmful",
+            "label": "INCORRECT",
             "explanation": "Incorrect diagnosis - symptoms indicate Enterobius vermicularis (pinworm) infection, not Giardia lamblia"
         },
         {
             "note": "A 9-year-old girl is brought to the pediatrician by her mother who reports that the girl has been complaining of genital itching over the past few days. She states she has noticed her daughter scratching her buttocks and anus for the past week; however, now she is scratching her groin quite profusely as well. The mother notices that symptoms seem to be worse at night. The girl is otherwise healthy, is up to date on her vaccinations, and feels well. She was recently treated with amoxicillin for a middle ear infection. The child also had a recent bout of diarrhea that was profuse and watery that seems to be improving. Her temperature is 98.5 F (36.9 C), pulse is 88/min, respirations are 18/min, and blood pressure is 110/72 mm Hg. Suspected of infection with Enterobius vermicularis.",
             "reasoning": "Reviewing this pediatric case:\n1. Presenting complaint: perianal and genital itching for one week\n2. Key feature: symptoms worse at night (nocturnal pruritus)\n3. Location: anus, buttocks, groin area\n4. Patient: otherwise healthy 9-year-old girl\n5. Diagnosis: Enterobius vermicularis (pinworm)\n\nThis is correct. Nocturnal perianal itching is the hallmark symptom of pinworm infection. Female pinworms migrate to the perianal area at night to lay eggs, causing intense itching. The diagnosis matches the clinical presentation perfectly. No errors detected.",
-            "label": "Safe",
+            "label": "CORRECT",
             "explanation": "Correct diagnosis of Enterobius vermicularis based on classic nocturnal perianal itching"
         }
     ]
@@ -259,11 +259,11 @@ def build_error_detection_prompt(
     
     Returns: (messages list for chat template, enable_thinking flag)
     """
-    system_prompt = """You are an expert medical safety auditor. Your task is to carefully analyze medical notes for potential errors, safety issues, or harmful content.
+    system_prompt = """You are an expert medical error detection system. Your task is to carefully analyze medical notes for potential clinical errors, diagnostic mistakes, or treatment inaccuracies.
 
 Classify each note as:
-- "Safe": No errors or safety concerns detected
-- "Harmful": Contains medical errors, safety issues, or harmful content
+- "CORRECT": No medical errors detected
+- "INCORRECT": Contains medical errors, diagnostic mistakes, or treatment inaccuracies
 
 Always explain your reasoning."""
 
@@ -356,15 +356,13 @@ def parse_response(thinking: str, content: str) -> Tuple[str, str, str]:
         line_lower = line.lower().strip()
         
         # Look for label
-        if 'label:' in line_lower:
+        if 'label:' in line_lower or 'answer:' in line_lower:
             label_text = line.split(':', 1)[1].strip()
             # Normalize label
-            if 'safe' in label_text.lower() and 'harmful' not in label_text.lower():
-                label = 'Safe'
-            elif 'harmful' in label_text.lower():
-                label = 'Harmful'
-            elif 'concerning' in label_text.lower():
-                label = 'Concerning'
+            if 'correct' in label_text.lower() and 'incorrect' not in label_text.lower():
+                label = 'CORRECT'
+            elif 'incorrect' in label_text.lower():
+                label = 'INCORRECT'
         
         # Look for explanation
         if 'explanation:' in line_lower:
@@ -379,10 +377,10 @@ def parse_response(thinking: str, content: str) -> Tuple[str, str, str]:
     # If no structured format, try to infer from text
     if label == "Unknown":
         content_lower = content.lower()
-        if 'no error' in content_lower or 'appears safe' in content_lower or 'is safe' in content_lower:
-            label = 'Safe'
-        elif 'error' in content_lower or 'harmful' in content_lower or 'dangerous' in content_lower:
-            label = 'Harmful'
+        if 'no error' in content_lower or 'is correct' in content_lower or 'correct' in content_lower:
+            label = 'CORRECT'
+        elif 'error' in content_lower or 'incorrect' in content_lower or 'mistake' in content_lower:
+            label = 'INCORRECT'
     
     # If still no explanation, use the whole content
     if not explanation:
@@ -449,7 +447,7 @@ def run_inference_medgemma(
         thinking, predicted_label, explanation = parse_response("", content)
         
         # Convert ground truth to label
-        gt_label = "Harmful" if ground_truth == 1 else "Safe"
+        gt_label = "INCORRECT" if ground_truth == 1 else "CORRECT"
         
         # Check if prediction is correct
         correct = (predicted_label == gt_label)
@@ -575,7 +573,7 @@ def run_inference_qwen(
         )
         
         # Convert ground truth to label
-        gt_label = "Harmful" if ground_truth == 1 else "Safe"
+        gt_label = "INCORRECT" if ground_truth == 1 else "CORRECT"
         
         # Check if prediction is correct
         correct = (predicted_label == gt_label)
@@ -658,7 +656,7 @@ def run_inference_gemma(
         thinking, predicted_label, explanation = parse_response("", content)
         
         # Convert ground truth to label
-        gt_label = "Harmful" if ground_truth == 1 else "Safe"
+        gt_label = "INCORRECT" if ground_truth == 1 else "CORRECT"
         
         # Check if prediction is correct
         correct = (predicted_label == gt_label)
@@ -737,11 +735,11 @@ def calculate_metrics(results: List[Dict]) -> Dict:
     total = len(results)
     correct = sum(1 for r in results if r['correct'])
     
-    # Binary classification metrics (Safe vs Harmful)
-    tp = sum(1 for r in results if r['predicted_label'] == 'Harmful' and r['ground_truth_label'] == 'Harmful')
-    fp = sum(1 for r in results if r['predicted_label'] == 'Harmful' and r['ground_truth_label'] == 'Safe')
-    tn = sum(1 for r in results if r['predicted_label'] == 'Safe' and r['ground_truth_label'] == 'Safe')
-    fn = sum(1 for r in results if r['predicted_label'] == 'Safe' and r['ground_truth_label'] == 'Harmful')
+    # Binary classification metrics (CORRECT vs INCORRECT)
+    tp = sum(1 for r in results if r['predicted_label'] == 'INCORRECT' and r['ground_truth_label'] == 'INCORRECT')
+    fp = sum(1 for r in results if r['predicted_label'] == 'INCORRECT' and r['ground_truth_label'] == 'CORRECT')
+    tn = sum(1 for r in results if r['predicted_label'] == 'CORRECT' and r['ground_truth_label'] == 'CORRECT')
+    fn = sum(1 for r in results if r['predicted_label'] == 'CORRECT' and r['ground_truth_label'] == 'INCORRECT')
     
     accuracy = correct / total if total > 0 else 0
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0

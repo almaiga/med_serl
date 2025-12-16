@@ -1,7 +1,7 @@
 #!/bin/bash
 # MedSeRL Inference Script
 # Runs inference in a detached screen session
-
+d
 set -e
 
 # Install screen if not available
