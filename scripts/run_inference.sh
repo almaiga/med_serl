@@ -68,8 +68,9 @@ python scripts/inference_error_detection.py \\
     --model_path \"$MODEL_PATH\" \\
     --model_name \"$MODEL_NAME\" \\
     --dataset all \\
-    --temperature 0.3 \\
-    --max_new_tokens 512 \\
+    --temperature 0 \\
+    --max_new_tokens 128 \\
+    --no_cot \\
     --output_dir results/inference \\
     $EXTRA_ARGS
 
