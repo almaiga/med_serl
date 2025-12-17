@@ -11,8 +11,8 @@ if ! command -v screen &> /dev/null; then
     sudo apt-get update && sudo apt-get install -y screen
 fi
 
-MODEL_PATH="Qwen/Qwen2.5-3B-Instruct"
-MODEL_NAME="qwen3-3b"
+MODEL_PATH="Qwen/Qwen3-4B"
+MODEL_NAME="qwen3-4b"
 OUTPUT_DIR="data_processed/medec"
 TEMPERATURE=0.7
 MAX_TOKENS=256
@@ -54,6 +54,8 @@ echo 'Temperature: $TEMPERATURE'
 echo '=========================================='
 echo ''
 
+# Run with error handling
+set +e
 python scripts/generate_postfill_reasoning.py \\
     --model_path \"$MODEL_PATH\" \\
     --model_name \"$MODEL_NAME\" \\
@@ -64,9 +66,21 @@ python scripts/generate_postfill_reasoning.py \\
     $MAX_SAMPLES \\
     $OUTPUT_NAME
 
+EXIT_CODE=\$?
+
+if [ \$EXIT_CODE -eq 0 ]; then
+    echo ''
+    echo '✅ Generation complete!'
+    echo 'Results saved to: $OUTPUT_DIR'
+else
+    echo ''
+    echo '❌ Generation failed with exit code:' \$EXIT_CODE
+    echo 'Check the output above for errors'
+fi
+
 echo ''
-echo '✅ Generation complete!'
-echo 'Results saved to: $OUTPUT_DIR'
+echo 'Press Enter to exit or wait 60 seconds...'
+read -t 60
 
 exec bash
 "
