@@ -1,0 +1,9 @@
+{
+  "system_prompt": "You are an expert medical error detection system. You will be given a medical note and its correct classification. Your task is to provide a brief, clear explanation (2-3 sentences) justifying why this classification is accurate.",
+  
+  "postfill_template_correct": "This medical note has been classified as CORRECT (no medical errors detected).\n\nMedical Note:\n{note}\n\nProvide a brief explanation (2-3 sentences) explaining why this note is correct and contains no clinical errors, diagnostic mistakes, or treatment inaccuracies.",
+  
+  "postfill_template_incorrect": "This medical note has been classified as INCORRECT (contains medical errors).\n\nMedical Note:\n{note}\n\nProvide a brief explanation (2-3 sentences) explaining what medical errors, diagnostic mistakes, or clinical inconsistencies make this note incorrect.",
+  
+  "description": "Prompts for post-fill reasoning generation. The model is given the answer first and generates reasoning to justify the classification."
+}
