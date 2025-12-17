@@ -51,105 +51,53 @@ def load_prompts(prompt_file: str = None) -> Dict[str, str]:
     return prompts
 
 
-def load_training_data(data_source: str = "raw") -> pd.DataFrame:
+def load_training_data(data_path: str = "data_raw/MEDEC") -> List[Dict]:
     """
-    Load MEDEC training data (excluding test sets).
+    Load MEDEC training data using existing MedicalDataProcessor.
     
     Args:
-        data_source: "raw" for CSV files, "processed" for existing JSONL
+        data_path: Path to MEDEC dataset
+    
+    Returns:
+        List of training examples with text, error_flag, dataset info
     """
-    dfs = []
+    from src.data_processor import MedicalDataProcessor
     
-    if data_source == "raw":
-        # Try multiple possible data paths
-        data_dirs = ["data_raw/MEDEC", "data_copy/MEDEC", "data/MEDEC"]
-        
-        # Load MS training data
-        ms_loaded = False
-        for data_dir in data_dirs:
-            # Look for training file (not test file)
-            ms_files = [
-                f"{data_dir}/MEDEC-MS/MEDEC-MS.csv",
-                f"{data_dir}/MEDEC-MS/train.csv",
-                f"{data_dir}/MEDEC-MS/MEDEC-MS-TrainingSet.csv"
-            ]
-            
-            for ms_path in ms_files:
-                if os.path.exists(ms_path):
-                    df_ms = pd.read_csv(ms_path)
-                    # Filter out rows with null Text ID
-                    df_ms = df_ms[df_ms['Text ID'].notna()].copy()
-                    df_ms['dataset'] = 'MS'
-                    dfs.append(df_ms)
-                    print(f"✅ Loaded MS training set: {len(df_ms)} examples from {ms_path}")
-                    ms_loaded = True
-                    break
-            if ms_loaded:
-                break
-        
-        if not ms_loaded:
-            print(f"⚠️ MS training set not found. Will look for all MS data...")
-            for data_dir in data_dirs:
-                ms_path = f"{data_dir}/MEDEC-MS/MEDEC-MS.csv"
-                if os.path.exists(ms_path):
-                    df_ms = pd.read_csv(ms_path)
-                    # Filter out test examples if 'split' column exists
-                    if 'split' in df_ms.columns:
-                        df_ms = df_ms[df_ms['split'] == 'train'].copy()
-                    df_ms = df_ms[df_ms['Text ID'].notna()].copy()
-                    df_ms['dataset'] = 'MS'
-                    dfs.append(df_ms)
-                    print(f"✅ Loaded MS data: {len(df_ms)} examples from {ms_path}")
-                    break
-        
-        # Load UW training data
-        uw_loaded = False
-        for data_dir in data_dirs:
-            uw_files = [
-                f"{data_dir}/MEDEC-UW/MEDEC-UW.csv",
-                f"{data_dir}/MEDEC-UW/train.csv",
-                f"{data_dir}/MEDEC-UW/MEDEC-UW-TrainingSet.csv"
-            ]
-            
-            for uw_path in uw_files:
-                if os.path.exists(uw_path):
-                    df_uw = pd.read_csv(uw_path)
-                    df_uw = df_uw[df_uw['Text ID'].notna()].copy()
-                    df_uw['dataset'] = 'UW'
-                    dfs.append(df_uw)
-                    print(f"✅ Loaded UW training set: {len(df_uw)} examples from {uw_path}")
-                    uw_loaded = True
-                    break
-            if uw_loaded:
-                break
-        
-        if not uw_loaded:
-            print(f"⚠️ UW training set not found. Will look for all UW data...")
-            for data_dir in data_dirs:
-                uw_path = f"{data_dir}/MEDEC-UW/MEDEC-UW.csv"
-                if os.path.exists(uw_path):
-                    df_uw = pd.read_csv(uw_path)
-                    if 'split' in df_uw.columns:
-                        df_uw = df_uw[df_uw['split'] == 'train'].copy()
-                    df_uw = df_uw[df_uw['Text ID'].notna()].copy()
-                    df_uw['dataset'] = 'UW'
-                    dfs.append(df_uw)
-                    print(f"✅ Loaded UW data: {len(df_uw)} examples from {uw_path}")
-                    break
+    processor = MedicalDataProcessor.load_training_data(data_path=data_path)
+    print(f"✅ Loaded MEDEC data")
+    print(f"  Error pool: {len(processor.error_pool)} samples")
+    print(f"  Clean pool: {len(processor.clean_pool)} samples")
     
-    if not dfs:
-        raise FileNotFoundError("No training data found. Please check data paths.")
+    # Convert to list format for generation
+    training_examples = []
     
-    df = pd.concat(dfs, ignore_index=True)
+    # Add error samples
+    for sample in processor.error_pool:
+        training_examples.append({
+            'text_id': sample.get('text_id', 'unknown'),
+            'dataset': sample.get('dataset', 'unknown'),
+            'text': sample.get('original_text', sample.get('text', '')),
+            'error_flag': 1,
+            'label': 'INCORRECT',
+            'error_type': sample.get('meta', {}).get('error_type', 'unknown')
+        })
     
-    # Exclude test examples if they're in the same file
-    if 'Text ID' in df.columns:
-        # Filter out test IDs (they usually have 'test' in the ID)
-        df = df[~df['Text ID'].str.contains('test', case=False, na=False)].copy()
+    # Add clean samples
+    for sample in processor.clean_pool:
+        training_examples.append({
+            'text_id': sample.get('text_id', 'unknown'),
+            'dataset': sample.get('dataset', 'unknown'),
+            'text': sample.get('original_text', sample.get('text', '')),
+            'error_flag': 0,
+            'label': 'CORRECT',
+            'error_type': None
+        })
     
-    print(f"📊 Total training examples: {len(df)}")
+    print(f"📊 Total training examples: {len(training_examples)}")
+    print(f"  INCORRECT: {sum(1 for ex in training_examples if ex['label'] == 'INCORRECT')}")
+    print(f"  CORRECT: {sum(1 for ex in training_examples if ex['label'] == 'CORRECT')}")
     
-    return df
+    return training_examples
 
 
 def build_postfill_prompt(note: str, label: str, prompts: Dict[str, str]) -> List[Dict[str, str]]:
@@ -233,7 +181,7 @@ def generate_reasoning_batch(
 def generate_postfill_data(
     model,
     tokenizer,
-    train_df: pd.DataFrame,
+    training_examples: List[Dict],
     prompts: Dict[str, str],
     batch_size: int = 1,
     temperature: float = 0.7,
@@ -247,22 +195,21 @@ def generate_postfill_data(
     
     # Limit samples if specified
     if max_samples:
-        train_df = train_df.head(max_samples)
+        training_examples = training_examples[:max_samples]
     
     model.eval()
     
     # Process in batches
-    total_batches = (len(train_df) + batch_size - 1) // batch_size
+    total_batches = (len(training_examples) + batch_size - 1) // batch_size
     
-    for batch_idx in tqdm(range(0, len(train_df), batch_size), 
+    for batch_idx in tqdm(range(0, len(training_examples), batch_size), 
                           total=total_batches, 
                           desc="Generating post-fill reasoning"):
-        batch_df = train_df.iloc[batch_idx:batch_idx + batch_size]
+        batch_examples = training_examples[batch_idx:batch_idx + batch_size]
         
         # Extract batch data
-        notes = batch_df['Text'].tolist()
-        error_flags = batch_df['Error Flag'].tolist()
-        labels = ["INCORRECT" if flag == 1 else "CORRECT" for flag in error_flags]
+        notes = [ex['text'] for ex in batch_examples]
+        labels = [ex['label'] for ex in batch_examples]
         
         # Generate reasoning
         reasonings = generate_reasoning_batch(
@@ -276,15 +223,14 @@ def generate_postfill_data(
         )
         
         # Store results
-        for idx, row in batch_df.iterrows():
-            result_idx = batch_idx + (idx - batch_df.index[0])
+        for i, ex in enumerate(batch_examples):
             results.append({
-                'text_id': row.get('Text ID', f"train_{result_idx}"),
-                'dataset': row.get('dataset', 'unknown'),
-                'note': row['Text'],
-                'label': labels[result_idx - batch_idx],
-                'error_flag': int(row['Error Flag']),
-                'reasoning': reasonings[result_idx - batch_idx]
+                'text_id': ex['text_id'],
+                'dataset': ex['dataset'],
+                'note': ex['text'],
+                'label': ex['label'],
+                'error_flag': ex['error_flag'],
+                'reasoning': reasonings[i]
             })
     
     return results
@@ -300,9 +246,8 @@ def main():
                        help="Model name for output file")
     
     # Data arguments
-    parser.add_argument("--data_source", type=str, default="raw",
-                       choices=["raw", "processed"],
-                       help="Data source: raw CSV or processed JSONL")
+    parser.add_argument("--medec_path", type=str, default="data_raw/MEDEC",
+                       help="Path to MEDEC dataset")
     parser.add_argument("--max_samples", type=int, default=None,
                        help="Maximum samples to process (for testing)")
     
@@ -336,7 +281,7 @@ def main():
     print(f"🔬 Generating Post-Fill Reasoning Data")
     print(f"{'='*60}")
     print(f"Model: {args.model_path}")
-    print(f"Data Source: {args.data_source}")
+    print(f"MEDEC Path: {args.medec_path}")
     print(f"Temperature: {args.temperature}")
     print(f"Max Tokens: {args.max_new_tokens}")
     print(f"Batch Size: {args.batch_size}")
@@ -366,14 +311,14 @@ def main():
     
     # Load training data
     print(f"\n📊 Loading training data...")
-    train_df = load_training_data(args.data_source)
+    training_examples = load_training_data(args.medec_path)
     
     # Generate post-fill reasoning
     print(f"\n🔄 Generating reasoning...")
     results = generate_postfill_data(
         model=model,
         tokenizer=tokenizer,
-        train_df=train_df,
+        training_examples=training_examples,
         prompts=prompts,
         batch_size=args.batch_size,
         temperature=args.temperature,

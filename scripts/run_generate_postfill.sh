@@ -46,6 +46,9 @@ echo ""
 screen -dmS $SESSION_NAME bash -c "
 cd $(pwd)
 
+# Disable hf_transfer to avoid dependency issues (or install it if you want faster downloads)
+export HF_HUB_ENABLE_HF_TRANSFER=1
+
 echo '=========================================='
 echo '🔬 Generating Post-Fill Reasoning'
 echo '=========================================='
