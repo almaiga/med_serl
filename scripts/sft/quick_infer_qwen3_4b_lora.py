@@ -402,7 +402,10 @@ def main() -> None:
                     pad_token_id=tokenizer.eos_token_id,
                 )
 
-            generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            # Decode ONLY the generated tokens (not the input prompt)
+            input_length = inputs['input_ids'].shape[1]
+            generated_tokens = outputs[0][input_length:]
+            generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
             predicted = extract_final_answer(generated)
             is_correct = predicted == expected
             total += 1
