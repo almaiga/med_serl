@@ -57,15 +57,31 @@ def build_messages(mode: str, note: str, prompt_intent: str) -> List[Dict[str, s
         )
         system_prompt = SYSTEM_PROMPTS["assessor"]
     else:
-        user_content = (
-            "Role: error injector\n"
-            "Task: follow the prompt intent and transform the input note into a new note.\n"
-            f'prompt_intent: "{prompt_intent}"\n\n'
-            f"input_note:\n{note}\n\n"
-            "Provide your reasoning in a <think> block, then output:\n"
-            "generated_note:\n... \n"
-            'final_answer: "CORRECT" or "INCORRECT"\n'
-        )
+        # Check if this is a "correct" task (rephrase) or "incorrect" task (inject error)
+        if "no clinical errors" in prompt_intent.lower() or "realistic note" in prompt_intent.lower():
+            # Injector correct: rephrase one sentence
+            user_content = (
+                "Role: error injector\n"
+                "Task: Rewrite the note by changing ONE sentence to use different words.\n"
+                "Keep the same medical meaning. Copy all other sentences exactly.\n\n"
+                f"input_note:\n{note}\n\n"
+                "In your <think> block, show which sentence you will change.\n"
+                "Then output:\n"
+                "generated_note:\n[the note with one sentence reworded]\n\n"
+                'final_answer: "CORRECT"\n'
+            )
+        else:
+            # Injector incorrect: inject one error
+            user_content = (
+                "Role: error injector\n"
+                f"Task: Rewrite the note by changing ONE sentence to introduce a {prompt_intent}.\n"
+                "Copy all other sentences exactly.\n\n"
+                f"input_note:\n{note}\n\n"
+                "In your <think> block, show which sentence you will change and what error you will add.\n"
+                "Then output:\n"
+                "generated_note:\n[the note with one error]\n\n"
+                'final_answer: "INCORRECT"\n'
+            )
         system_prompt = SYSTEM_PROMPTS["injector"]
 
     return [
