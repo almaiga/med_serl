@@ -106,15 +106,15 @@ def parse_args() -> argparse.Namespace:
 
 def extract_final_answer(text: str) -> Optional[str]:
     """Extract final answer with multiple fallback patterns."""
-    # Primary pattern: exact format
-    match = re.search(r'final_answer:\s*"(CORRECT|INCORRECT)"', text, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
+    # Use findall to get ALL matches, then take the last one
+    matches = re.findall(r'final_answer:\s*"(CORRECT|INCORRECT)"', text, re.IGNORECASE)
+    if matches:
+        return matches[-1].upper()  # Return the LAST match
     
-    # Fallback 1: without quotes
-    match = re.search(r'final_answer:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
+    # Fallback 1: without quotes (also get last match)
+    matches = re.findall(r'final_answer:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
+    if matches:
+        return matches[-1].upper()
     
     # Fallback 2: look for Error Detected field (from model's old format)
     if re.search(r'Error Detected:\s*Yes', text, re.IGNORECASE):
@@ -122,10 +122,10 @@ def extract_final_answer(text: str) -> Optional[str]:
     elif re.search(r'Error Detected:\s*No', text, re.IGNORECASE):
         return "CORRECT"
     
-    # Fallback 3: look at assessment line
-    match = re.search(r'Assessment:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
+    # Fallback 3: look at assessment line (get last match)
+    matches = re.findall(r'Assessment:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
+    if matches:
+        return matches[-1].upper()
     
     return None
 
