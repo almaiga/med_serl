@@ -9,6 +9,7 @@ Example:
 """
 
 import argparse
+import inspect
 import os
 import re
 from typing import Dict, List
@@ -185,24 +186,29 @@ def main() -> None:
         target_modules=target_modules,
     )
 
-    training_args = SFTConfig(
-        output_dir=args.output_dir,
-        max_seq_length=args.max_seq_length,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=args.per_device_eval_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        learning_rate=args.learning_rate,
-        num_train_epochs=args.num_train_epochs,
-        warmup_ratio=args.warmup_ratio,
-        logging_steps=args.logging_steps,
-        save_steps=args.save_steps,
-        evaluation_strategy="steps" if eval_ds is not None else "no",
-        eval_steps=args.eval_steps if eval_ds is not None else None,
-        bf16=args.bf16,
-        fp16=args.fp16,
-        save_total_limit=2,
-        report_to="none",
-    )
+    sft_kwargs = {
+        "output_dir": args.output_dir,
+        "per_device_train_batch_size": args.per_device_train_batch_size,
+        "per_device_eval_batch_size": args.per_device_eval_batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "learning_rate": args.learning_rate,
+        "num_train_epochs": args.num_train_epochs,
+        "warmup_ratio": args.warmup_ratio,
+        "logging_steps": args.logging_steps,
+        "save_steps": args.save_steps,
+        "evaluation_strategy": "steps" if eval_ds is not None else "no",
+        "eval_steps": args.eval_steps if eval_ds is not None else None,
+        "bf16": args.bf16,
+        "fp16": args.fp16,
+        "save_total_limit": 2,
+        "report_to": "none",
+    }
+    sig = inspect.signature(SFTConfig.__init__)
+    if "max_seq_length" in sig.parameters:
+        sft_kwargs["max_seq_length"] = args.max_seq_length
+    else:
+        sft_kwargs["max_length"] = args.max_seq_length
+    training_args = SFTConfig(**sft_kwargs)
 
     trainer = SFTTrainer(
         model=model,
