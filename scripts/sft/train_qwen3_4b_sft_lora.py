@@ -208,7 +208,8 @@ def main() -> None:
         sft_kwargs["max_seq_length"] = args.max_seq_length
     else:
         sft_kwargs["max_length"] = args.max_seq_length
-    training_args = SFTConfig(**sft_kwargs)
+    filtered_kwargs = {k: v for k, v in sft_kwargs.items() if k in sig.parameters}
+    training_args = SFTConfig(**filtered_kwargs)
 
     trainer = SFTTrainer(
         model=model,
