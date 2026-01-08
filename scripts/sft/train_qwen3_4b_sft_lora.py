@@ -71,7 +71,8 @@ def build_messages(example: Dict) -> List[Dict[str, str]]:
             f"Clinical note:\n{note}\n"
         )
     else:
-        source_note = example.get("correct_note", "").strip() or note
+        correct_note = example.get("correct_note") or ""
+        source_note = correct_note.strip() or note
         error_type = (example.get("error_type") or "").strip()
         if final_answer == "INCORRECT" and error_type:
             prompt_intent = (
