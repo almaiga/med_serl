@@ -14,7 +14,8 @@ import argparse
 import json
 import random
 import re
-from typing import Dict, List, Optional
+from difflib import SequenceMatcher
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from peft import PeftModel
@@ -95,9 +96,11 @@ def parse_args() -> argparse.Namespace:
         default="Create a realistic note with no clinical errors.",
         help="Injector intent.",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=1024)  # Increased from 512
+    parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument("--min-similarity", type=float, default=0.80, help="Minimum similarity threshold.")
+    parser.add_argument("--max-similarity", type=float, default=0.99, help="Maximum similarity threshold.")
     return parser.parse_args()
 
 
@@ -125,6 +128,36 @@ def extract_final_answer(text: str) -> Optional[str]:
         return match.group(1).upper()
     
     return None
+
+
+def extract_generated_note(text: str) -> Optional[str]:
+    """Extract the generated_note section from injector output."""
+    # Look for generated_note: followed by content until final_answer
+    match = re.search(r'generated_note:\s*\n(.*?)\n\s*final_answer:', text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    
+    # Fallback: look for generated_note: until end if no final_answer found yet
+    match = re.search(r'generated_note:\s*\n(.*)', text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    
+    return None
+
+
+def calculate_similarity(text1: str, text2: str) -> float:
+    """Calculate similarity ratio between two texts using SequenceMatcher."""
+    return SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
+
+
+def check_similarity_validity(original: str, generated: str, min_sim: float, max_sim: float) -> Tuple[bool, float]:
+    """
+    Check if generated note has valid similarity (between min and max thresholds).
+    Returns (is_valid, similarity_score).
+    """
+    similarity = calculate_similarity(original, generated)
+    is_valid = min_sim <= similarity < max_sim
+    return is_valid, similarity
 
 
 def load_records(jsonl_file: str) -> List[Dict]:
@@ -184,6 +217,11 @@ def main() -> None:
         print(f"\n=== Scenario: {scenario} (n={len(samples)}) ===")
         correct = 0
         total = 0
+        
+        # For injector scenarios, track similarity metrics
+        is_injector = scenario.startswith("injector")
+        similarity_valid_count = 0
+        similarity_scores = []
 
         for idx, record in enumerate(samples, start=1):
             if scenario == "assessor_correct":
@@ -229,11 +267,35 @@ def main() -> None:
 
             print(f"\n--- Example {idx} ---")
             print(f"expected: {expected} | predicted: {predicted or 'MISSING'} | match: {is_correct}")
+            
+            # For injector scenarios, check similarity
+            if is_injector:
+                generated_note = extract_generated_note(generated)
+                if generated_note:
+                    is_valid_sim, sim_score = check_similarity_validity(
+                        note, generated_note, args.min_similarity, args.max_similarity
+                    )
+                    similarity_scores.append(sim_score)
+                    similarity_valid_count += int(is_valid_sim)
+                    
+                    print(f"similarity: {sim_score:.2%} | valid: {is_valid_sim} (target: {args.min_similarity:.0%}-{args.max_similarity:.0%})")
+                else:
+                    print("similarity: N/A (could not extract generated_note)")
+            
             print(generated)
 
         if total:
             acc = correct / total * 100
             print(f"\nScenario accuracy: {correct}/{total} ({acc:.1f}%)")
+            
+            # Print similarity metrics for injector scenarios
+            if is_injector and similarity_scores:
+                avg_sim = sum(similarity_scores) / len(similarity_scores)
+                sim_valid_rate = similarity_valid_count / len(similarity_scores) * 100
+                print(f"Similarity metrics:")
+                print(f"  - Average similarity: {avg_sim:.2%}")
+                print(f"  - Valid similarity rate: {similarity_valid_count}/{len(similarity_scores)} ({sim_valid_rate:.1f}%)")
+                print(f"  - Similarity range: {min(similarity_scores):.2%} - {max(similarity_scores):.2%}")
 
 
 if __name__ == "__main__":
