@@ -12,7 +12,9 @@ Example:
 
 import argparse
 import json
-from typing import Dict, List
+import random
+import re
+from typing import Dict, List, Optional
 
 import torch
 from peft import PeftModel
@@ -65,14 +67,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Quick inference for Qwen3-4B LoRA.")
     parser.add_argument("--model-name", required=True, help="Base model name.")
     parser.add_argument("--adapter-dir", required=True, help="LoRA adapter directory.")
-    parser.add_argument("--mode", choices=["assessor", "injector"], default="assessor")
-    parser.add_argument("--input-note", default=None, help="Input clinical note.")
     parser.add_argument(
         "--jsonl-file",
         default=None,
         help="Optional JSONL file (rl_train.jsonl) for sampling examples.",
     )
-    parser.add_argument("--max-examples", type=int, default=3)
+    parser.add_argument("--num-samples", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--scenarios",
+        default="assessor_correct,assessor_incorrect,injector_correct,injector_incorrect",
+        help="Comma-separated scenarios to run.",
+    )
+    parser.add_argument("--input-note", default=None, help="Fallback single input note.")
     parser.add_argument(
         "--prompt-intent",
         default="Create a realistic note with no clinical errors.",
@@ -84,28 +91,49 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def extract_final_answer(text: str) -> Optional[str]:
+    match = re.search(r'final_answer:\s*"?\s*(CORRECT|INCORRECT)\s*"?', text, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return None
+
+
+def load_records(jsonl_file: str) -> List[Dict]:
+    records = []
+    with open(jsonl_file, "r", encoding="utf-8") as handle:
+        for line in handle:
+            records.append(json.loads(line))
+    return records
+
+
+def scenario_samples(records: List[Dict], scenario: str, num_samples: int) -> List[Dict]:
+    if not records:
+        return []
+    if scenario == "assessor_correct":
+        pool = [r for r in records if r.get("correct_note")]
+    elif scenario == "assessor_incorrect":
+        pool = [r for r in records if r.get("incorrect_note")]
+    elif scenario == "injector_correct":
+        pool = [r for r in records if r.get("correct_note")]
+    else:
+        pool = [r for r in records if r.get("correct_note") and r.get("incorrect_note")]
+    if not pool:
+        return []
+    return pool[:num_samples]
+
+
 def main() -> None:
     args = parse_args()
-    notes = []
+    scenarios = [s.strip() for s in args.scenarios.split(",") if s.strip()]
+    random.seed(args.seed)
+
+    records = []
     if args.jsonl_file:
-        with open(args.jsonl_file, "r", encoding="utf-8") as handle:
-            for line in handle:
-                if len(notes) >= args.max_examples:
-                    break
-                record = json.loads(line)
-                if args.mode == "assessor":
-                    note = record.get("incorrect_note") or record.get("correct_note")
-                else:
-                    note = record.get("correct_note") or record.get("incorrect_note")
-                if note:
-                    notes.append(note)
-    elif args.input_note:
-        notes = [args.input_note]
-    else:
-        notes = [
-            "A 55-year-old man presents with exertional chest pain relieved by rest. "
-            "ECG shows ST depressions. Diagnosis: stable angina."
-        ]
+        records = load_records(args.jsonl_file)
+        random.shuffle(records)
+
+    if not records and not args.input_note:
+        raise SystemExit("Provide --jsonl-file or --input-note.")
 
     tokenizer = AutoTokenizer.from_pretrained(args.adapter_dir, use_fast=True)
     if tokenizer.pad_token is None:
@@ -119,23 +147,64 @@ def main() -> None:
     model = PeftModel.from_pretrained(base_model, args.adapter_dir)
     model.eval()
 
-    for idx, note in enumerate(notes, start=1):
-        messages = build_messages(args.mode, note, args.prompt_intent)
-        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    for scenario in scenarios:
+        samples = scenario_samples(records, scenario, args.num_samples)
+        if not samples and args.input_note:
+            samples = [{"correct_note": args.input_note, "incorrect_note": args.input_note}]
 
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=args.max_new_tokens,
-                do_sample=True,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                pad_token_id=tokenizer.eos_token_id,
-            )
+        print(f"\n=== Scenario: {scenario} (n={len(samples)}) ===")
+        correct = 0
+        total = 0
 
-        generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        print(f"\n=== Example {idx} ===\n{generated}")
+        for idx, record in enumerate(samples, start=1):
+            if scenario == "assessor_correct":
+                note = record.get("correct_note")
+                expected = "CORRECT"
+                messages = build_messages("assessor", note, args.prompt_intent)
+            elif scenario == "assessor_incorrect":
+                note = record.get("incorrect_note")
+                expected = "INCORRECT"
+                messages = build_messages("assessor", note, args.prompt_intent)
+            elif scenario == "injector_correct":
+                note = record.get("correct_note")
+                expected = "CORRECT"
+                messages = build_messages("injector", note, args.prompt_intent)
+            else:
+                note = record.get("correct_note")
+                expected = "INCORRECT"
+                error_type = (record.get("error_type") or "").strip()
+                if error_type:
+                    intent = f"Introduce a {error_type} error while keeping the note realistic."
+                else:
+                    intent = "Introduce a subtle clinical error while keeping the note realistic."
+                messages = build_messages("injector", note, intent)
+
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=args.max_new_tokens,
+                    do_sample=True,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+
+            generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            predicted = extract_final_answer(generated)
+            is_correct = predicted == expected
+            total += 1
+            correct += int(is_correct)
+
+            print(f"\n--- Example {idx} ---")
+            print(f"expected: {expected} | predicted: {predicted or 'MISSING'} | match: {is_correct}")
+            print(generated)
+
+        if total:
+            acc = correct / total * 100
+            print(f"\nScenario accuracy: {correct}/{total} ({acc:.1f}%)")
 
 
 if __name__ == "__main__":
