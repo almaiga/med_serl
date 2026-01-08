@@ -20,6 +20,19 @@ vllm>=0.8.4
 # flash-attn>=2.7.4.post1  # Install separately: pip install --no-build-isolation flash-attn
 einops
 
+# OpenAI API (latest version)
+openai>=1.50.0
+
+# Async utilities
+asyncio
+aiofiles
+
+# Progress bars
+tqdm
+
+# Environment management
+python-dotenv
+
 # Data processing
 pandas
 numpy
