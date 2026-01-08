@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
         default="Create a realistic note with no clinical errors.",
         help="Injector intent.",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--max-new-tokens", type=int, default=768)  # Increased from 512
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
     return parser.parse_args()
