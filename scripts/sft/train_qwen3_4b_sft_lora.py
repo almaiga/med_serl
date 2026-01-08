@@ -211,14 +211,17 @@ def main() -> None:
     filtered_kwargs = {k: v for k, v in sft_kwargs.items() if k in sig.parameters}
     training_args = SFTConfig(**filtered_kwargs)
 
-    trainer = SFTTrainer(
-        model=model,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        tokenizer=tokenizer,
-        args=training_args,
-        peft_config=peft_config,
-    )
+    trainer_kwargs = {
+        "model": model,
+        "train_dataset": train_ds,
+        "eval_dataset": eval_ds,
+        "processing_class": tokenizer,
+        "args": training_args,
+        "peft_config": peft_config,
+    }
+    trainer_sig = inspect.signature(SFTTrainer.__init__)
+    trainer_kwargs = {k: v for k, v in trainer_kwargs.items() if k in trainer_sig.parameters}
+    trainer = SFTTrainer(**trainer_kwargs)
 
     trainer.train()
     trainer.save_model(args.output_dir)
