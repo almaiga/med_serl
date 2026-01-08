@@ -25,12 +25,22 @@ SYSTEM_PROMPTS = {
     "assessor": (
         "You are a meticulous clinical note assessor in a self-play loop. Your job"
         " is to analyze the note for clinical correctness, detect errors when they"
-        " exist, and provide a clear final answer with a Yes/No error decision."
+        " exist, and provide a clear final answer with a Yes/No error decision.\n\n"
+        "CRITICAL: Your response MUST end with EXACTLY this format on the last line:\n"
+        'final_answer: "CORRECT"\n'
+        "OR\n"
+        'final_answer: "INCORRECT"\n\n'
+        "Do not add any text after the final_answer line."
     ),
     "injector": (
         "You are an error injector in a self-play loop. Follow the prompt intent to"
         " transform the input note into a new note, either correct or with a subtle"
-        " error, and provide a clear final answer."
+        " error, and provide a clear final answer.\n\n"
+        "CRITICAL: Your response MUST end with EXACTLY this format on the last line:\n"
+        'final_answer: "CORRECT"\n'
+        "OR\n"
+        'final_answer: "INCORRECT"\n\n'
+        "Do not add any text after the final_answer line."
     ),
 }
 
@@ -39,10 +49,10 @@ def build_messages(mode: str, note: str, prompt_intent: str) -> List[Dict[str, s
     if mode == "assessor":
         user_content = (
             "Role: assessor\n"
-            "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n"
-            "Output should include reasoning and a final answer formatted as:\n"
-            'final_answer: "CORRECT" or "INCORRECT"\n\n'
-            f"Clinical note:\n{note}\n"
+            "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n\n"
+            f"Clinical note:\n{note}\n\n"
+            "Provide your reasoning in a <think> block, then output:\n"
+            'final_answer: "CORRECT" or "INCORRECT"\n'
         )
         system_prompt = SYSTEM_PROMPTS["assessor"]
     else:
@@ -51,9 +61,9 @@ def build_messages(mode: str, note: str, prompt_intent: str) -> List[Dict[str, s
             "Task: follow the prompt intent and transform the input note into a new note.\n"
             f'prompt_intent: "{prompt_intent}"\n\n'
             f"input_note:\n{note}\n\n"
-            "Output should include reasoning and a final answer formatted as:\n"
+            "Provide your reasoning in a <think> block, then output:\n"
             "generated_note:\n... \n"
-            'final_answer: "CORRECT" or "INCORRECT"\n\n'
+            'final_answer: "CORRECT" or "INCORRECT"\n'
         )
         system_prompt = SYSTEM_PROMPTS["injector"]
 
@@ -92,9 +102,28 @@ def parse_args() -> argparse.Namespace:
 
 
 def extract_final_answer(text: str) -> Optional[str]:
-    match = re.search(r'final_answer:\s*"?\s*(CORRECT|INCORRECT)\s*"?', text, re.IGNORECASE)
+    """Extract final answer with multiple fallback patterns."""
+    # Primary pattern: exact format
+    match = re.search(r'final_answer:\s*"(CORRECT|INCORRECT)"', text, re.IGNORECASE)
     if match:
         return match.group(1).upper()
+    
+    # Fallback 1: without quotes
+    match = re.search(r'final_answer:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    
+    # Fallback 2: look for Error Detected field (from model's old format)
+    if re.search(r'Error Detected:\s*Yes', text, re.IGNORECASE):
+        return "INCORRECT"
+    elif re.search(r'Error Detected:\s*No', text, re.IGNORECASE):
+        return "CORRECT"
+    
+    # Fallback 3: look at assessment line
+    match = re.search(r'Assessment:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    
     return None
 
 
