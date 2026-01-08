@@ -132,17 +132,29 @@ def extract_final_answer(text: str) -> Optional[str]:
 
 def extract_generated_note(text: str) -> Optional[str]:
     """Extract the generated_note section from injector output."""
-    # Look for generated_note: followed by content until final_answer
-    match = re.search(r'generated_note:\s*\n(.*?)\n\s*final_answer:', text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
+    # Split by "generated_note:" first to isolate the section
+    parts = re.split(r'generated_note:\s*\n', text, flags=re.IGNORECASE)
     
-    # Fallback: look for generated_note: until end if no final_answer found yet
-    match = re.search(r'generated_note:\s*\n(.*)', text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
+    if len(parts) < 2:
+        return None
     
-    return None
+    # Take everything after "generated_note:"
+    after_label = parts[1]
+    
+    # Now extract until "final_answer:" (stop marker)
+    match = re.search(r'^(.*?)\s*final_answer:', after_label, re.DOTALL | re.IGNORECASE)
+    
+    if match:
+        generated = match.group(1).strip()
+    else:
+        # If no final_answer found, take everything
+        generated = after_label.strip()
+    
+    # Clean up any remaining artifacts
+    # Remove trailing </think> tags that might have leaked through
+    generated = re.sub(r'</think>\s*$', '', generated).strip()
+    
+    return generated if generated else None
 
 
 def calculate_similarity(text1: str, text2: str) -> float:
@@ -184,6 +196,134 @@ def scenario_samples(records: List[Dict], scenario: str, num_samples: int) -> Li
     return pool[:num_samples]
 
 
+def print_recap_table(results: Dict) -> None:
+    """Print a comprehensive recap table of all results."""
+    print("\n" + "=" * 100)
+    print("FINAL RECAP - MODEL PERFORMANCE SUMMARY")
+    print("=" * 100)
+    
+    # Assessor Task Results
+    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+    print("│ ASSESSOR TASK - Error Detection Performance                                 │")
+    print("├─────────────────────────────────────────────────────────────────────────────┤")
+    print("│ Scenario              │ Samples │ Correct │ Accuracy │ Notes               │")
+    print("├───────────────────────┼─────────┼─────────┼──────────┼─────────────────────┤")
+    
+    for scenario in ["assessor_correct", "assessor_incorrect"]:
+        if scenario in results:
+            data = results[scenario]
+            scenario_name = "Correct Notes" if scenario == "assessor_correct" else "Incorrect Notes"
+            accuracy = f"{data['accuracy']:.1f}%" if data['total'] > 0 else "N/A"
+            note = "Should detect NO errors" if scenario == "assessor_correct" else "Should detect errors"
+            print(f"│ {scenario_name:<21} │ {data['total']:>7} │ {data['correct']:>7} │ {accuracy:>8} │ {note:<19} │")
+    
+    print("└─────────────────────────────────────────────────────────────────────────────┘")
+    
+    # Calculate overall assessor accuracy
+    total_assessor = sum(results.get(s, {}).get('total', 0) for s in ["assessor_correct", "assessor_incorrect"])
+    correct_assessor = sum(results.get(s, {}).get('correct', 0) for s in ["assessor_correct", "assessor_incorrect"])
+    if total_assessor > 0:
+        overall_assessor_acc = correct_assessor / total_assessor * 100
+        print(f"\n  Overall Assessor Accuracy: {correct_assessor}/{total_assessor} ({overall_assessor_acc:.1f}%)")
+    
+    # Injector Task Results
+    print("\n┌─────────────────────────────────────────────────────────────────────────────────────────────────┐")
+    print("│ INJECTOR TASK - Note Generation Performance                                                     │")
+    print("├─────────────────────────────────────────────────────────────────────────────────────────────────┤")
+    print("│ Scenario              │ Samples │ Correct │ Accuracy │ Avg Sim │ Valid Sim │ Sim Range         │")
+    print("├───────────────────────┼─────────┼─────────┼──────────┼─────────┼───────────┼───────────────────┤")
+    
+    for scenario in ["injector_correct", "injector_incorrect"]:
+        if scenario in results:
+            data = results[scenario]
+            scenario_name = "Generate Correct" if scenario == "injector_correct" else "Inject Errors"
+            accuracy = f"{data['accuracy']:.1f}%" if data['total'] > 0 else "N/A"
+            
+            if data['similarity_scores']:
+                avg_sim = sum(data['similarity_scores']) / len(data['similarity_scores'])
+                sim_valid_rate = data['similarity_valid_count'] / len(data['similarity_scores']) * 100
+                min_sim = min(data['similarity_scores'])
+                max_sim = max(data['similarity_scores'])
+                sim_range = f"{min_sim:.0%}-{max_sim:.0%}"
+                print(f"│ {scenario_name:<21} │ {data['total']:>7} │ {data['correct']:>7} │ {accuracy:>8} │ {avg_sim:>6.1%} │ {sim_valid_rate:>7.1f}% │ {sim_range:>17} │")
+            else:
+                print(f"│ {scenario_name:<21} │ {data['total']:>7} │ {data['correct']:>7} │ {accuracy:>8} │ {'N/A':>7} │ {'N/A':>9} │ {'N/A':>17} │")
+    
+    print("└─────────────────────────────────────────────────────────────────────────────────────────────────┘")
+    
+    # Calculate overall injector accuracy
+    total_injector = sum(results.get(s, {}).get('total', 0) for s in ["injector_correct", "injector_incorrect"])
+    correct_injector = sum(results.get(s, {}).get('correct', 0) for s in ["injector_correct", "injector_incorrect"])
+    if total_injector > 0:
+        overall_injector_acc = correct_injector / total_injector * 100
+        print(f"\n  Overall Injector Accuracy: {correct_injector}/{total_injector} ({overall_injector_acc:.1f}%)")
+    
+    # Overall similarity metrics
+    all_sim_scores = []
+    all_sim_valid = 0
+    for scenario in ["injector_correct", "injector_incorrect"]:
+        if scenario in results and results[scenario]['similarity_scores']:
+            all_sim_scores.extend(results[scenario]['similarity_scores'])
+            all_sim_valid += results[scenario]['similarity_valid_count']
+    
+    if all_sim_scores:
+        overall_avg_sim = sum(all_sim_scores) / len(all_sim_scores)
+        overall_sim_valid_rate = all_sim_valid / len(all_sim_scores) * 100
+        print(f"  Overall Average Similarity: {overall_avg_sim:.2%}")
+        print(f"  Overall Valid Similarity Rate: {all_sim_valid}/{len(all_sim_scores)} ({overall_sim_valid_rate:.1f}%)")
+    
+    # Key Insights
+    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+    print("│ KEY INSIGHTS                                                                 │")
+    print("├─────────────────────────────────────────────────────────────────────────────┤")
+    
+    # Assessor insights
+    if "assessor_correct" in results and "assessor_incorrect" in results:
+        correct_acc = results["assessor_correct"]["accuracy"]
+        incorrect_acc = results["assessor_incorrect"]["accuracy"]
+        
+        if correct_acc >= 80 and incorrect_acc >= 80:
+            print("│ ✓ Assessor: STRONG - Good at detecting both correct and incorrect notes   │")
+        elif correct_acc >= 80:
+            print("│ ⚠ Assessor: Over-sensitive - Good with correct notes, struggles with errors│")
+        elif incorrect_acc >= 80:
+            print("│ ⚠ Assessor: Under-sensitive - Good with errors, flags correct notes       │")
+        else:
+            print("│ ✗ Assessor: WEAK - Struggles with both correct and incorrect notes        │")
+    
+    # Injector insights
+    if "injector_correct" in results and "injector_incorrect" in results:
+        correct_data = results["injector_correct"]
+        incorrect_data = results["injector_incorrect"]
+        
+        correct_acc = correct_data["accuracy"]
+        incorrect_acc = incorrect_data["accuracy"]
+        
+        if correct_data['similarity_scores'] and incorrect_data['similarity_scores']:
+            correct_sim = sum(correct_data['similarity_scores']) / len(correct_data['similarity_scores'])
+            incorrect_sim = sum(incorrect_data['similarity_scores']) / len(incorrect_data['similarity_scores'])
+            
+            if correct_acc >= 80 and incorrect_acc >= 80:
+                print("│ ✓ Injector: STRONG - Generates both correct and incorrect notes well     │")
+            elif correct_acc >= 80:
+                print("│ ⚠ Injector: Partial - Good with correct notes, struggles with errors     │")
+            elif incorrect_acc >= 80:
+                print("│ ⚠ Injector: Partial - Good with errors, struggles with correct notes     │")
+            else:
+                print("│ ✗ Injector: WEAK - Struggles with both note types                         │")
+            
+            if correct_sim > 0.95:
+                print("│ ⚠ Similarity: Too high for correct notes (mostly copying)                 │")
+            elif correct_sim < 0.80:
+                print("│ ⚠ Similarity: Too low for correct notes (changing too much)               │")
+            else:
+                print("│ ✓ Similarity: Good range for correct notes (80-95%)                       │")
+    
+    print("└─────────────────────────────────────────────────────────────────────────────┘")
+    
+    print("\n" + "=" * 100 + "\n")
+
+
 def main() -> None:
     args = parse_args()
     scenarios = [s.strip() for s in args.scenarios.split(",") if s.strip()]
@@ -208,6 +348,9 @@ def main() -> None:
     )
     model = PeftModel.from_pretrained(base_model, args.adapter_dir)
     model.eval()
+
+    # Store results for final recap
+    all_results = {}
 
     for scenario in scenarios:
         samples = scenario_samples(records, scenario, args.num_samples)
@@ -284,6 +427,19 @@ def main() -> None:
             
             print(generated)
 
+        # Store results for this scenario
+        scenario_results = {
+            'total': total,
+            'correct': correct,
+            'accuracy': (correct / total * 100) if total > 0 else 0,
+        }
+        
+        if is_injector:
+            scenario_results['similarity_scores'] = similarity_scores
+            scenario_results['similarity_valid_count'] = similarity_valid_count
+        
+        all_results[scenario] = scenario_results
+
         if total:
             acc = correct / total * 100
             print(f"\nScenario accuracy: {correct}/{total} ({acc:.1f}%)")
@@ -296,6 +452,9 @@ def main() -> None:
                 print(f"  - Average similarity: {avg_sim:.2%}")
                 print(f"  - Valid similarity rate: {similarity_valid_count}/{len(similarity_scores)} ({sim_valid_rate:.1f}%)")
                 print(f"  - Similarity range: {min(similarity_scores):.2%} - {max(similarity_scores):.2%}")
+
+    # Print final recap table
+    print_recap_table(all_results)
 
 
 if __name__ == "__main__":
