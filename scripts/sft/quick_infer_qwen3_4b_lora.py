@@ -199,8 +199,13 @@ def extract_final_answer(text: str) -> Optional[str]:
         return "INCORRECT"
     elif re.search(r'Error Detected:\s*No', text, re.IGNORECASE):
         return "CORRECT"
+
+    # Fallback 3: baseline prompt format "Answer: CORRECT/INCORRECT"
+    matches = re.findall(r'Answer:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
+    if matches:
+        return matches[-1].upper()
     
-    # Fallback 3: look at assessment line (get last match)
+    # Fallback 4: look at assessment line (get last match)
     matches = re.findall(r'Assessment:\s*(CORRECT|INCORRECT)', text, re.IGNORECASE)
     if matches:
         return matches[-1].upper()
