@@ -587,11 +587,11 @@ def main() -> None:
                             if embedder is not None and embedder_tokenizer is not None:
                                 embeddings = embed_texts(
                                     embedder_tokenizer,
-                                        embedder,
-                                        embed_device,
-                                        [meta["note"], generated_note],
-                                    )
-                                    score_embedding = cosine_similarity(embeddings[0], embeddings[1])
+                                    embedder,
+                                    embed_device,
+                                    [meta["note"], generated_note],
+                                )
+                                score_embedding = cosine_similarity(embeddings[0], embeddings[1])
 
                         row = {
                             "run_name": run_name,
