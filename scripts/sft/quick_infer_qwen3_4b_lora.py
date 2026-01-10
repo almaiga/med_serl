@@ -6,20 +6,21 @@ Example:
   python scripts/sft/quick_infer_qwen3_4b_lora.py \
     --model-name Qwen/Qwen3-4B \
     --adapter-dir outputs/qwen3-4b-lora \
-    --mode assessor \
-    --input-note "A 55-year-old man ... Diagnosis: stable angina."
+    --jsonl-file data_processed/medec_paired/train_val_split/rl_train.jsonl \
+    --num-samples 3
 """
 
 import argparse
 import json
+import os
 import random
 import re
-from difflib import SequenceMatcher
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Dict, List, Optional
 
 import torch
 from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 
 SYSTEM_PROMPTS = {
@@ -57,29 +58,27 @@ def build_messages(mode: str, note: str, prompt_intent: str) -> List[Dict[str, s
         )
         system_prompt = SYSTEM_PROMPTS["assessor"]
     else:
-        # Check if this is a "correct" task (rephrase) or "incorrect" task (inject error)
-        if "no clinical errors" in prompt_intent.lower() or "realistic note" in prompt_intent.lower():
-            # Injector correct: rephrase one sentence
+        is_correct = "no clinical errors" in prompt_intent.lower()
+        if is_correct:
             user_content = (
                 "Role: error injector\n"
-                "Task: Rewrite the note by changing ONE sentence to use different words.\n"
-                "Keep the same medical meaning. Copy all other sentences exactly.\n\n"
+                "Task: follow the prompt intent and transform the input note into a new note.\n"
+                f'prompt_intent: "{prompt_intent}"\n\n'
                 f"input_note:\n{note}\n\n"
-                "In your <think> block, show which sentence you will change.\n"
+                "In your <think> block, briefly explain the change.\n"
                 "Then output:\n"
-                "generated_note:\n[the note with one sentence reworded]\n\n"
+                "generated_note:\n[the updated note]\n\n"
                 'final_answer: "CORRECT"\n'
             )
         else:
-            # Injector incorrect: inject one error
             user_content = (
                 "Role: error injector\n"
-                f"Task: Rewrite the note by changing ONE sentence to introduce a {prompt_intent}.\n"
-                "Copy all other sentences exactly.\n\n"
+                "Task: follow the prompt intent and transform the input note into a new note.\n"
+                f'prompt_intent: "{prompt_intent}"\n\n'
                 f"input_note:\n{note}\n\n"
-                "In your <think> block, show which sentence you will change and what error you will add.\n"
+                "In your <think> block, briefly explain the change.\n"
                 "Then output:\n"
-                "generated_note:\n[the note with one error]\n\n"
+                "generated_note:\n[the updated note]\n\n"
                 'final_answer: "INCORRECT"\n'
             )
         system_prompt = SYSTEM_PROMPTS["injector"]
@@ -106,6 +105,16 @@ def parse_args() -> argparse.Namespace:
         default="assessor_correct,assessor_incorrect,injector_correct,injector_incorrect",
         help="Comma-separated scenarios to run.",
     )
+    parser.add_argument(
+        "--output-dir",
+        default="results/inference/quick_test",
+        help="Directory to write JSONL results.",
+    )
+    parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Optional run name (defaults to timestamp).",
+    )
     parser.add_argument("--input-note", default=None, help="Fallback single input note.")
     parser.add_argument(
         "--prompt-intent",
@@ -115,8 +124,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
-    parser.add_argument("--min-similarity", type=float, default=0.80, help="Minimum similarity threshold.")
-    parser.add_argument("--max-similarity", type=float, default=0.99, help="Maximum similarity threshold.")
+    parser.add_argument(
+        "--embedding-model",
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        help="HF embedding model for cosine similarity.",
+    )
+    parser.add_argument(
+        "--disable-embedding",
+        action="store_true",
+        help="Disable embedding cosine similarity scoring.",
+    )
     return parser.parse_args()
 
 
@@ -173,19 +190,45 @@ def extract_generated_note(text: str) -> Optional[str]:
     return generated if generated else None
 
 
-def calculate_similarity(text1: str, text2: str) -> float:
-    """Calculate similarity ratio between two texts using SequenceMatcher."""
-    return SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
+def tokenize_for_jaccard(text: str) -> List[str]:
+    return re.findall(r"[a-zA-Z0-9]+", text.lower())
 
 
-def check_similarity_validity(original: str, generated: str, min_sim: float, max_sim: float) -> Tuple[bool, float]:
-    """
-    Check if generated note has valid similarity (between min and max thresholds).
-    Returns (is_valid, similarity_score).
-    """
-    similarity = calculate_similarity(original, generated)
-    is_valid = min_sim <= similarity < max_sim
-    return is_valid, similarity
+def jaccard_similarity(text1: str, text2: str) -> float:
+    set1 = set(tokenize_for_jaccard(text1))
+    set2 = set(tokenize_for_jaccard(text2))
+    if not set1 and not set2:
+        return 1.0
+    if not set1 or not set2:
+        return 0.0
+    return len(set1 & set2) / len(set1 | set2)
+
+
+def load_embedding_model(model_name: str, device: str):
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    model = AutoModel.from_pretrained(model_name).to(device)
+    model.eval()
+    return tokenizer, model
+
+
+def embed_texts(tokenizer, model, device: str, texts: List[str]) -> torch.Tensor:
+    with torch.no_grad():
+        inputs = tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        ).to(device)
+        outputs = model(**inputs)
+        hidden = outputs.last_hidden_state
+        mask = inputs["attention_mask"].unsqueeze(-1)
+        pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+        pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+        return pooled.detach().cpu()
+
+
+def cosine_similarity(emb_a: torch.Tensor, emb_b: torch.Tensor) -> float:
+    return float((emb_a * emb_b).sum().item())
 
 
 def load_records(jsonl_file: str) -> List[Dict]:
@@ -209,141 +252,119 @@ def scenario_samples(records: List[Dict], scenario: str, num_samples: int) -> Li
         pool = [r for r in records if r.get("correct_note") and r.get("incorrect_note")]
     if not pool:
         return []
-    return pool[:num_samples]
+    sample_count = min(num_samples, len(pool))
+    return random.sample(pool, sample_count)
 
 
-def print_recap_table(results: Dict) -> None:
-    """Print a comprehensive recap table of all results."""
-    print("\n" + "=" * 100)
-    print("FINAL RECAP - MODEL PERFORMANCE SUMMARY")
-    print("=" * 100)
-    
-    # Assessor Task Results
-    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-    print("│ ASSESSOR TASK - Error Detection Performance                                 │")
-    print("├─────────────────────────────────────────────────────────────────────────────┤")
-    print("│ Scenario              │ Samples │ Correct │ Accuracy │ Notes               │")
-    print("├───────────────────────┼─────────┼─────────┼──────────┼─────────────────────┤")
-    
-    for scenario in ["assessor_correct", "assessor_incorrect"]:
-        if scenario in results:
-            data = results[scenario]
-            scenario_name = "Correct Notes" if scenario == "assessor_correct" else "Incorrect Notes"
-            accuracy = f"{data['accuracy']:.1f}%" if data['total'] > 0 else "N/A"
-            note = "Should detect NO errors" if scenario == "assessor_correct" else "Should detect errors"
-            print(f"│ {scenario_name:<21} │ {data['total']:>7} │ {data['correct']:>7} │ {accuracy:>8} │ {note:<19} │")
-    
-    print("└─────────────────────────────────────────────────────────────────────────────┘")
-    
-    # Calculate overall assessor accuracy
-    total_assessor = sum(results.get(s, {}).get('total', 0) for s in ["assessor_correct", "assessor_incorrect"])
-    correct_assessor = sum(results.get(s, {}).get('correct', 0) for s in ["assessor_correct", "assessor_incorrect"])
-    if total_assessor > 0:
-        overall_assessor_acc = correct_assessor / total_assessor * 100
-        print(f"\n  Overall Assessor Accuracy: {correct_assessor}/{total_assessor} ({overall_assessor_acc:.1f}%)")
-    
-    # Injector Task Results
-    print("\n┌─────────────────────────────────────────────────────────────────────────────────────────────────┐")
-    print("│ INJECTOR TASK - Note Generation Performance                                                     │")
-    print("├─────────────────────────────────────────────────────────────────────────────────────────────────┤")
-    print("│ Scenario              │ Samples │ Correct │ Accuracy │ Avg Sim │ Valid Sim │ Sim Range         │")
-    print("├───────────────────────┼─────────┼─────────┼──────────┼─────────┼───────────┼───────────────────┤")
-    
-    for scenario in ["injector_correct", "injector_incorrect"]:
-        if scenario in results:
-            data = results[scenario]
-            scenario_name = "Generate Correct" if scenario == "injector_correct" else "Inject Errors"
-            accuracy = f"{data['accuracy']:.1f}%" if data['total'] > 0 else "N/A"
-            
-            if data['similarity_scores']:
-                avg_sim = sum(data['similarity_scores']) / len(data['similarity_scores'])
-                sim_valid_rate = data['similarity_valid_count'] / len(data['similarity_scores']) * 100
-                min_sim = min(data['similarity_scores'])
-                max_sim = max(data['similarity_scores'])
-                sim_range = f"{min_sim:.0%}-{max_sim:.0%}"
-                print(f"│ {scenario_name:<21} │ {data['total']:>7} │ {data['correct']:>7} │ {accuracy:>8} │ {avg_sim:>6.1%} │ {sim_valid_rate:>7.1f}% │ {sim_range:>17} │")
-            else:
-                print(f"│ {scenario_name:<21} │ {data['total']:>7} │ {data['correct']:>7} │ {accuracy:>8} │ {'N/A':>7} │ {'N/A':>9} │ {'N/A':>17} │")
-    
-    print("└─────────────────────────────────────────────────────────────────────────────────────────────────┘")
-    
-    # Calculate overall injector accuracy
-    total_injector = sum(results.get(s, {}).get('total', 0) for s in ["injector_correct", "injector_incorrect"])
-    correct_injector = sum(results.get(s, {}).get('correct', 0) for s in ["injector_correct", "injector_incorrect"])
-    if total_injector > 0:
-        overall_injector_acc = correct_injector / total_injector * 100
-        print(f"\n  Overall Injector Accuracy: {correct_injector}/{total_injector} ({overall_injector_acc:.1f}%)")
-    
-    # Overall similarity metrics
-    all_sim_scores = []
-    all_sim_valid = 0
-    for scenario in ["injector_correct", "injector_incorrect"]:
-        if scenario in results and results[scenario]['similarity_scores']:
-            all_sim_scores.extend(results[scenario]['similarity_scores'])
-            all_sim_valid += results[scenario]['similarity_valid_count']
-    
-    if all_sim_scores:
-        overall_avg_sim = sum(all_sim_scores) / len(all_sim_scores)
-        overall_sim_valid_rate = all_sim_valid / len(all_sim_scores) * 100
-        print(f"  Overall Average Similarity: {overall_avg_sim:.2%}")
-        print(f"  Overall Valid Similarity Rate: {all_sim_valid}/{len(all_sim_scores)} ({overall_sim_valid_rate:.1f}%)")
-    
-    # Key Insights
-    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-    print("│ KEY INSIGHTS                                                                 │")
-    print("├─────────────────────────────────────────────────────────────────────────────┤")
-    
-    # Assessor insights
-    if "assessor_correct" in results and "assessor_incorrect" in results:
-        correct_acc = results["assessor_correct"]["accuracy"]
-        incorrect_acc = results["assessor_incorrect"]["accuracy"]
-        
-        if correct_acc >= 80 and incorrect_acc >= 80:
-            print("│ ✓ Assessor: STRONG - Good at detecting both correct and incorrect notes   │")
-        elif correct_acc >= 80:
-            print("│ ⚠ Assessor: Over-sensitive - Good with correct notes, struggles with errors│")
-        elif incorrect_acc >= 80:
-            print("│ ⚠ Assessor: Under-sensitive - Good with errors, flags correct notes       │")
-        else:
-            print("│ ✗ Assessor: WEAK - Struggles with both correct and incorrect notes        │")
-    
-    # Injector insights
-    if "injector_correct" in results and "injector_incorrect" in results:
-        correct_data = results["injector_correct"]
-        incorrect_data = results["injector_incorrect"]
-        
-        correct_acc = correct_data["accuracy"]
-        incorrect_acc = incorrect_data["accuracy"]
-        
-        if correct_data['similarity_scores'] and incorrect_data['similarity_scores']:
-            correct_sim = sum(correct_data['similarity_scores']) / len(correct_data['similarity_scores'])
-            incorrect_sim = sum(incorrect_data['similarity_scores']) / len(incorrect_data['similarity_scores'])
-            
-            if correct_acc >= 80 and incorrect_acc >= 80:
-                print("│ ✓ Injector: STRONG - Generates both correct and incorrect notes well     │")
-            elif correct_acc >= 80:
-                print("│ ⚠ Injector: Partial - Good with correct notes, struggles with errors     │")
-            elif incorrect_acc >= 80:
-                print("│ ⚠ Injector: Partial - Good with errors, struggles with correct notes     │")
-            else:
-                print("│ ✗ Injector: WEAK - Struggles with both note types                         │")
-            
-            if correct_sim > 0.95:
-                print("│ ⚠ Similarity: Too high for correct notes (mostly copying)                 │")
-            elif correct_sim < 0.80:
-                print("│ ⚠ Similarity: Too low for correct notes (changing too much)               │")
-            else:
-                print("│ ✓ Similarity: Good range for correct notes (80-95%)                       │")
-    
-    print("└─────────────────────────────────────────────────────────────────────────────┘")
-    
-    print("\n" + "=" * 100 + "\n")
+def write_jsonl(path: str, rows: List[Dict]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_summary(path: str, summary: Dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, ensure_ascii=False, indent=2)
+
+
+def summarize_results(rows: List[Dict]) -> Dict:
+    summary: Dict[str, Dict] = {}
+    for row in rows:
+        scenario = row["scenario"]
+        stats = summary.setdefault(
+            scenario,
+            {
+                "total": 0,
+                "correct": 0,
+                "similarity_jaccard": [],
+                "similarity_embedding": [],
+            },
+        )
+        stats["total"] += 1
+        stats["correct"] += int(bool(row.get("match")))
+        if row.get("score_jaccard") is not None:
+            stats["similarity_jaccard"].append(row["score_jaccard"])
+        if row.get("score_embedding_cosine") is not None:
+            stats["similarity_embedding"].append(row["score_embedding_cosine"])
+
+    def agg_sim(values: List[float]) -> Dict:
+        if not values:
+            return {"avg": None, "min": None, "max": None}
+        return {
+            "avg": sum(values) / len(values),
+            "min": min(values),
+            "max": max(values),
+        }
+
+    assessor_correct = summary.get("assessor_correct", {"total": 0, "correct": 0})
+    assessor_incorrect = summary.get("assessor_incorrect", {"total": 0, "correct": 0})
+    injector_correct = summary.get("injector_correct", {"total": 0, "correct": 0})
+    injector_incorrect = summary.get("injector_incorrect", {"total": 0, "correct": 0})
+
+    total_assessor = assessor_correct["total"] + assessor_incorrect["total"]
+    correct_assessor = assessor_correct["correct"] + assessor_incorrect["correct"]
+    total_injector = injector_correct["total"] + injector_incorrect["total"]
+    correct_injector = injector_correct["correct"] + injector_incorrect["correct"]
+
+    return {
+        "assessor": {
+            "correct_notes": {
+                "samples": assessor_correct["total"],
+                "correct": assessor_correct["correct"],
+                "accuracy": (assessor_correct["correct"] / assessor_correct["total"]) if assessor_correct["total"] else 0.0,
+            },
+            "incorrect_notes": {
+                "samples": assessor_incorrect["total"],
+                "correct": assessor_incorrect["correct"],
+                "accuracy": (assessor_incorrect["correct"] / assessor_incorrect["total"]) if assessor_incorrect["total"] else 0.0,
+            },
+            "overall": {
+                "samples": total_assessor,
+                "correct": correct_assessor,
+                "accuracy": (correct_assessor / total_assessor) if total_assessor else 0.0,
+            },
+        },
+        "injector": {
+            "generate_correct": {
+                "samples": injector_correct["total"],
+                "correct": injector_correct["correct"],
+                "accuracy": (injector_correct["correct"] / injector_correct["total"]) if injector_correct["total"] else 0.0,
+                "similarity_jaccard": agg_sim(summary.get("injector_correct", {}).get("similarity_jaccard", [])),
+                "similarity_embedding": agg_sim(summary.get("injector_correct", {}).get("similarity_embedding", [])),
+            },
+            "inject_errors": {
+                "samples": injector_incorrect["total"],
+                "correct": injector_incorrect["correct"],
+                "accuracy": (injector_incorrect["correct"] / injector_incorrect["total"]) if injector_incorrect["total"] else 0.0,
+                "similarity_jaccard": agg_sim(summary.get("injector_incorrect", {}).get("similarity_jaccard", [])),
+                "similarity_embedding": agg_sim(summary.get("injector_incorrect", {}).get("similarity_embedding", [])),
+            },
+            "overall": {
+                "samples": total_injector,
+                "correct": correct_injector,
+                "accuracy": (correct_injector / total_injector) if total_injector else 0.0,
+                "similarity_jaccard": agg_sim(
+                    (summary.get("injector_correct", {}).get("similarity_jaccard", []) +
+                     summary.get("injector_incorrect", {}).get("similarity_jaccard", []))
+                ),
+                "similarity_embedding": agg_sim(
+                    (summary.get("injector_correct", {}).get("similarity_embedding", []) +
+                     summary.get("injector_incorrect", {}).get("similarity_embedding", []))
+                ),
+            },
+        },
+    }
 
 
 def main() -> None:
     args = parse_args()
     scenarios = [s.strip() for s in args.scenarios.split(",") if s.strip()]
     random.seed(args.seed)
+    run_name = args.run_name or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(args.output_dir, f"quick_test_{run_name}.jsonl")
+    summary_path = os.path.join(args.output_dir, f"quick_test_{run_name}_summary.json")
 
     records = []
     if args.jsonl_file:
@@ -365,45 +386,48 @@ def main() -> None:
     model = PeftModel.from_pretrained(base_model, args.adapter_dir)
     model.eval()
 
-    # Store results for final recap
-    all_results = {}
+    embedder = None
+    embedder_tokenizer = None
+    embed_device = "cuda" if torch.cuda.is_available() else "cpu"
+    if not args.disable_embedding:
+        embedder_tokenizer, embedder = load_embedding_model(args.embedding_model, embed_device)
+
+    results_rows: List[Dict] = []
+    scenario_stats: Dict[str, Dict[str, int]] = {}
 
     for scenario in scenarios:
         samples = scenario_samples(records, scenario, args.num_samples)
         if not samples and args.input_note:
             samples = [{"correct_note": args.input_note, "incorrect_note": args.input_note}]
 
-        print(f"\n=== Scenario: {scenario} (n={len(samples)}) ===")
         correct = 0
         total = 0
-        
-        # For injector scenarios, track similarity metrics
-        is_injector = scenario.startswith("injector")
-        similarity_valid_count = 0
-        similarity_scores = []
 
         for idx, record in enumerate(samples, start=1):
             if scenario == "assessor_correct":
                 note = record.get("correct_note")
                 expected = "CORRECT"
-                messages = build_messages("assessor", note, args.prompt_intent)
+                prompt_intent = "Assess note correctness."
+                messages = build_messages("assessor", note, prompt_intent)
             elif scenario == "assessor_incorrect":
                 note = record.get("incorrect_note")
                 expected = "INCORRECT"
-                messages = build_messages("assessor", note, args.prompt_intent)
+                prompt_intent = "Assess note correctness."
+                messages = build_messages("assessor", note, prompt_intent)
             elif scenario == "injector_correct":
                 note = record.get("correct_note")
                 expected = "CORRECT"
-                messages = build_messages("injector", note, args.prompt_intent)
+                prompt_intent = args.prompt_intent
+                messages = build_messages("injector", note, prompt_intent)
             else:
                 note = record.get("correct_note")
                 expected = "INCORRECT"
                 error_type = (record.get("error_type") or "").strip()
                 if error_type:
-                    intent = f"Introduce a {error_type} error while keeping the note realistic."
+                    prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
                 else:
-                    intent = "Introduce a subtle clinical error while keeping the note realistic."
-                messages = build_messages("injector", note, intent)
+                    prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
+                messages = build_messages("injector", note, prompt_intent)
 
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -427,53 +451,54 @@ def main() -> None:
             total += 1
             correct += int(is_correct)
 
-            print(f"\n--- Example {idx} ---")
-            print(f"expected: {expected} | predicted: {predicted or 'MISSING'} | match: {is_correct}")
-            
-            # For injector scenarios, check similarity
+            generated_note = None
+            score_jaccard = None
+            score_embedding = None
+            is_injector = scenario.startswith("injector")
+
             if is_injector:
                 generated_note = extract_generated_note(generated)
                 if generated_note:
-                    is_valid_sim, sim_score = check_similarity_validity(
-                        note, generated_note, args.min_similarity, args.max_similarity
-                    )
-                    similarity_scores.append(sim_score)
-                    similarity_valid_count += int(is_valid_sim)
-                    
-                    print(f"similarity: {sim_score:.2%} | valid: {is_valid_sim} (target: {args.min_similarity:.0%}-{args.max_similarity:.0%})")
-                else:
-                    print("similarity: N/A (could not extract generated_note)")
-            
-            print(generated)
+                    score_jaccard = jaccard_similarity(note, generated_note)
+                    if embedder is not None and embedder_tokenizer is not None:
+                        embeddings = embed_texts(
+                            embedder_tokenizer,
+                            embedder,
+                            embed_device,
+                            [note, generated_note],
+                        )
+                        score_embedding = cosine_similarity(embeddings[0], embeddings[1])
 
-        # Store results for this scenario
-        scenario_results = {
-            'total': total,
-            'correct': correct,
-            'accuracy': (correct / total * 100) if total > 0 else 0,
-        }
-        
-        if is_injector:
-            scenario_results['similarity_scores'] = similarity_scores
-            scenario_results['similarity_valid_count'] = similarity_valid_count
-        
-        all_results[scenario] = scenario_results
+            results_rows.append(
+                {
+                    "run_name": run_name,
+                    "scenario": scenario,
+                    "task_group": "injector" if is_injector else "assessor",
+                    "note_id": record.get("note_id"),
+                    "error_type": record.get("error_type"),
+                    "prompt_intent": prompt_intent,
+                    "original_note": note,
+                    "generated_note": generated_note,
+                    "expected": expected,
+                    "predicted": predicted,
+                    "match": is_correct,
+                    "score_jaccard": score_jaccard,
+                    "score_embedding_cosine": score_embedding,
+                    "raw_output": generated,
+                }
+            )
 
-        if total:
-            acc = correct / total * 100
-            print(f"\nScenario accuracy: {correct}/{total} ({acc:.1f}%)")
-            
-            # Print similarity metrics for injector scenarios
-            if is_injector and similarity_scores:
-                avg_sim = sum(similarity_scores) / len(similarity_scores)
-                sim_valid_rate = similarity_valid_count / len(similarity_scores) * 100
-                print(f"Similarity metrics:")
-                print(f"  - Average similarity: {avg_sim:.2%}")
-                print(f"  - Valid similarity rate: {similarity_valid_count}/{len(similarity_scores)} ({sim_valid_rate:.1f}%)")
-                print(f"  - Similarity range: {min(similarity_scores):.2%} - {max(similarity_scores):.2%}")
+        scenario_stats[scenario] = {"total": total, "correct": correct}
 
-    # Print final recap table
-    print_recap_table(all_results)
+    write_jsonl(output_path, results_rows)
+    write_summary(summary_path, summarize_results(results_rows))
+    print(f"Wrote {len(results_rows)} rows to {output_path}")
+    print(f"Wrote summary to {summary_path}")
+    for scenario, stats in scenario_stats.items():
+        total = stats["total"]
+        correct = stats["correct"]
+        acc = (correct / total * 100) if total else 0.0
+        print(f"{scenario}: {correct}/{total} ({acc:.1f}%)")
 
 
 if __name__ == "__main__":
