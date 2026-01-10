@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 
 import torch
 from peft import PeftModel
+from tqdm import tqdm
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 
@@ -365,6 +366,7 @@ def main() -> None:
     run_name = args.run_name or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(args.output_dir, f"quick_test_{run_name}.jsonl")
     summary_path = os.path.join(args.output_dir, f"quick_test_{run_name}_summary.json")
+    os.makedirs(args.output_dir, exist_ok=True)
 
     records = []
     if args.jsonl_file:
@@ -394,103 +396,111 @@ def main() -> None:
 
     results_rows: List[Dict] = []
     scenario_stats: Dict[str, Dict[str, int]] = {}
+    scenario_samples_map: Dict[str, List[Dict]] = {}
 
+    total_examples = 0
     for scenario in scenarios:
         samples = scenario_samples(records, scenario, args.num_samples)
         if not samples and args.input_note:
             samples = [{"correct_note": args.input_note, "incorrect_note": args.input_note}]
+        scenario_samples_map[scenario] = samples
+        total_examples += len(samples)
 
-        correct = 0
-        total = 0
+    with open(output_path, "a", encoding="utf-8") as out_handle:
+        with tqdm(total=total_examples, desc="Inference", unit="ex") as pbar:
+            for scenario in scenarios:
+                samples = scenario_samples_map[scenario]
+                correct = 0
+                total = 0
 
-        for idx, record in enumerate(samples, start=1):
-            if scenario == "assessor_correct":
-                note = record.get("correct_note")
-                expected = "CORRECT"
-                prompt_intent = "Assess note correctness."
-                messages = build_messages("assessor", note, prompt_intent)
-            elif scenario == "assessor_incorrect":
-                note = record.get("incorrect_note")
-                expected = "INCORRECT"
-                prompt_intent = "Assess note correctness."
-                messages = build_messages("assessor", note, prompt_intent)
-            elif scenario == "injector_correct":
-                note = record.get("correct_note")
-                expected = "CORRECT"
-                prompt_intent = args.prompt_intent
-                messages = build_messages("injector", note, prompt_intent)
-            else:
-                note = record.get("correct_note")
-                expected = "INCORRECT"
-                error_type = (record.get("error_type") or "").strip()
-                if error_type:
-                    prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
-                else:
-                    prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
-                messages = build_messages("injector", note, prompt_intent)
+                for record in samples:
+                    if scenario == "assessor_correct":
+                        note = record.get("correct_note")
+                        expected = "CORRECT"
+                        prompt_intent = "Assess note correctness."
+                        messages = build_messages("assessor", note, prompt_intent)
+                    elif scenario == "assessor_incorrect":
+                        note = record.get("incorrect_note")
+                        expected = "INCORRECT"
+                        prompt_intent = "Assess note correctness."
+                        messages = build_messages("assessor", note, prompt_intent)
+                    elif scenario == "injector_correct":
+                        note = record.get("correct_note")
+                        expected = "CORRECT"
+                        prompt_intent = args.prompt_intent
+                        messages = build_messages("injector", note, prompt_intent)
+                    else:
+                        note = record.get("correct_note")
+                        expected = "INCORRECT"
+                        error_type = (record.get("error_type") or "").strip()
+                        if error_type:
+                            prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
+                        else:
+                            prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
+                        messages = build_messages("injector", note, prompt_intent)
 
-            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+                    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=args.max_new_tokens,
-                    do_sample=True,
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
-
-            # Decode ONLY the generated tokens (not the input prompt)
-            input_length = inputs['input_ids'].shape[1]
-            generated_tokens = outputs[0][input_length:]
-            generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            predicted = extract_final_answer(generated)
-            is_correct = predicted == expected
-            total += 1
-            correct += int(is_correct)
-
-            generated_note = None
-            score_jaccard = None
-            score_embedding = None
-            is_injector = scenario.startswith("injector")
-
-            if is_injector:
-                generated_note = extract_generated_note(generated)
-                if generated_note:
-                    score_jaccard = jaccard_similarity(note, generated_note)
-                    if embedder is not None and embedder_tokenizer is not None:
-                        embeddings = embed_texts(
-                            embedder_tokenizer,
-                            embedder,
-                            embed_device,
-                            [note, generated_note],
+                    with torch.no_grad():
+                        outputs = model.generate(
+                            **inputs,
+                            max_new_tokens=args.max_new_tokens,
+                            do_sample=True,
+                            temperature=args.temperature,
+                            top_p=args.top_p,
+                            pad_token_id=tokenizer.eos_token_id,
                         )
-                        score_embedding = cosine_similarity(embeddings[0], embeddings[1])
 
-            results_rows.append(
-                {
-                    "run_name": run_name,
-                    "scenario": scenario,
-                    "task_group": "injector" if is_injector else "assessor",
-                    "note_id": record.get("note_id"),
-                    "error_type": record.get("error_type"),
-                    "prompt_intent": prompt_intent,
-                    "original_note": note,
-                    "generated_note": generated_note,
-                    "expected": expected,
-                    "predicted": predicted,
-                    "match": is_correct,
-                    "score_jaccard": score_jaccard,
-                    "score_embedding_cosine": score_embedding,
-                    "raw_output": generated,
-                }
-            )
+                    input_length = inputs["input_ids"].shape[1]
+                    generated_tokens = outputs[0][input_length:]
+                    generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    predicted = extract_final_answer(generated)
+                    is_correct = predicted == expected
+                    total += 1
+                    correct += int(is_correct)
 
-        scenario_stats[scenario] = {"total": total, "correct": correct}
+                    generated_note = None
+                    score_jaccard = None
+                    score_embedding = None
+                    is_injector = scenario.startswith("injector")
 
-    write_jsonl(output_path, results_rows)
+                    if is_injector:
+                        generated_note = extract_generated_note(generated)
+                        if generated_note:
+                            score_jaccard = jaccard_similarity(note, generated_note)
+                            if embedder is not None and embedder_tokenizer is not None:
+                                embeddings = embed_texts(
+                                    embedder_tokenizer,
+                                    embedder,
+                                    embed_device,
+                                    [note, generated_note],
+                                )
+                                score_embedding = cosine_similarity(embeddings[0], embeddings[1])
+
+                    row = {
+                        "run_name": run_name,
+                        "scenario": scenario,
+                        "task_group": "injector" if is_injector else "assessor",
+                        "note_id": record.get("note_id"),
+                        "error_type": record.get("error_type"),
+                        "prompt_intent": prompt_intent,
+                        "original_note": note,
+                        "generated_note": generated_note,
+                        "expected": expected,
+                        "predicted": predicted,
+                        "match": is_correct,
+                        "score_jaccard": score_jaccard,
+                        "score_embedding_cosine": score_embedding,
+                        "raw_output": generated,
+                    }
+                    results_rows.append(row)
+                    out_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    out_handle.flush()
+                    pbar.update(1)
+
+                scenario_stats[scenario] = {"total": total, "correct": correct}
+
     write_summary(summary_path, summarize_results(results_rows))
     print(f"Wrote {len(results_rows)} rows to {output_path}")
     print(f"Wrote summary to {summary_path}")
