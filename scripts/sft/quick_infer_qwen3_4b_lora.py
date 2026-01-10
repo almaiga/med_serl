@@ -247,6 +247,8 @@ def force_answer_from_prompt(
     return extract_final_answer(generated)
 
 
+
+
 def extract_generated_note(text: str) -> Optional[str]:
     """Extract the generated_note section from injector output."""
     # Split by "generated_note:" first to isolate the section
@@ -562,8 +564,6 @@ def main() -> None:
                         if predicted is None:
                             full_text = tokenizer.decode(outputs[idx], skip_special_tokens=True)
                             predicted = extract_final_answer(full_text)
-                            if not generated.strip():
-                                generated = full_text
                         if predicted is None and args.force_answer:
                             predicted = force_answer_from_prompt(
                                 meta["prompt"],
@@ -581,11 +581,12 @@ def main() -> None:
 
                         if meta["is_injector"]:
                             generated_note = extract_generated_note(generated)
-                            if generated_note:
-                                score_jaccard = jaccard_similarity(meta["note"], generated_note)
-                                if embedder is not None and embedder_tokenizer is not None:
-                                    embeddings = embed_texts(
-                                        embedder_tokenizer,
+
+                        if generated_note:
+                            score_jaccard = jaccard_similarity(meta["note"], generated_note)
+                            if embedder is not None and embedder_tokenizer is not None:
+                                embeddings = embed_texts(
+                                    embedder_tokenizer,
                                         embedder,
                                         embed_device,
                                         [meta["note"], generated_note],
