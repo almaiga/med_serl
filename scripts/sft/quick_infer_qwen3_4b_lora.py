@@ -25,20 +25,17 @@ from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 
 SYSTEM_PROMPTS = {
-    "assessor": (
-        "You are a meticulous clinical note assessor in a self-play loop. Your job"
-        " is to analyze the note for clinical correctness, detect errors when they"
-        " exist, and provide a clear final answer with a Yes/No error decision.\n\n"
-        "CRITICAL: Your response MUST end with EXACTLY this format on the last line:\n"
-        'final_answer: "CORRECT"\n'
-        "OR\n"
-        'final_answer: "INCORRECT"\n\n'
-        "Do not add any text after the final_answer line."
-    ),
     "injector": (
-        "You are an error injector in a self-play loop. Follow the prompt intent to"
-        " transform the input note into a new note, either correct or with a subtle"
-        " error, and provide a clear final answer.\n\n"
+        "You are a clinical note transformer in a self-play loop.\n\n"
+        "You MUST strictly follow the prompt intent.\n\n"
+        "If asked to create a CORRECT note:\n"
+        "- You MUST preserve ALL clinical facts from the input note\n"
+        "- Including diagnosis, lab values, findings, and clinical interpretation\n"
+        "- You are ONLY allowed to change surface form (wording, order, phrasing)\n"
+        "- You are STRICTLY FORBIDDEN from reinterpreting, normalizing, or changing meaning\n\n"
+        "If asked to create an INCORRECT note:\n"
+        "- You MUST introduce exactly ONE subtle clinical error\n"
+        "- All other clinical facts MUST remain unchanged\n\n"
         "CRITICAL: Your response MUST end with EXACTLY this format on the last line:\n"
         'final_answer: "CORRECT"\n'
         "OR\n"
@@ -48,46 +45,87 @@ SYSTEM_PROMPTS = {
 }
 
 
-def build_messages(mode: str, note: str, prompt_intent: str) -> List[Dict[str, str]]:
+def build_messages(
+    mode: str,
+    note: str,
+    prompt_intent: str,
+    assessor_prompts: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
     if mode == "assessor":
-        user_content = (
-            "Role: assessor\n"
-            "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n\n"
-            f"Clinical note:\n{note}\n\n"
-            "Provide your reasoning in a <think> block, then output:\n"
-            'final_answer: "CORRECT" or "INCORRECT"\n'
-        )
-        system_prompt = SYSTEM_PROMPTS["assessor"]
+        if assessor_prompts:
+            system_prompt = assessor_prompts["system_prompt"]
+            user_content = assessor_prompts["user_template"].format(note=note)
+        else:
+            system_prompt = (
+                "You are an expert medical error detection system. Your task is to carefully"
+                " analyze medical notes for potential clinical errors, diagnostic mistakes, or"
+                " treatment inaccuracies.\n\n"
+                "You must provide your response in this exact structured format:\n\n"
+                "Reasoning: [Your detailed analysis of the medical note, identifying any clinical"
+                " errors, inconsistencies, or confirming correctness]\n\n"
+                "Answer: [Either \"CORRECT\" or \"INCORRECT\"]\n\n"
+                "Classification guidelines:\n"
+                "- \"CORRECT\": No medical errors, diagnostic mistakes, or treatment inaccuracies detected\n"
+                "- \"INCORRECT\": Contains medical errors, diagnostic mistakes, treatment inaccuracies, or"
+                " clinical inconsistencies"
+            )
+            user_content = f"Analyze this medical note:\n\n{note}"
+
     else:
         is_correct = "no clinical errors" in prompt_intent.lower()
+
         if is_correct:
             user_content = (
-                "Role: error injector\n"
-                "Task: follow the prompt intent and transform the input note into a new note.\n"
-                f'prompt_intent: "{prompt_intent}"\n\n'
+                "Role: injector\n"
+                "Task: Create a CLINICALLY IDENTICAL VARIANT of the input note.\n\n"
+                "You must preserve:\n"
+                "- the diagnosis\n"
+                "- all lab values\n"
+                "- all clinical findings\n"
+                "- the overall clinical interpretation\n\n"
+                "You may ONLY:\n"
+                "- rephrase sentences\n"
+                "- change wording or style\n"
+                "- reorder sentences\n\n"
+                "You must NOT:\n"
+                "- reinterpret findings\n"
+                "- normalize abnormal results\n"
+                "- add or remove clinical facts\n\n"
                 f"input_note:\n{note}\n\n"
-                "In your <think> block, briefly explain the change.\n"
-                "Then output:\n"
+                "In your <think> block, briefly describe the surface-level change.\n\n"
                 "generated_note:\n[the updated note]\n\n"
                 'final_answer: "CORRECT"\n'
             )
         else:
             user_content = (
-                "Role: error injector\n"
-                "Task: follow the prompt intent and transform the input note into a new note.\n"
-                f'prompt_intent: "{prompt_intent}"\n\n'
+                "Role: injector\n"
+                "Task: Create a variant of the input note with EXACTLY ONE subtle clinical error.\n\n"
+                "Rules:\n"
+                "- Introduce exactly ONE error\n"
+                "- All other clinical facts must remain unchanged\n"
+                "- The error must be clinically plausible and local\n\n"
                 f"input_note:\n{note}\n\n"
-                "In your <think> block, briefly explain the change.\n"
-                "Then output:\n"
+                "In your <think> block, briefly describe the injected error.\n\n"
                 "generated_note:\n[the updated note]\n\n"
                 'final_answer: "INCORRECT"\n'
             )
+
         system_prompt = SYSTEM_PROMPTS["injector"]
 
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
+
+
+def load_assessor_prompts(prompt_file: Optional[str]) -> Optional[Dict[str, str]]:
+    if not prompt_file:
+        return None
+    with open(prompt_file, "r", encoding="utf-8") as handle:
+        prompts = json.load(handle)
+    if "system_prompt" not in prompts or "user_template" not in prompts:
+        raise ValueError("Prompt file must include system_prompt and user_template.")
+    return prompts
 
 
 def parse_args() -> argparse.Namespace:
@@ -105,6 +143,11 @@ def parse_args() -> argparse.Namespace:
         "--scenarios",
         default="assessor_correct,assessor_incorrect,injector_correct,injector_incorrect",
         help="Comma-separated scenarios to run.",
+    )
+    parser.add_argument(
+        "--assessor-prompt-file",
+        default="configs/prompts/error_detection_prompts.json",
+        help="JSON prompt file for assessor (system_prompt + user_template).",
     )
     parser.add_argument(
         "--output-dir",
@@ -376,6 +419,8 @@ def main() -> None:
     if not records and not args.input_note:
         raise SystemExit("Provide --jsonl-file or --input-note.")
 
+    assessor_prompts = load_assessor_prompts(args.assessor_prompt_file)
+
     tokenizer = AutoTokenizer.from_pretrained(args.adapter_dir, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -418,17 +463,17 @@ def main() -> None:
                         note = record.get("correct_note")
                         expected = "CORRECT"
                         prompt_intent = "Assess note correctness."
-                        messages = build_messages("assessor", note, prompt_intent)
+                        messages = build_messages("assessor", note, prompt_intent, assessor_prompts)
                     elif scenario == "assessor_incorrect":
                         note = record.get("incorrect_note")
                         expected = "INCORRECT"
                         prompt_intent = "Assess note correctness."
-                        messages = build_messages("assessor", note, prompt_intent)
+                        messages = build_messages("assessor", note, prompt_intent, assessor_prompts)
                     elif scenario == "injector_correct":
                         note = record.get("correct_note")
                         expected = "CORRECT"
                         prompt_intent = args.prompt_intent
-                        messages = build_messages("injector", note, prompt_intent)
+                        messages = build_messages("injector", note, prompt_intent, assessor_prompts)
                     else:
                         note = record.get("correct_note")
                         expected = "INCORRECT"
@@ -437,7 +482,7 @@ def main() -> None:
                             prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
                         else:
                             prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
-                        messages = build_messages("injector", note, prompt_intent)
+                        messages = build_messages("injector", note, prompt_intent, assessor_prompts)
 
                     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
