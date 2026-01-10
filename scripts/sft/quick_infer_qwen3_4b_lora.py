@@ -273,7 +273,36 @@ def extract_generated_note(text: str) -> Optional[str]:
     # Remove trailing </think> tags that might have leaked through
     generated = re.sub(r'</think>\s*$', '', generated).strip()
     
-    return generated if generated else None
+    if generated:
+        return generated
+
+    # Fallback 1: "Modified Note with Error" block (quoted)
+    match = re.search(r'Modified Note with Error:\s*"(.*?)"', text, re.DOTALL | re.IGNORECASE)
+    if match:
+        candidate = match.group(1).strip()
+        return candidate if candidate else None
+
+    # Fallback 2: "Modified Note with Error" block (unquoted, stop at next section)
+    match = re.search(
+        r'Modified Note with Error:\s*(.*?)(?:\n\s*\d+\.\s+|Ground Truth|Error location|final_answer:|$)',
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        candidate = match.group(1).strip()
+        return candidate if candidate else None
+
+    # Fallback 3: "Modified Note" (non-error wording)
+    match = re.search(
+        r'Modified Note:\s*(.*?)(?:\n\s*\d+\.\s+|Ground Truth|Error location|final_answer:|$)',
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        candidate = match.group(1).strip()
+        return candidate if candidate else None
+
+    return None
 
 
 def tokenize_for_jaccard(text: str) -> List[str]:
@@ -545,7 +574,7 @@ def main() -> None:
                     batch_prompts = prompts[start:start + args.batch_size]
                     batch_metas = metas[start:start + args.batch_size]
                     inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(model.device)
-                    input_lengths = inputs["attention_mask"].sum(1).tolist()
+                    input_length = inputs["input_ids"].shape[1]
 
                     with torch.no_grad():
                         outputs = model.generate(
@@ -558,7 +587,7 @@ def main() -> None:
                         )
 
                     for idx, meta in enumerate(batch_metas):
-                        generated_tokens = outputs[idx][input_lengths[idx]:]
+                        generated_tokens = outputs[idx][input_length:]
                         generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
                         predicted = extract_final_answer(generated)
                         if predicted is None:
