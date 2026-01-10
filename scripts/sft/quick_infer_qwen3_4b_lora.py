@@ -543,7 +543,7 @@ def main() -> None:
                     batch_prompts = prompts[start:start + args.batch_size]
                     batch_metas = metas[start:start + args.batch_size]
                     inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(model.device)
-                    input_lengths = inputs["attention_mask"].sum(1)
+                    input_lengths = inputs["attention_mask"].sum(1).tolist()
 
                     with torch.no_grad():
                         outputs = model.generate(
@@ -559,6 +559,11 @@ def main() -> None:
                         generated_tokens = outputs[idx][input_lengths[idx]:]
                         generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
                         predicted = extract_final_answer(generated)
+                        if predicted is None:
+                            full_text = tokenizer.decode(outputs[idx], skip_special_tokens=True)
+                            predicted = extract_final_answer(full_text)
+                            if not generated.strip():
+                                generated = full_text
                         if predicted is None and args.force_answer:
                             predicted = force_answer_from_prompt(
                                 meta["prompt"],
