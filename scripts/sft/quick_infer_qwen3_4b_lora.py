@@ -57,19 +57,22 @@ def build_messages(
             user_content = assessor_prompts["user_template"].format(note=note)
         else:
             system_prompt = (
-                "You are an expert medical error detection system. Your task is to carefully"
-                " analyze medical notes for potential clinical errors, diagnostic mistakes, or"
-                " treatment inaccuracies.\n\n"
-                "You must provide your response in this exact structured format:\n\n"
-                "Reasoning: [Your detailed analysis of the medical note, identifying any clinical"
-                " errors, inconsistencies, or confirming correctness]\n\n"
-                "Answer: [Either \"CORRECT\" or \"INCORRECT\"]\n\n"
-                "Classification guidelines:\n"
-                "- \"CORRECT\": No medical errors, diagnostic mistakes, or treatment inaccuracies detected\n"
-                "- \"INCORRECT\": Contains medical errors, diagnostic mistakes, treatment inaccuracies, or"
-                " clinical inconsistencies"
+                "You are a meticulous clinical note assessor in a self-play loop. Your job"
+                " is to analyze the note for clinical correctness, detect errors when they"
+                " exist, and provide a clear final answer with a Yes/No error decision.\n\n"
+                "CRITICAL: Your response MUST end with EXACTLY this format on the last line:\n"
+                "final_answer: \"CORRECT\"\n"
+                "OR\n"
+                "final_answer: \"INCORRECT\"\n\n"
+                "Do not add any text after the final_answer line."
             )
-            user_content = f"Analyze this medical note:\n\n{note}"
+            user_content = (
+                "Role: assessor\n"
+                "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n\n"
+                f"Clinical note:\n{note}\n\n"
+                "Provide your reasoning in a <think> block, then output:\n"
+                'final_answer: "CORRECT" or "INCORRECT"\n'
+            )
 
     else:
         is_correct = "no clinical errors" in prompt_intent.lower()
@@ -147,8 +150,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--assessor-prompt-file",
-        default="configs/prompts/error_detection_prompts.json",
-        help="JSON prompt file for assessor (system_prompt + user_template).",
+        default=None,
+        help="Optional JSON prompt file for assessor (system_prompt + user_template).",
     )
     parser.add_argument(
         "--output-dir",
