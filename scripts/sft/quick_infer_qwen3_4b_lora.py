@@ -163,9 +163,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-note", default=None, help="Fallback single input note.")
     parser.add_argument(
         "--prompt-intent",
-        default="Create a realistic note with no clinical errors.",
+        default="Create a clinically identical variant of the input note.",
         help="Injector intent.",
     )
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation.")
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -464,6 +465,8 @@ def main() -> None:
                 correct = 0
                 total = 0
 
+                prompts: List[str] = []
+                metas: List[Dict] = []
                 for record in samples:
                     if scenario == "assessor_correct":
                         note = record.get("correct_note")
@@ -491,7 +494,22 @@ def main() -> None:
                         messages = build_messages("injector", note, prompt_intent, assessor_prompts)
 
                     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+                    prompts.append(prompt)
+                    metas.append(
+                        {
+                            "record": record,
+                            "note": note,
+                            "expected": expected,
+                            "prompt_intent": prompt_intent,
+                            "is_injector": scenario.startswith("injector"),
+                        }
+                    )
+
+                for start in range(0, len(prompts), args.batch_size):
+                    batch_prompts = prompts[start:start + args.batch_size]
+                    batch_metas = metas[start:start + args.batch_size]
+                    inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(model.device)
+                    input_lengths = inputs["attention_mask"].sum(1)
 
                     with torch.no_grad():
                         outputs = model.generate(
@@ -503,52 +521,51 @@ def main() -> None:
                             pad_token_id=tokenizer.eos_token_id,
                         )
 
-                    input_length = inputs["input_ids"].shape[1]
-                    generated_tokens = outputs[0][input_length:]
-                    generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                    predicted = extract_final_answer(generated)
-                    is_correct = predicted == expected
-                    total += 1
-                    correct += int(is_correct)
+                    for idx, meta in enumerate(batch_metas):
+                        generated_tokens = outputs[idx][input_lengths[idx]:]
+                        generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                        predicted = extract_final_answer(generated)
+                        is_correct = predicted == meta["expected"]
+                        total += 1
+                        correct += int(is_correct)
 
-                    generated_note = None
-                    score_jaccard = None
-                    score_embedding = None
-                    is_injector = scenario.startswith("injector")
+                        generated_note = None
+                        score_jaccard = None
+                        score_embedding = None
 
-                    if is_injector:
-                        generated_note = extract_generated_note(generated)
-                        if generated_note:
-                            score_jaccard = jaccard_similarity(note, generated_note)
-                            if embedder is not None and embedder_tokenizer is not None:
-                                embeddings = embed_texts(
-                                    embedder_tokenizer,
-                                    embedder,
-                                    embed_device,
-                                    [note, generated_note],
-                                )
-                                score_embedding = cosine_similarity(embeddings[0], embeddings[1])
+                        if meta["is_injector"]:
+                            generated_note = extract_generated_note(generated)
+                            if generated_note:
+                                score_jaccard = jaccard_similarity(meta["note"], generated_note)
+                                if embedder is not None and embedder_tokenizer is not None:
+                                    embeddings = embed_texts(
+                                        embedder_tokenizer,
+                                        embedder,
+                                        embed_device,
+                                        [meta["note"], generated_note],
+                                    )
+                                    score_embedding = cosine_similarity(embeddings[0], embeddings[1])
 
-                    row = {
-                        "run_name": run_name,
-                        "scenario": scenario,
-                        "task_group": "injector" if is_injector else "assessor",
-                        "note_id": record.get("note_id"),
-                        "error_type": record.get("error_type"),
-                        "prompt_intent": prompt_intent,
-                        "original_note": note,
-                        "generated_note": generated_note,
-                        "expected": expected,
-                        "predicted": predicted,
-                        "match": is_correct,
-                        "score_jaccard": score_jaccard,
-                        "score_embedding_cosine": score_embedding,
-                        "raw_output": generated,
-                    }
-                    results_rows.append(row)
-                    out_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-                    out_handle.flush()
-                    pbar.update(1)
+                        row = {
+                            "run_name": run_name,
+                            "scenario": scenario,
+                            "task_group": "injector" if meta["is_injector"] else "assessor",
+                            "note_id": meta["record"].get("note_id"),
+                            "error_type": meta["record"].get("error_type"),
+                            "prompt_intent": meta["prompt_intent"],
+                            "original_note": meta["note"],
+                            "generated_note": generated_note,
+                            "expected": meta["expected"],
+                            "predicted": predicted,
+                            "match": is_correct,
+                            "score_jaccard": score_jaccard,
+                            "score_embedding_cosine": score_embedding,
+                            "raw_output": generated,
+                        }
+                        results_rows.append(row)
+                        out_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                        out_handle.flush()
+                        pbar.update(1)
 
                 scenario_stats[scenario] = {"total": total, "correct": correct}
 
