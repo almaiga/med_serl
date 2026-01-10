@@ -167,6 +167,11 @@ def parse_args() -> argparse.Namespace:
         help="Injector intent.",
     )
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation.")
+    parser.add_argument(
+        "--force-answer",
+        action="store_true",
+        help="If Answer/CORRECT/INCORRECT is missing, run a short follow-up decode.",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -212,6 +217,31 @@ def extract_final_answer(text: str) -> Optional[str]:
         return matches[-1].upper()
     
     return None
+
+
+def force_answer_from_prompt(
+    prompt: str,
+    tokenizer,
+    model,
+    device: str,
+    max_new_tokens: int = 12,
+) -> Optional[str]:
+    """Run a short follow-up decode to elicit the Answer line."""
+    followup = prompt.rstrip() + "\nAnswer:"
+    inputs = tokenizer(followup, return_tensors="pt").to(device)
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=0.0,
+            top_p=1.0,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    input_length = inputs["input_ids"].shape[1]
+    generated_tokens = outputs[0][input_length:]
+    generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    return extract_final_answer(generated)
 
 
 def extract_generated_note(text: str) -> Optional[str]:
@@ -502,6 +532,7 @@ def main() -> None:
                             "expected": expected,
                             "prompt_intent": prompt_intent,
                             "is_injector": scenario.startswith("injector"),
+                            "prompt": prompt,
                         }
                     )
 
@@ -525,6 +556,13 @@ def main() -> None:
                         generated_tokens = outputs[idx][input_lengths[idx]:]
                         generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
                         predicted = extract_final_answer(generated)
+                        if predicted is None and args.force_answer:
+                            predicted = force_answer_from_prompt(
+                                meta["prompt"],
+                                tokenizer,
+                                model,
+                                model.device,
+                            )
                         is_correct = predicted == meta["expected"]
                         total += 1
                         correct += int(is_correct)
