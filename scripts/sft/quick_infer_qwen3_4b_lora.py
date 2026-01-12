@@ -88,7 +88,11 @@ def build_messages(
     else:
         is_correct = "no clinical errors" in prompt_intent.lower()
         if injector_prompts:
-            system_prompt = injector_prompts["system_prompt"]
+            system_prompt = (
+                injector_prompts["system_prompt_correct"]
+                if is_correct
+                else injector_prompts["system_prompt_incorrect"]
+            )
             if thinking_budget:
                 system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
             if is_correct:
@@ -159,7 +163,12 @@ def load_injector_prompts(prompt_file: Optional[str]) -> Optional[Dict[str, str]
         return None
     with open(prompt_file, "r", encoding="utf-8") as handle:
         prompts = json.load(handle)
-    required = {"system_prompt", "injector_correct_template", "injector_incorrect_template"}
+    required = {
+        "system_prompt_correct",
+        "system_prompt_incorrect",
+        "injector_correct_template",
+        "injector_incorrect_template",
+    }
     if not required.issubset(set(prompts.keys())):
         raise ValueError("Injector prompt file missing required keys.")
     return prompts
