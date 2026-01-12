@@ -50,10 +50,14 @@ def build_messages(
     note: str,
     prompt_intent: str,
     assessor_prompts: Optional[Dict[str, str]] = None,
+    injector_prompts: Optional[Dict[str, str]] = None,
+    thinking_budget: int = 0,
 ) -> List[Dict[str, str]]:
     if mode == "assessor":
         if assessor_prompts:
             system_prompt = assessor_prompts["system_prompt"]
+            if thinking_budget:
+                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
             user_content = assessor_prompts["user_template"].format(note=note)
         else:
             system_prompt = (
@@ -66,6 +70,8 @@ def build_messages(
                 "final_answer: \"INCORRECT\"\n\n"
                 "Do not add any text after the final_answer line."
             )
+            if thinking_budget:
+                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
             user_content = (
                 "Role: assessor\n"
                 "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n\n"
@@ -76,45 +82,56 @@ def build_messages(
 
     else:
         is_correct = "no clinical errors" in prompt_intent.lower()
-
-        if is_correct:
-            user_content = (
-                "Role: injector\n"
-                "Task: Create a CLINICALLY IDENTICAL variant of the input note.\n\n"
-                "IMPORTANT:\n"
-                "- You must preserve ALL clinical facts exactly.\n"
-                "- You are allowed to make ONLY MINIMAL surface edits.\n"
-                "- You should change as LITTLE as possible.\n"
-                "- You MAY leave the note unchanged if no safe edit is obvious.\n"
-                "- You MUST NOT change diagnoses, clinical conclusions, or interpretations.\n\n"
-                "Allowed edits:\n"
-                "- punctuation\n"
-                "- wording (synonyms with identical meaning)\n"
-                "- sentence order\n\n"
-                "Forbidden edits:\n"
-                "- changing diagnosis terms\n"
-                "- changing medical classifications\n"
-                "- changing clinical conclusions\n\n"
-                f"input_note:\n{note}\n\n"
-                "In your <think> block, briefly describe the surface-level change.\n\n"
-                "generated_note:\n[the updated note]\n\n"
-                'final_answer: "CORRECT"\n'
-            )
+        if injector_prompts:
+            system_prompt = injector_prompts["system_prompt"]
+            if thinking_budget:
+                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
+            if is_correct:
+                template = injector_prompts["injector_correct_template"]
+            else:
+                template = injector_prompts["injector_incorrect_template"]
+            user_content = template.format(note=note, prompt_intent=prompt_intent)
         else:
-            user_content = (
-                "Role: injector\n"
-                "Task: Create a variant of the input note with EXACTLY ONE subtle clinical error.\n\n"
-                "Rules:\n"
-                "- Introduce exactly ONE error\n"
-                "- All other clinical facts must remain unchanged\n"
-                "- The error must be clinically plausible and local\n\n"
-                f"input_note:\n{note}\n\n"
-                "In your <think> block, briefly describe the injected error.\n\n"
-                "generated_note:\n[the updated note]\n\n"
-                'final_answer: "INCORRECT"\n'
-            )
+            if is_correct:
+                user_content = (
+                    "Role: injector\n"
+                    "Task: Create a CLINICALLY IDENTICAL variant of the input note.\n\n"
+                    "IMPORTANT:\n"
+                    "- You must preserve ALL clinical facts exactly.\n"
+                    "- You are allowed to make ONLY MINIMAL surface edits.\n"
+                    "- You should change as LITTLE as possible.\n"
+                    "- You MAY leave the note unchanged if no safe edit is obvious.\n"
+                    "- You MUST NOT change diagnoses, clinical conclusions, or interpretations.\n\n"
+                    "Allowed edits:\n"
+                    "- punctuation\n"
+                    "- wording (synonyms with identical meaning)\n"
+                    "- sentence order\n\n"
+                    "Forbidden edits:\n"
+                    "- changing diagnosis terms\n"
+                    "- changing medical classifications\n"
+                    "- changing clinical conclusions\n\n"
+                    f"input_note:\n{note}\n\n"
+                    "In your <think> block, briefly describe the surface-level change.\n\n"
+                    "generated_note:\n[the updated note]\n\n"
+                    'final_answer: "CORRECT"\n'
+                )
+            else:
+                user_content = (
+                    "Role: injector\n"
+                    "Task: Create a variant of the input note with EXACTLY ONE subtle clinical error.\n\n"
+                    "Rules:\n"
+                    "- Introduce exactly ONE error\n"
+                    "- All other clinical facts must remain unchanged\n"
+                    "- The error must be clinically plausible and local\n\n"
+                    f"input_note:\n{note}\n\n"
+                    "In your <think> block, briefly describe the injected error.\n\n"
+                    "generated_note:\n[the updated note]\n\n"
+                    'final_answer: "INCORRECT"\n'
+                )
 
-        system_prompt = SYSTEM_PROMPTS["injector"]
+            system_prompt = SYSTEM_PROMPTS["injector"]
+            if thinking_budget:
+                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
 
     return [
         {"role": "system", "content": system_prompt},
@@ -129,6 +146,17 @@ def load_assessor_prompts(prompt_file: Optional[str]) -> Optional[Dict[str, str]
         prompts = json.load(handle)
     if "system_prompt" not in prompts or "user_template" not in prompts:
         raise ValueError("Prompt file must include system_prompt and user_template.")
+    return prompts
+
+
+def load_injector_prompts(prompt_file: Optional[str]) -> Optional[Dict[str, str]]:
+    if not prompt_file:
+        return None
+    with open(prompt_file, "r", encoding="utf-8") as handle:
+        prompts = json.load(handle)
+    required = {"system_prompt", "injector_correct_template", "injector_incorrect_template"}
+    if not required.issubset(set(prompts.keys())):
+        raise ValueError("Injector prompt file missing required keys.")
     return prompts
 
 
@@ -154,8 +182,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--assessor-prompt-file",
-        default=None,
-        help="Optional JSON prompt file for assessor (system_prompt + user_template).",
+        default="configs/prompts/error_detection_prompts.json",
+        help="JSON prompt file for assessor (system_prompt + user_template).",
+    )
+    parser.add_argument(
+        "--injector-prompt-file",
+        default="configs/prompts/error_injection_prompts.json",
+        help="JSON prompt file for injector prompts.",
     )
     parser.add_argument(
         "--output-dir",
@@ -182,6 +215,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument("--thinking-budget", type=int, default=0, help="Thinking budget tokens.")
     parser.add_argument(
         "--embedding-model",
         default="sentence-transformers/all-MiniLM-L6-v2",
@@ -495,6 +529,7 @@ def main() -> None:
         raise SystemExit("Provide --jsonl-file or --input-note.")
 
     assessor_prompts = load_assessor_prompts(args.assessor_prompt_file)
+    injector_prompts = load_injector_prompts(args.injector_prompt_file)
 
     tokenizer_source = args.adapter_dir or args.model_name
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
@@ -543,17 +578,38 @@ def main() -> None:
                         note = record.get("correct_note")
                         expected = "CORRECT"
                         prompt_intent = "Assess note correctness."
-                        messages = build_messages("assessor", note, prompt_intent, assessor_prompts)
+                        messages = build_messages(
+                            "assessor",
+                            note,
+                            prompt_intent,
+                            assessor_prompts,
+                            injector_prompts,
+                            args.thinking_budget,
+                        )
                     elif scenario == "assessor_incorrect":
                         note = record.get("incorrect_note")
                         expected = "INCORRECT"
                         prompt_intent = "Assess note correctness."
-                        messages = build_messages("assessor", note, prompt_intent, assessor_prompts)
+                        messages = build_messages(
+                            "assessor",
+                            note,
+                            prompt_intent,
+                            assessor_prompts,
+                            injector_prompts,
+                            args.thinking_budget,
+                        )
                     elif scenario == "injector_correct":
                         note = record.get("correct_note")
                         expected = "CORRECT"
                         prompt_intent = args.prompt_intent
-                        messages = build_messages("injector", note, prompt_intent, assessor_prompts)
+                        messages = build_messages(
+                            "injector",
+                            note,
+                            prompt_intent,
+                            assessor_prompts,
+                            injector_prompts,
+                            args.thinking_budget,
+                        )
                     else:
                         note = record.get("correct_note")
                         expected = "INCORRECT"
@@ -562,7 +618,14 @@ def main() -> None:
                             prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
                         else:
                             prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
-                        messages = build_messages("injector", note, prompt_intent, assessor_prompts)
+                        messages = build_messages(
+                            "injector",
+                            note,
+                            prompt_intent,
+                            assessor_prompts,
+                            injector_prompts,
+                            args.thinking_budget,
+                        )
 
                     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                     prompts.append(prompt)
