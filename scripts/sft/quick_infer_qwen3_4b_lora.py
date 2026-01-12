@@ -134,8 +134,12 @@ def load_assessor_prompts(prompt_file: Optional[str]) -> Optional[Dict[str, str]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Quick inference for Qwen3-4B LoRA.")
-    parser.add_argument("--model-name", required=True, help="Base model name.")
-    parser.add_argument("--adapter-dir", required=True, help="LoRA adapter directory.")
+    parser.add_argument("--model-name", required=True, help="Base model name or local path.")
+    parser.add_argument(
+        "--adapter-dir",
+        default=None,
+        help="Optional LoRA adapter directory. If omitted, uses base model only.",
+    )
     parser.add_argument(
         "--jsonl-file",
         default=None,
@@ -492,7 +496,8 @@ def main() -> None:
 
     assessor_prompts = load_assessor_prompts(args.assessor_prompt_file)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.adapter_dir, use_fast=True)
+    tokenizer_source = args.adapter_dir or args.model_name
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -501,7 +506,9 @@ def main() -> None:
         torch_dtype="auto",
         device_map="auto",
     )
-    model = PeftModel.from_pretrained(base_model, args.adapter_dir)
+    model = base_model
+    if args.adapter_dir:
+        model = PeftModel.from_pretrained(base_model, args.adapter_dir)
     model.eval()
 
     embedder = None
