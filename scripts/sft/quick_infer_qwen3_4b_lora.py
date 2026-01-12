@@ -480,18 +480,6 @@ def force_answer_from_prompt(
 
 
 
-def clean_generated_note(note: str) -> str:
-    if not note:
-        return note
-    parts = re.split(r"\*\*Injected error\*\*:\s*", note, flags=re.IGNORECASE)
-    if len(parts) > 1:
-        return parts[0].strip()
-    parts = re.split(r"Injected error:\s*", note, flags=re.IGNORECASE)
-    if len(parts) > 1:
-        return parts[0].strip()
-    return note.strip()
-
-
 def extract_generated_note(text: str) -> Optional[str]:
     """Extract the generated_note section from injector output."""
     # Split by "generated_note:" first to isolate the section (allow same-line)
@@ -516,15 +504,13 @@ def extract_generated_note(text: str) -> Optional[str]:
     generated = re.sub(r'</think>\s*$', '', generated).strip()
 
     if generated:
-        cleaned = clean_generated_note(generated)
-        return cleaned if cleaned else None
+        return generated
 
     # Fallback 1: "Modified Note with Error" block (quoted)
     match = re.search(r'Modified Note with Error:\s*"(.*?)"', text, re.DOTALL | re.IGNORECASE)
     if match:
         candidate = match.group(1).strip()
-        cleaned = clean_generated_note(candidate)
-        return cleaned if cleaned else None
+        return candidate if candidate else None
 
     # Fallback 2: "Modified Note with Error" block (unquoted, stop at next section)
     match = re.search(
@@ -534,8 +520,7 @@ def extract_generated_note(text: str) -> Optional[str]:
     )
     if match:
         candidate = match.group(1).strip()
-        cleaned = clean_generated_note(candidate)
-        return cleaned if cleaned else None
+        return candidate if candidate else None
 
     # Fallback 3: "Modified Note" (non-error wording)
     match = re.search(
@@ -545,14 +530,12 @@ def extract_generated_note(text: str) -> Optional[str]:
     )
     if match:
         candidate = match.group(1).strip()
-        cleaned = clean_generated_note(candidate)
-        return cleaned if cleaned else None
+        return candidate if candidate else None
 
     # Fallback 4: strip think + final_answer and treat remainder as note
     cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r'final_answer:.*', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
     cleaned = cleaned.strip()
-    cleaned = clean_generated_note(cleaned)
     return cleaned if cleaned else None
 
 
