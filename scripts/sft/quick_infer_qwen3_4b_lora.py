@@ -265,8 +265,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--selfplay-min-jaccard",
         type=float,
-        default=0.95,
+        default=0.85,
         help="Minimum Jaccard similarity to accept generated notes.",
+    )
+    parser.add_argument(
+        "--selfplay-max-jaccard",
+        type=float,
+        default=0.99,
+        help="Maximum Jaccard similarity to accept generated notes.",
     )
     parser.add_argument(
         "--selfplay-max-attempts",
@@ -572,6 +578,7 @@ def passes_similarity_filter(
     original_note: str,
     generated_note: str,
     min_jaccard: float,
+    max_jaccard: Optional[float] = None,
 ) -> Dict[str, Optional[float]]:
     if not generated_note:
         return {"passed": False, "score_jaccard": None, "reason": "empty_generated"}
@@ -580,6 +587,8 @@ def passes_similarity_filter(
     score_jaccard = jaccard_similarity(original_note, generated_note)
     if score_jaccard < min_jaccard:
         return {"passed": False, "score_jaccard": score_jaccard, "reason": "low_jaccard"}
+    if max_jaccard is not None and score_jaccard > max_jaccard:
+        return {"passed": False, "score_jaccard": score_jaccard, "reason": "too_similar"}
     return {"passed": True, "score_jaccard": score_jaccard, "reason": None}
 
 
@@ -772,6 +781,7 @@ def run_selfplay_loop(
         "rejected_empty": 0,
         "rejected_no_word_change": 0,
         "rejected_low_jaccard": 0,
+        "rejected_too_similar": 0,
         "assessor_total": 0,
         "assessor_match_expected": 0,
     }
@@ -932,6 +942,7 @@ def run_selfplay_loop(
                         original_note,
                         candidate_note or "",
                         args.selfplay_min_jaccard,
+                        args.selfplay_max_jaccard,
                     )
                     stats["attempts_logged"] += 1
                     if filter_meta["passed"]:
@@ -966,6 +977,8 @@ def run_selfplay_loop(
                             stats["rejected_no_word_change"] += 1
                         elif reason == "low_jaccard":
                             stats["rejected_low_jaccard"] += 1
+                        elif reason == "too_similar":
+                            stats["rejected_too_similar"] += 1
                         continue
 
                     generated_note = candidate_note
