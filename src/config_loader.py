@@ -284,7 +284,7 @@ def get_openrlhf_args(config_path: str) -> Dict[str, Any]:
         'vllm_gpu_memory_utilization': openrlhf_config.get('vllm_gpu_memory_utilization', 0.85),
         
         # Training
-        'advantage_estimator': 'reinforce',
+        'advantage_estimator': openrlhf_config.get('advantage_estimator', 'reinforce'),
         'init_kl_coef': hp_config.get('kl_coef', 1e-4),
         'actor_learning_rate': hp_config.get('learning_rate', 5e-7),
         'train_batch_size': hp_config.get('batch_size', 16),
@@ -294,10 +294,18 @@ def get_openrlhf_args(config_path: str) -> Dict[str, Any]:
         'micro_train_batch_size': openrlhf_config.get('micro_train_batch_size', 1),
         'micro_rollout_batch_size': openrlhf_config.get('micro_rollout_batch_size', 4),
         'rollout_batch_size': openrlhf_config.get('rollout_batch_size', 64),
+        'n_samples_per_prompt': openrlhf_config.get('n_samples_per_prompt', 1),
         
         # Sequence lengths
         'prompt_max_len': openrlhf_config.get('prompt_max_len', 1024),
         'generate_max_len': openrlhf_config.get('generate_max_len', 1024),
+
+        # Prompt dataset
+        'prompt_data': openrlhf_config.get('prompt_data'),
+        'input_key': openrlhf_config.get('input_key', 'input'),
+        'label_key': openrlhf_config.get('label_key'),
+        'input_template': openrlhf_config.get('input_template'),
+        'apply_chat_template': openrlhf_config.get('apply_chat_template', False),
         
         # Schedule
         'eval_steps': schedule_config.get('eval_frequency', 50),

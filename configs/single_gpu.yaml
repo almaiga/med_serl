@@ -72,16 +72,22 @@ openrlhf:
   ref_num_gpus_per_node: 1
   reward_num_nodes: 1
   reward_num_gpus_per_node: 0  # CPU-based reward
+
+  # Algorithm
+  advantage_estimator: "reinforce"
+  prompt_data: "data_processed/medec_paired/train_val_split/rl_train_openrlhf.jsonl"
+  input_key: "input"
+  label_key: "label"
   
   # vLLM settings optimized for single GPU
   vllm_gpu_memory_utilization: 0.85
   vllm_sync_backend: "nccl"
   
   # Batch sizes for single GPU
-  micro_train_batch_size: 1
-  micro_rollout_batch_size: 2
-  rollout_batch_size: 16
-  n_samples_per_prompt: 1
+  micro_train_batch_size: 2
+  micro_rollout_batch_size: 4
+  rollout_batch_size: 32
+  n_samples_per_prompt: 4
   
   # Sequence lengths
   prompt_max_len: 1024

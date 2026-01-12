@@ -27,6 +27,13 @@ THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
 MODEL_TYPE_QWEN = "qwen"
 MODEL_TYPE_GENERIC = "generic"
+DEFAULT_NOTE_FIELDS = [
+    "correct_note",
+    "note",
+    "text",
+    "original_note",
+    "clinical_note",
+]
 
 
 SYSTEM_PROMPTS = {
@@ -243,6 +250,46 @@ def parse_args() -> argparse.Namespace:
         "--disable-embedding",
         action="store_true",
         help="Disable embedding cosine similarity scoring.",
+    )
+    parser.add_argument(
+        "--selfplay",
+        action="store_true",
+        help="Run injector -> filter -> assessor loop instead of scenario eval.",
+    )
+    parser.add_argument(
+        "--selfplay-mode",
+        choices=["correct", "incorrect"],
+        default="correct",
+        help="Injector mode for self-play loop.",
+    )
+    parser.add_argument(
+        "--selfplay-min-jaccard",
+        type=float,
+        default=0.95,
+        help="Minimum Jaccard similarity to accept generated notes.",
+    )
+    parser.add_argument(
+        "--selfplay-max-attempts",
+        type=int,
+        default=3,
+        help="Max injector attempts per note before skipping.",
+    )
+    parser.add_argument(
+        "--selfplay-assessor-batch-size",
+        type=int,
+        default=8,
+        help="Batch size for assessor in self-play.",
+    )
+    parser.add_argument(
+        "--selfplay-num-notes",
+        type=int,
+        default=None,
+        help="Override number of notes to process in self-play.",
+    )
+    parser.add_argument(
+        "--note-field",
+        default=None,
+        help="Optional field name for the source note in JSONL.",
     )
     return parser.parse_args()
 
@@ -500,6 +547,42 @@ def jaccard_similarity(text1: str, text2: str) -> float:
     return len(set1 & set2) / len(set1 | set2)
 
 
+def word_counts(text: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for token in tokenize_for_jaccard(text):
+        counts[token] = counts.get(token, 0) + 1
+    return counts
+
+
+def has_word_change(original: str, generated: str) -> bool:
+    return word_counts(original) != word_counts(generated)
+
+
+def select_note(record: Dict, note_field: Optional[str]) -> Optional[str]:
+    if note_field:
+        return record.get(note_field)
+    for field in DEFAULT_NOTE_FIELDS:
+        value = record.get(field)
+        if value:
+            return value
+    return None
+
+
+def passes_similarity_filter(
+    original_note: str,
+    generated_note: str,
+    min_jaccard: float,
+) -> Dict[str, Optional[float]]:
+    if not generated_note:
+        return {"passed": False, "score_jaccard": None, "reason": "empty_generated"}
+    if not has_word_change(original_note, generated_note):
+        return {"passed": False, "score_jaccard": None, "reason": "no_word_change"}
+    score_jaccard = jaccard_similarity(original_note, generated_note)
+    if score_jaccard < min_jaccard:
+        return {"passed": False, "score_jaccard": score_jaccard, "reason": "low_jaccard"}
+    return {"passed": True, "score_jaccard": score_jaccard, "reason": None}
+
+
 def load_embedding_model(model_name: str, device: str):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     model = AutoModel.from_pretrained(model_name).to(device)
@@ -654,6 +737,243 @@ def summarize_results(rows: List[Dict]) -> Dict:
     }
 
 
+def run_selfplay_loop(
+    args: argparse.Namespace,
+    model,
+    tokenizer,
+    model_type: str,
+    records: List[Dict],
+    assessor_prompts: Dict[str, str],
+    injector_prompts: Dict[str, str],
+    run_name: str,
+    output_path: str,
+    summary_path: str,
+) -> None:
+    use_qwen_thinking = model_type == MODEL_TYPE_QWEN and args.thinking_budget > 0
+    expected_assessor = "CORRECT" if args.selfplay_mode == "correct" else "INCORRECT"
+    scenario_name = f"selfplay_{args.selfplay_mode}"
+    max_notes = args.selfplay_num_notes or args.num_samples
+
+    samples = records
+    if max_notes is not None and samples:
+        samples = samples[:max_notes]
+    if not samples and args.input_note:
+        samples = [{"note_id": "input_note", "note": args.input_note}]
+
+    stats = {
+        "total_input_notes": 0,
+        "attempted_generations": 0,
+        "accepted_generations": 0,
+        "rejected_empty": 0,
+        "rejected_no_word_change": 0,
+        "rejected_low_jaccard": 0,
+        "assessor_total": 0,
+        "assessor_match_expected": 0,
+    }
+
+    def build_prompt(messages: List[Dict[str, str]]) -> str:
+        if use_qwen_thinking:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=True,
+            )
+        return tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+    def assess_batch(batch: List[Dict]) -> List[Dict]:
+        prompts: List[str] = []
+        prompt_metas: List[Dict] = []
+        for item in batch:
+            messages = build_messages(
+                "assessor",
+                item["generated_note"],
+                "Assess note correctness.",
+                assessor_prompts,
+                injector_prompts,
+                args.thinking_budget,
+                None,
+            )
+            prompt = build_prompt(messages)
+            prompts.append(prompt)
+            prompt_metas.append({"prompt": prompt})
+
+        outputs: List[str] = []
+        if use_qwen_thinking:
+            for prompt in prompts:
+                generated = generate_qwen_with_thinking(
+                    model,
+                    tokenizer,
+                    prompt,
+                    args.thinking_budget,
+                    args.max_new_tokens,
+                    args.temperature,
+                    args.top_p,
+                )
+                outputs.append(generated)
+        else:
+            for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
+                batch_prompts = prompts[start:start + args.selfplay_assessor_batch_size]
+                inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(model.device)
+                input_length = inputs["input_ids"].shape[1]
+                with torch.no_grad():
+                    batch_outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=args.max_new_tokens,
+                        do_sample=args.temperature > 0,
+                        temperature=args.temperature,
+                        top_p=args.top_p,
+                        pad_token_id=tokenizer.eos_token_id,
+                    )
+                for idx in range(len(batch_prompts)):
+                    generated_tokens = batch_outputs[idx][input_length:]
+                    generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    outputs.append(generated)
+
+        assessed_rows: List[Dict] = []
+        for item, raw_output, meta in zip(batch, outputs, prompt_metas):
+            predicted = extract_final_answer(raw_output)
+            if predicted is None and args.force_answer:
+                predicted = force_answer_from_prompt(
+                    meta["prompt"],
+                    tokenizer,
+                    model,
+                    model.device,
+                )
+            match = predicted == expected_assessor
+            stats["assessor_total"] += 1
+            stats["assessor_match_expected"] += int(match)
+            assessed_rows.append(
+                {
+                    **item,
+                    "scenario": scenario_name,
+                    "assessor_expected": expected_assessor,
+                    "assessor_predicted": predicted,
+                    "assessor_match_expected": match,
+                    "assessor_raw_output": raw_output,
+                }
+            )
+        return assessed_rows
+
+    pending: List[Dict] = []
+    with open(output_path, "a", encoding="utf-8") as out_handle:
+        with tqdm(total=len(samples), desc="Self-play", unit="note") as pbar:
+            for record in samples:
+                original_note = select_note(record, args.note_field)
+                if not original_note:
+                    pbar.update(1)
+                    continue
+                stats["total_input_notes"] += 1
+                note_id = record.get("note_id")
+                error_type = (record.get("error_type") or "").strip()
+
+                prompt_intent = args.prompt_intent
+                if args.selfplay_mode == "incorrect":
+                    if error_type:
+                        prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
+                    else:
+                        prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
+
+                generated_note = None
+                injector_raw_output = None
+                score_jaccard = None
+
+                for _ in range(args.selfplay_max_attempts):
+                    messages = build_messages(
+                        "injector",
+                        original_note,
+                        prompt_intent,
+                        assessor_prompts,
+                        injector_prompts,
+                        args.thinking_budget,
+                        args.selfplay_mode == "correct",
+                    )
+                    prompt = build_prompt(messages)
+                    stats["attempted_generations"] += 1
+
+                    if use_qwen_thinking:
+                        generated = generate_qwen_with_thinking(
+                            model,
+                            tokenizer,
+                            prompt,
+                            args.thinking_budget,
+                            args.max_new_tokens,
+                            args.temperature,
+                            args.top_p,
+                        )
+                    else:
+                        inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
+                        input_length = inputs["input_ids"].shape[1]
+                        with torch.no_grad():
+                            outputs = model.generate(
+                                **inputs,
+                                max_new_tokens=args.max_new_tokens,
+                                do_sample=args.temperature > 0,
+                                temperature=args.temperature,
+                                top_p=args.top_p,
+                                pad_token_id=tokenizer.eos_token_id,
+                            )
+                        generated_tokens = outputs[0][input_length:]
+                        generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+                    candidate_note = extract_generated_note(generated)
+                    filter_meta = passes_similarity_filter(
+                        original_note,
+                        candidate_note or "",
+                        args.selfplay_min_jaccard,
+                    )
+                    if not filter_meta["passed"]:
+                        reason = filter_meta["reason"]
+                        if reason == "empty_generated":
+                            stats["rejected_empty"] += 1
+                        elif reason == "no_word_change":
+                            stats["rejected_no_word_change"] += 1
+                        elif reason == "low_jaccard":
+                            stats["rejected_low_jaccard"] += 1
+                        continue
+
+                    generated_note = candidate_note
+                    injector_raw_output = generated
+                    score_jaccard = filter_meta["score_jaccard"]
+                    break
+
+                if generated_note:
+                    stats["accepted_generations"] += 1
+                    pending.append(
+                        {
+                            "run_name": run_name,
+                            "note_id": note_id,
+                            "error_type": error_type or None,
+                            "prompt_intent": prompt_intent,
+                            "original_note": original_note,
+                            "generated_note": generated_note,
+                            "score_jaccard": score_jaccard,
+                            "injector_raw_output": injector_raw_output,
+                        }
+                    )
+
+                if len(pending) >= args.selfplay_assessor_batch_size:
+                    assessed = assess_batch(pending)
+                    for row in assessed:
+                        out_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    out_handle.flush()
+                    pending = []
+
+                pbar.update(1)
+
+        if pending:
+            assessed = assess_batch(pending)
+            for row in assessed:
+                out_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            out_handle.flush()
+
+    write_summary(summary_path, stats)
+
+
 def main() -> None:
     args = parse_args()
     scenarios = [s.strip() for s in args.scenarios.split(",") if s.strip()]
@@ -694,8 +1014,25 @@ def main() -> None:
     embedder = None
     embedder_tokenizer = None
     embed_device = "cuda" if torch.cuda.is_available() else "cpu"
-    if not args.disable_embedding:
+    if not args.selfplay and not args.disable_embedding:
         embedder_tokenizer, embedder = load_embedding_model(args.embedding_model, embed_device)
+
+    if args.selfplay:
+        run_selfplay_loop(
+            args=args,
+            model=model,
+            tokenizer=tokenizer,
+            model_type=model_type,
+            records=records,
+            assessor_prompts=assessor_prompts,
+            injector_prompts=injector_prompts,
+            run_name=run_name,
+            output_path=output_path,
+            summary_path=summary_path,
+        )
+        print(f"Wrote self-play results to {output_path}")
+        print(f"Wrote summary to {summary_path}")
+        return
 
     results_rows: List[Dict] = []
     scenario_stats: Dict[str, Dict[str, int]] = {}

@@ -76,6 +76,12 @@ openrlhf:
   ref_num_gpus_per_node: 4
   reward_num_nodes: 1
   reward_num_gpus_per_node: 0  # CPU-based reward
+
+  # Algorithm
+  advantage_estimator: "reinforce"
+  prompt_data: "data_processed/medec_paired/train_val_split/rl_train_openrlhf.jsonl"
+  input_key: "input"
+  label_key: "label"
   
   # vLLM settings optimized for multi-GPU
   vllm_gpu_memory_utilization: 0.6  # Lower to allow model colocation
