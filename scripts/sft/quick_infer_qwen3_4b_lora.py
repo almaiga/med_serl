@@ -416,28 +416,27 @@ def force_answer_from_prompt(
 
 def extract_generated_note(text: str) -> Optional[str]:
     """Extract the generated_note section from injector output."""
-    # Split by "generated_note:" first to isolate the section
-    parts = re.split(r'generated_note:\s*\n', text, flags=re.IGNORECASE)
-    
+    # Split by "generated_note:" first to isolate the section (allow same-line)
+    parts = re.split(r'generated_note:\s*', text, flags=re.IGNORECASE)
+
     if len(parts) < 2:
         return None
-    
+
     # Take everything after "generated_note:"
     after_label = parts[1]
-    
+
     # Now extract until "final_answer:" (stop marker)
     match = re.search(r'^(.*?)\s*final_answer:', after_label, re.DOTALL | re.IGNORECASE)
-    
+
     if match:
         generated = match.group(1).strip()
     else:
         # If no final_answer found, take everything
         generated = after_label.strip()
-    
+
     # Clean up any remaining artifacts
-    # Remove trailing </think> tags that might have leaked through
     generated = re.sub(r'</think>\s*$', '', generated).strip()
-    
+
     if generated:
         return generated
 
