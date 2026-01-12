@@ -57,6 +57,7 @@ def build_messages(
     assessor_prompts: Optional[Dict[str, str]] = None,
     injector_prompts: Optional[Dict[str, str]] = None,
     thinking_budget: int = 0,
+    injector_is_correct: Optional[bool] = None,
 ) -> List[Dict[str, str]]:
     if mode == "assessor":
         if assessor_prompts:
@@ -86,7 +87,10 @@ def build_messages(
             )
 
     else:
-        is_correct = "no clinical errors" in prompt_intent.lower()
+        if injector_is_correct is None:
+            is_correct = "no clinical errors" in prompt_intent.lower()
+        else:
+            is_correct = injector_is_correct
         if injector_prompts:
             system_prompt = (
                 injector_prompts["system_prompt_correct"]
@@ -722,6 +726,7 @@ def main() -> None:
                             assessor_prompts,
                             injector_prompts,
                             args.thinking_budget,
+                            None,
                         )
                     elif scenario == "assessor_incorrect":
                         note = record.get("incorrect_note")
@@ -734,6 +739,7 @@ def main() -> None:
                             assessor_prompts,
                             injector_prompts,
                             args.thinking_budget,
+                            None,
                         )
                     elif scenario == "injector_correct":
                         note = record.get("correct_note")
@@ -746,6 +752,7 @@ def main() -> None:
                             assessor_prompts,
                             injector_prompts,
                             args.thinking_budget,
+                            True,
                         )
                     else:
                         note = record.get("correct_note")
@@ -762,6 +769,7 @@ def main() -> None:
                             assessor_prompts,
                             injector_prompts,
                             args.thinking_budget,
+                            False,
                         )
 
                     if use_qwen_thinking:
