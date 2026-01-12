@@ -479,7 +479,11 @@ def extract_generated_note(text: str) -> Optional[str]:
         candidate = match.group(1).strip()
         return candidate if candidate else None
 
-    return None
+    # Fallback 4: strip think + final_answer and treat remainder as note
+    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r'final_answer:.*', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = cleaned.strip()
+    return cleaned if cleaned else None
 
 
 def tokenize_for_jaccard(text: str) -> List[str]:
