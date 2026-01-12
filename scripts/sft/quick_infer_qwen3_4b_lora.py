@@ -753,6 +753,8 @@ def run_selfplay_loop(
     expected_assessor = "CORRECT" if args.selfplay_mode == "correct" else "INCORRECT"
     scenario_name = f"selfplay_{args.selfplay_mode}"
     max_notes = args.selfplay_num_notes or args.num_samples
+    output_root, output_ext = os.path.splitext(output_path)
+    attempts_path = f"{output_root}_attempts{output_ext or '.jsonl'}"
 
     samples = records
     if max_notes is not None and samples:
@@ -764,6 +766,9 @@ def run_selfplay_loop(
         "total_input_notes": 0,
         "attempted_generations": 0,
         "accepted_generations": 0,
+        "attempts_logged": 0,
+        "attempts_passed_filter": 0,
+        "attempts_failed_filter": 0,
         "rejected_empty": 0,
         "rejected_no_word_change": 0,
         "rejected_low_jaccard": 0,
@@ -860,7 +865,9 @@ def run_selfplay_loop(
         return assessed_rows
 
     pending: List[Dict] = []
-    with open(output_path, "a", encoding="utf-8") as out_handle:
+    with open(output_path, "a", encoding="utf-8") as out_handle, open(
+        attempts_path, "a", encoding="utf-8"
+    ) as attempts_handle:
         with tqdm(total=len(samples), desc="Self-play", unit="note") as pbar:
             for record in samples:
                 original_note = select_note(record, args.note_field)
@@ -882,7 +889,7 @@ def run_selfplay_loop(
                 injector_raw_output = None
                 score_jaccard = None
 
-                for _ in range(args.selfplay_max_attempts):
+                for attempt_idx in range(1, args.selfplay_max_attempts + 1):
                     messages = build_messages(
                         "injector",
                         original_note,
@@ -926,6 +933,31 @@ def run_selfplay_loop(
                         candidate_note or "",
                         args.selfplay_min_jaccard,
                     )
+                    stats["attempts_logged"] += 1
+                    if filter_meta["passed"]:
+                        stats["attempts_passed_filter"] += 1
+                    else:
+                        stats["attempts_failed_filter"] += 1
+                    attempts_handle.write(
+                        json.dumps(
+                            {
+                                "run_name": run_name,
+                                "note_id": note_id,
+                                "error_type": error_type or None,
+                                "prompt_intent": prompt_intent,
+                                "attempt_index": attempt_idx,
+                                "original_note": original_note,
+                                "generated_note": candidate_note,
+                                "score_jaccard": filter_meta["score_jaccard"],
+                                "filter_passed": filter_meta["passed"],
+                                "filter_reason": filter_meta["reason"],
+                                "injector_raw_output": generated,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                    attempts_handle.flush()
                     if not filter_meta["passed"]:
                         reason = filter_meta["reason"]
                         if reason == "empty_generated":
@@ -972,6 +1004,7 @@ def run_selfplay_loop(
             out_handle.flush()
 
     write_summary(summary_path, stats)
+    print(f"Wrote attempt log to {attempts_path}")
 
 
 def main() -> None:
