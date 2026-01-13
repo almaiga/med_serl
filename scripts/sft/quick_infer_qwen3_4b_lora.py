@@ -1109,7 +1109,7 @@ def run_selfplay_loop(
                 effective_temp,
                 effective_top_p,
                 min_p=args.min_p,
-                answer_tokens=32,  # Assessor only needs: final_answer: "CORRECT" or "INCORRECT"
+                answer_tokens=128,  # Assessor only needs: final_answer: "CORRECT" or "INCORRECT"
                 stop_strings=['\n', '\n\n'],  # Stop after the answer line
             )
         else:
