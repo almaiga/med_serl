@@ -69,8 +69,6 @@ def build_messages(
     if mode == "assessor":
         if assessor_prompts:
             system_prompt = assessor_prompts["system_prompt"]
-            if thinking_budget:
-                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
             user_content = assessor_prompts["user_template"].format(note=note)
         else:
             system_prompt = (
@@ -83,13 +81,11 @@ def build_messages(
                 "final_answer: \"INCORRECT\"\n\n"
                 "Do not add any text after the final_answer line."
             )
-            if thinking_budget:
-                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
             user_content = (
                 "Role: assessor\n"
                 "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n\n"
                 f"Clinical note:\n{note}\n\n"
-                "Provide your reasoning in a <think> block, then output:\n"
+                "Think carefully, then output:\n"
                 'final_answer: "CORRECT" or "INCORRECT"\n'
             )
 
@@ -104,8 +100,6 @@ def build_messages(
                 if is_correct
                 else injector_prompts["system_prompt_incorrect"]
             )
-            if thinking_budget:
-                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
             if is_correct:
                 template = injector_prompts["injector_correct_template"]
             else:
@@ -131,7 +125,7 @@ def build_messages(
                     "- changing medical classifications\n"
                     "- changing clinical conclusions\n\n"
                     f"input_note:\n{note}\n\n"
-                    "In your <think> block, briefly describe the surface-level change.\n\n"
+                    "Think through the change internally; do not add commentary.\n\n"
                     "generated_note:\n[the updated note]\n\n"
                     'final_answer: "CORRECT"\n'
                 )
@@ -144,14 +138,12 @@ def build_messages(
                     "- All other clinical facts must remain unchanged\n"
                     "- The error must be clinically plausible and local\n\n"
                     f"input_note:\n{note}\n\n"
-                    "In your <think> block, briefly describe the injected error.\n\n"
+                    "Think through the change internally; do not add commentary.\n\n"
                     "generated_note:\n[the updated note]\n\n"
                     'final_answer: "INCORRECT"\n'
                 )
 
             system_prompt = SYSTEM_PROMPTS["injector"]
-            if thinking_budget:
-                system_prompt = system_prompt + f"\n\nThinking budget: {thinking_budget} tokens inside <think>."
 
     return [
         {"role": "system", "content": system_prompt},
@@ -471,19 +463,37 @@ def generate_qwen_with_thinking(
 
     if IM_END_TOKEN_ID not in output_ids:
         if THINK_END_TOKEN_ID not in output_ids:
-            early_stopping_text = (
-                "\n\nConsidering the limited time by the user, I have to give the solution "
-                "based on the thinking directly now.\n</think>\n\n"
-            )
-            early_stopping_ids = tokenizer(
-                [early_stopping_text],
-                return_tensors="pt",
-                add_special_tokens=False,
-            ).input_ids.to(model.device)
-            input_ids = torch.cat([generated_ids, early_stopping_ids], dim=-1)
-        else:
-            input_ids = generated_ids
-
+            thinking_content = tokenizer.decode(
+                output_ids,
+                skip_special_tokens=True,
+            ).strip("\n")
+            thinking_content = normalize_qwen_thinking(thinking_content)
+            think_end = torch.tensor([[THINK_END_TOKEN_ID]], device=model.device)
+            input_ids = torch.cat([generated_ids, think_end], dim=-1)
+            attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
+            remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
+            if remaining_tokens > 0:
+                with torch.no_grad():
+                    generated_ids = model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=remaining_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        do_sample=temperature > 0,
+                        pad_token_id=tokenizer.pad_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                    )
+                answer = parse_qwen3_output_with_length(tokenizer, input_ids.size(-1), generated_ids)
+                answer = strip_qwen_think_from_content(answer).strip()
+            else:
+                answer = ""
+            if thinking_content:
+                if answer:
+                    return f"<think>{thinking_content}</think>\n{answer}"
+                return f"<think>{thinking_content}</think>"
+            return answer
+        input_ids = generated_ids
         attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
         remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
         if remaining_tokens > 0:
@@ -535,19 +545,46 @@ def generate_qwen_with_thinking_batch(
 
         if IM_END_TOKEN_ID not in output_ids:
             if THINK_END_TOKEN_ID not in output_ids:
-                early_stopping_text = (
-                    "\n\nConsidering the limited time by the user, I have to give the solution "
-                    "based on the thinking directly now.\n</think>\n\n"
-                )
-                early_stopping_ids = tokenizer(
-                    [early_stopping_text],
-                    return_tensors="pt",
-                    add_special_tokens=False,
-                ).input_ids.to(model.device)
-                input_ids = torch.cat([generated_ids[idx:idx + 1], early_stopping_ids], dim=-1)
-            else:
-                input_ids = generated_ids[idx:idx + 1]
-
+                thinking_content = tokenizer.decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                ).strip("\n")
+                thinking_content = normalize_qwen_thinking(thinking_content)
+                think_end = torch.tensor([[THINK_END_TOKEN_ID]], device=model.device)
+                input_ids = torch.cat([generated_ids[idx:idx + 1], think_end], dim=-1)
+                attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
+                remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
+                if remaining_tokens > 0:
+                    with torch.no_grad():
+                        followup_ids = model.generate(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            max_new_tokens=remaining_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                            do_sample=temperature > 0,
+                            pad_token_id=tokenizer.pad_token_id,
+                            eos_token_id=tokenizer.eos_token_id,
+                        )
+                    final_ids = followup_ids[0]
+                    answer = parse_qwen3_output_with_length(
+                        tokenizer,
+                        input_ids.size(-1),
+                        final_ids,
+                    )
+                    answer = strip_qwen_think_from_content(answer).strip()
+                else:
+                    final_ids = input_ids[0]
+                    answer = ""
+                if thinking_content:
+                    if answer:
+                        outputs.append(f"<think>{thinking_content}</think>\n{answer}")
+                    else:
+                        outputs.append(f"<think>{thinking_content}</think>")
+                else:
+                    outputs.append(answer)
+                continue
+            input_ids = generated_ids[idx:idx + 1]
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
