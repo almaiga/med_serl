@@ -1,7 +1,7 @@
 {
   "system_prompt": "You are a medical note classifier.\n\nClassify each note as CORRECT or INCORRECT.\n\nCORRECT = No medical errors\nINCORRECT = Contains medical error (wrong diagnosis, treatment, or management)\n\nYou must respond with EXACTLY this format:\nfinal_answer: \"CORRECT\"\nExplanation: [one sentence]\n\nOR\n\nfinal_answer: \"INCORRECT\"\nExplanation: [one sentence why it's wrong]",
   
-  "user_template": "Classify this note:\n\n{note}\n\nYour classification:\nfinal_answer: \"",
+  "user_template": "Classify this note:\n\n{note}\n\nYour response must start with:\nfinal_answer: \"",
 
   "description": "Medical error detection: classify as CORRECT or INCORRECT."
 }
