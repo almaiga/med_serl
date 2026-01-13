@@ -1251,7 +1251,7 @@ def run_selfplay_loop(
                 effective_temp,
                 effective_top_p,
                 min_p=args.min_p,
-                answer_tokens=128,  # Injector needs full note output
+                answer_tokens=256,  # Clinical notes can be long (150-300+ words)
                 stop_strings=['\n\n', 'changes_made'],  # Injector-specific stop tokens
             )
         inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
