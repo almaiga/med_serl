@@ -23,6 +23,16 @@ from peft import PeftModel
 from tqdm import tqdm
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
+# Import change parsing utilities
+try:
+    from parse_changes import (
+        parse_raw_output, get_change_diff, format_change_log, compute_word_level_diff
+    )
+    HAS_PARSE_CHANGES = True
+except ImportError:
+    HAS_PARSE_CHANGES = False
+    print("Warning: parse_changes module not found. Verbose diff logging disabled.")
+
 THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
 MODEL_TYPE_QWEN = "qwen"
@@ -298,6 +308,22 @@ def parse_args() -> argparse.Namespace:
         "--note-field",
         default=None,
         help="Optional field name for the source note in JSONL.",
+    )
+    parser.add_argument(
+        "--no-thinking",
+        action="store_true",
+        help="Disable Qwen3 thinking mode for simpler tasks (uses enable_thinking=False).",
+    )
+    parser.add_argument(
+        "--verbose-diff",
+        action="store_true",
+        help="Print detailed change diffs during selfplay.",
+    )
+    parser.add_argument(
+        "--max-word-edits",
+        type=int,
+        default=6,
+        help="Maximum word edits allowed for a 'minimal' change (default: 6).",
     )
     return parser.parse_args()
 
@@ -953,7 +979,28 @@ def run_selfplay_loop(
     output_path: str,
     summary_path: str,
 ) -> None:
-    use_qwen_thinking = model_type == MODEL_TYPE_QWEN and args.thinking_budget > 0
+    # Determine thinking mode: use thinking only if budget > 0 AND not explicitly disabled
+    use_qwen_thinking = (
+        model_type == MODEL_TYPE_QWEN 
+        and args.thinking_budget > 0 
+        and not getattr(args, 'no_thinking', False)
+    )
+    
+    # For non-thinking mode with Qwen3, use different temperature settings per best practices
+    if model_type == MODEL_TYPE_QWEN and getattr(args, 'no_thinking', False):
+        print("[INFO] Using Qwen3 non-thinking mode (enable_thinking=False)")
+        # Best practices: temp=0.7, top_p=0.8 for non-thinking mode
+        effective_temp = 0.7 if args.temperature == 0.2 else args.temperature  # Only override default
+        effective_top_p = 0.8 if args.top_p == 0.9 else args.top_p
+    elif use_qwen_thinking:
+        print(f"[INFO] Using Qwen3 thinking mode (budget={args.thinking_budget})")
+        # Best practices: temp=0.6, top_p=0.95 for thinking mode
+        effective_temp = 0.6 if args.temperature == 0.2 else args.temperature
+        effective_top_p = 0.95 if args.top_p == 0.9 else args.top_p
+    else:
+        effective_temp = args.temperature
+        effective_top_p = args.top_p
+    
     max_notes = args.selfplay_num_notes or args.num_samples
     output_root, output_ext = os.path.splitext(output_path)
     attempts_path = f"{output_root}_attempts{output_ext or '.jsonl'}"
@@ -975,18 +1022,21 @@ def run_selfplay_loop(
         "rejected_no_word_change": 0,
         "rejected_low_jaccard": 0,
         "rejected_too_similar": 0,
+        "rejected_too_many_edits": 0,
         "assessor_total": 0,
         "assessor_match_expected": 0,
     }
     mixed_counter = 0
 
     def build_prompt(messages: List[Dict[str, str]]) -> str:
-        if use_qwen_thinking:
+        if model_type == MODEL_TYPE_QWEN:
+            # For Qwen3: explicitly control thinking mode
+            enable_thinking = use_qwen_thinking and not getattr(args, 'no_thinking', False)
             return tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=True,
+                enable_thinking=enable_thinking,
             )
         return tokenizer.apply_chat_template(
             messages,
@@ -1019,8 +1069,8 @@ def run_selfplay_loop(
                 prompts,
                 args.thinking_budget,
                 args.max_new_tokens,
-                args.temperature,
-                args.top_p,
+                effective_temp,
+                effective_top_p,
             )
         else:
             for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
@@ -1031,9 +1081,9 @@ def run_selfplay_loop(
                     batch_outputs = model.generate(
                         **inputs,
                         max_new_tokens=args.max_new_tokens,
-                        do_sample=args.temperature > 0,
-                        temperature=args.temperature,
-                        top_p=args.top_p,
+                        do_sample=effective_temp > 0,
+                        temperature=effective_temp,
+                        top_p=effective_top_p,
                         pad_token_id=tokenizer.eos_token_id,
                     )
                 for idx, input_length in enumerate(input_lengths):
@@ -1078,8 +1128,8 @@ def run_selfplay_loop(
                 prompts,
                 args.thinking_budget,
                 args.max_new_tokens,
-                args.temperature,
-                args.top_p,
+                effective_temp,
+                effective_top_p,
             )
         inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
         input_lengths = inputs["attention_mask"].sum(dim=1).tolist()
@@ -1087,9 +1137,9 @@ def run_selfplay_loop(
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=args.max_new_tokens,
-                do_sample=args.temperature > 0,
-                temperature=args.temperature,
-                top_p=args.top_p,
+                do_sample=effective_temp > 0,
+                temperature=effective_temp,
+                top_p=effective_top_p,
                 pad_token_id=tokenizer.eos_token_id,
             )
         decoded: List[str] = []
@@ -1170,38 +1220,78 @@ def run_selfplay_loop(
                         for generated, state_idx in zip(outputs, prompt_indices):
                             state = states[state_idx]
                             state["attempts"] += 1
-                            candidate_note = extract_generated_note(generated)
+                            
+                            # Try parsing with new format first, fallback to old extraction
+                            parsed_output = None
+                            if HAS_PARSE_CHANGES:
+                                parsed_output = parse_raw_output(generated)
+                                candidate_note = parsed_output.get("generated_note")
+                            else:
+                                candidate_note = extract_generated_note(generated)
+                            
                             filter_meta = passes_similarity_filter(
                                 state["original_note"],
                                 candidate_note or "",
                                 args.selfplay_min_jaccard,
                                 args.selfplay_max_jaccard,
                             )
+                            
+                            # Additional check: word-level edits
+                            word_edit_info = {}
+                            if filter_meta["passed"] and candidate_note and HAS_PARSE_CHANGES:
+                                word_diff = compute_word_level_diff(state["original_note"], candidate_note)
+                                word_edit_info = {
+                                    "total_word_edits": word_diff["total_word_edits"],
+                                    "changes": word_diff.get("changes", [])[:3],
+                                }
+                                max_edits = getattr(args, 'max_word_edits', 6)
+                                if word_diff["total_word_edits"] > max_edits:
+                                    filter_meta["passed"] = False
+                                    filter_meta["reason"] = "too_many_edits"
+                                    stats["rejected_too_many_edits"] += 1
+                            
                             stats["attempts_logged"] += 1
                             if filter_meta["passed"]:
                                 stats["attempts_passed_filter"] += 1
                             else:
                                 stats["attempts_failed_filter"] += 1
-                            attempts_handle.write(
-                                json.dumps(
-                                    {
-                                        "run_name": run_name,
-                                        "note_id": state["note_id"],
-                                        "error_type": state["error_type"] or None,
-                                        "selfplay_mode": state["selfplay_mode"],
-                                        "prompt_intent": state["prompt_intent"],
-                                        "attempt_index": state["attempts"],
-                                        "original_note": state["original_note"],
-                                        "generated_note": candidate_note,
-                                        "score_jaccard": filter_meta["score_jaccard"],
-                                        "filter_passed": filter_meta["passed"],
-                                        "filter_reason": filter_meta["reason"],
-                                        "injector_raw_output": generated,
-                                    },
-                                    ensure_ascii=False,
+                            
+                            # Verbose diff logging
+                            if getattr(args, 'verbose_diff', False) and candidate_note and HAS_PARSE_CHANGES:
+                                changes_made = parsed_output.get("changes_made") if parsed_output else None
+                                diff_output = get_change_diff(
+                                    state["original_note"],
+                                    candidate_note,
+                                    changes_made,
+                                    colorize=True
                                 )
-                                + "\n"
-                            )
+                                print(f"\n--- Note {state['note_id']} Attempt {state['attempts']} ---")
+                                print(diff_output)
+                                print(f"Filter: {'PASS' if filter_meta['passed'] else 'FAIL'} ({filter_meta.get('reason', 'ok')})")
+                                print("-" * 60)
+                            
+                            # Build log entry with change analysis
+                            log_entry = {
+                                "run_name": run_name,
+                                "note_id": state["note_id"],
+                                "error_type": state["error_type"] or None,
+                                "selfplay_mode": state["selfplay_mode"],
+                                "prompt_intent": state["prompt_intent"],
+                                "attempt_index": state["attempts"],
+                                "original_note": state["original_note"],
+                                "generated_note": candidate_note,
+                                "score_jaccard": filter_meta["score_jaccard"],
+                                "filter_passed": filter_meta["passed"],
+                                "filter_reason": filter_meta["reason"],
+                                "injector_raw_output": generated,
+                            }
+                            
+                            # Add change analysis if available
+                            if parsed_output and HAS_PARSE_CHANGES:
+                                log_entry["model_changes"] = parsed_output.get("changes_made")
+                                log_entry["word_edit_info"] = word_edit_info
+                            
+                            attempts_handle.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
                             attempts_handle.flush()
 
                             if filter_meta["passed"]:
@@ -1220,6 +1310,7 @@ def run_selfplay_loop(
                                     stats["rejected_low_jaccard"] += 1
                                 elif reason == "too_similar":
                                     stats["rejected_too_similar"] += 1
+                                # Note: too_many_edits already counted above
                                 if state["attempts"] >= args.selfplay_max_attempts:
                                     state["done"] = True
 
