@@ -610,6 +610,8 @@ def generate_qwen_with_thinking_batch(
     temperature: float,
     top_p: float,
     min_p: float = 0.05,
+    answer_tokens: int = 128,
+    stop_strings: Optional[List[str]] = None,
 ) -> List[str]:
     if not prompts:
         return []
@@ -663,20 +665,20 @@ def generate_qwen_with_thinking_batch(
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
                     # After thinking, generate final answer
-                    # Short budget - assessor answer is just: final_answer: "CORRECT" or "INCORRECT"
-                    answer_tokens = min(remaining_tokens, 32)  # Reduced from 128 - assessor is short
-                    # Stop at newline after the answer
+                    actual_answer_tokens = min(remaining_tokens, answer_tokens)
+                    # Build stop token list from provided strings
                     stop_token_ids = []
-                    for stop_str in ['\n', '\n\n']:
-                        stop_ids = tokenizer.encode(stop_str, add_special_tokens=False)
-                        if stop_ids:
-                            stop_token_ids.append(stop_ids[-1])
-                    eos_ids = [tokenizer.eos_token_id] + stop_token_ids
+                    if stop_strings:
+                        for stop_str in stop_strings:
+                            stop_ids = tokenizer.encode(stop_str, add_special_tokens=False)
+                            if stop_ids:
+                                stop_token_ids.append(stop_ids[-1])
+                    eos_ids = [tokenizer.eos_token_id] + stop_token_ids if stop_token_ids else [tokenizer.eos_token_id]
                     with torch.no_grad():
                         followup_ids = model.generate(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
-                            max_new_tokens=answer_tokens,
+                            max_new_tokens=actual_answer_tokens,
                             temperature=0.6,  # Qwen3 official recommendation
                             top_p=0.95,  # Official recommendation
                             top_k=20,
@@ -709,20 +711,20 @@ def generate_qwen_with_thinking_batch(
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
                 # After thinking naturally ends, generate final answer
-                # Assessor only needs ~20 tokens for: final_answer: "CORRECT" or "INCORRECT"
-                answer_tokens = min(remaining_tokens, 32)  # Reduced - assessor answer is short
-                # Stop at newline after the answer - no need for more text
+                actual_answer_tokens = min(remaining_tokens, answer_tokens)
+                # Build stop token list from provided strings
                 stop_token_ids = []
-                for stop_str in ['\n', '\n\n']:
-                    stop_ids = tokenizer.encode(stop_str, add_special_tokens=False)
-                    if stop_ids:
-                        stop_token_ids.append(stop_ids[-1])
-                eos_ids = [tokenizer.eos_token_id] + stop_token_ids
+                if stop_strings:
+                    for stop_str in stop_strings:
+                        stop_ids = tokenizer.encode(stop_str, add_special_tokens=False)
+                        if stop_ids:
+                            stop_token_ids.append(stop_ids[-1])
+                eos_ids = [tokenizer.eos_token_id] + stop_token_ids if stop_token_ids else [tokenizer.eos_token_id]
                 with torch.no_grad():
                     followup_ids = model.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        max_new_tokens=answer_tokens,
+                        max_new_tokens=actual_answer_tokens,
                         temperature=0.6,  # Qwen3 official recommendation
                         top_p=0.95,  # Official recommendation
                         top_k=20,
@@ -1177,6 +1179,8 @@ def run_selfplay_loop(
                 effective_temp,
                 effective_top_p,
                 min_p=args.min_p,
+                answer_tokens=32,  # Assessor only needs: final_answer: "CORRECT" or "INCORRECT"
+                stop_strings=['\n', '\n\n'],  # Stop after the answer line
             )
         else:
             for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
@@ -1247,6 +1251,8 @@ def run_selfplay_loop(
                 effective_temp,
                 effective_top_p,
                 min_p=args.min_p,
+                answer_tokens=128,  # Injector needs full note output
+                stop_strings=['\n\n', 'changes_made'],  # Injector-specific stop tokens
             )
         inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
         original_lengths = [inputs['input_ids'][i].shape[0] for i in range(len(prompts))]
