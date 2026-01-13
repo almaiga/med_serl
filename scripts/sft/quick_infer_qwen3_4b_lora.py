@@ -50,8 +50,8 @@ THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
 MODEL_TYPE_QWEN = "qwen"
 MODEL_TYPE_GENERIC = "generic"
-# Clean closure for thinking phase - now includes format reminder
-EARLY_STOPPING_TEXT = '\n</think>\n\nfinal_answer: "'
+# Clean closure for thinking phase - simpler format without opening quote
+EARLY_STOPPING_TEXT = '\n</think>\n\nfinal_answer: '
 
 DEFAULT_NOTE_FIELDS = [
     "correct_note",
@@ -610,14 +610,14 @@ def generate_qwen_with_thinking_batch(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             max_new_tokens=actual_answer_tokens,
-                            temperature=0.6,  # Qwen3 official recommendation
-                            top_p=0.95,  # Official recommendation
+                            temperature=0.3,  # Reduced from 0.6 for more deterministic formatting
+                            top_p=0.95,
                             top_k=20,
                             min_p=min_p,
                             do_sample=True,
                             pad_token_id=tokenizer.pad_token_id,
                             eos_token_id=eos_ids[0] if len(eos_ids) == 1 else eos_ids,
-                            repetition_penalty=1.05,  # Very light - avoid forcing alt language
+                            repetition_penalty=1.05,
                         )
                     final_ids = followup_ids[0]
                     answer = parse_qwen3_output_with_length(
@@ -656,8 +656,8 @@ def generate_qwen_with_thinking_batch(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=actual_answer_tokens,
-                        temperature=0.6,  # Qwen3 official recommendation
-                        top_p=0.95,  # Official recommendation
+                        temperature=0.3,  # Reduced from 0.6 for more deterministic formatting
+                        top_p=0.95,
                         top_k=20,
                         min_p=min_p,
                         do_sample=True,
@@ -1468,7 +1468,7 @@ def main() -> None:
     for scenario in scenarios:
         samples = scenario_samples(records, scenario, args.num_samples)
         if not samples and args.input_note:
-            samples = [{"correct_note": args.input_note, "incorrect_note": args.input_note}]
+            samples = [{"correct_note": args.input_note, "incorrect_note": args_input_note}]
         scenario_samples_map[scenario] = samples
         total_examples += len(samples)
 
