@@ -1109,8 +1109,8 @@ def run_selfplay_loop(
                 effective_temp,
                 effective_top_p,
                 min_p=args.min_p,
-                answer_tokens=128,  # Assessor only needs: final_answer: "CORRECT" or "INCORRECT"
-                stop_strings=['\n', '\n\n'],  # Stop after the answer line
+                answer_tokens=128,
+                stop_strings=['"', '\n\n'],  # Stop after closing quote of CORRECT" or INCORRECT"
             )
         else:
             for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
