@@ -379,6 +379,20 @@ def detect_model_type(model_name: str, adapter_dir: Optional[str]) -> str:
     return MODEL_TYPE_GENERIC
 
 
+def normalize_qwen_thinking(thinking_content: str) -> str:
+    if not thinking_content:
+        return ""
+    cleaned = re.sub(r"</?think>", "", thinking_content, flags=re.IGNORECASE).strip()
+    return cleaned
+
+
+def strip_qwen_think_from_content(content: str) -> str:
+    if not content:
+        return content
+    content = re.sub(r"</?think>", "", content, flags=re.IGNORECASE).strip()
+    return content
+
+
 def parse_qwen3_output(tokenizer, input_ids, generated_ids) -> str:
     input_length = input_ids.shape[1]
     output_ids = generated_ids[0, input_length:].tolist()
@@ -396,6 +410,9 @@ def parse_qwen3_output(tokenizer, input_ids, generated_ids) -> str:
         output_ids[index:],
         skip_special_tokens=True,
     ).strip("\n")
+
+    thinking_content = normalize_qwen_thinking(thinking_content)
+    content = strip_qwen_think_from_content(content)
 
     if thinking_content:
         return f"<think>{thinking_content}</think>\n{content}"
@@ -418,6 +435,9 @@ def parse_qwen3_output_with_length(tokenizer, input_length: int, generated_ids) 
         output_ids[index:],
         skip_special_tokens=True,
     ).strip("\n")
+
+    thinking_content = normalize_qwen_thinking(thinking_content)
+    content = strip_qwen_think_from_content(content)
 
     if thinking_content:
         return f"<think>{thinking_content}</think>\n{content}"
