@@ -287,6 +287,12 @@ def parse_args() -> argparse.Namespace:
         help="Batch size for assessor in self-play.",
     )
     parser.add_argument(
+        "--selfplay-injector-batch-size",
+        type=int,
+        default=8,
+        help="Batch size for injector in self-play (one attempt per note per round).",
+    )
+    parser.add_argument(
         "--selfplay-num-notes",
         type=int,
         default=None,
@@ -396,6 +402,28 @@ def parse_qwen3_output(tokenizer, input_ids, generated_ids) -> str:
     return content
 
 
+def parse_qwen3_output_with_length(tokenizer, input_length: int, generated_ids) -> str:
+    output_ids = generated_ids[input_length:].tolist()
+
+    try:
+        index = len(output_ids) - output_ids[::-1].index(THINK_END_TOKEN_ID)
+    except ValueError:
+        index = 0
+
+    thinking_content = tokenizer.decode(
+        output_ids[:index],
+        skip_special_tokens=True,
+    ).strip("\n")
+    content = tokenizer.decode(
+        output_ids[index:],
+        skip_special_tokens=True,
+    ).strip("\n")
+
+    if thinking_content:
+        return f"<think>{thinking_content}</think>\n{content}"
+    return content
+
+
 def generate_qwen_with_thinking(
     model,
     tokenizer,
@@ -452,6 +480,75 @@ def generate_qwen_with_thinking(
                 )
 
     return parse_qwen3_output(tokenizer, model_inputs.input_ids, generated_ids)
+
+
+def generate_qwen_with_thinking_batch(
+    model,
+    tokenizer,
+    prompts: List[str],
+    thinking_budget: int,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+) -> List[str]:
+    if not prompts:
+        return []
+
+    model_inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
+    input_lengths = model_inputs["attention_mask"].sum(dim=1).tolist()
+
+    with torch.no_grad():
+        generated_ids = model.generate(
+            **model_inputs,
+            max_new_tokens=thinking_budget,
+            temperature=temperature,
+            top_p=top_p,
+            do_sample=temperature > 0,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+
+    outputs: List[str] = []
+    for idx, input_length in enumerate(input_lengths):
+        output_ids = generated_ids[idx, input_length:].tolist()
+        final_ids = generated_ids[idx]
+
+        if IM_END_TOKEN_ID not in output_ids:
+            if THINK_END_TOKEN_ID not in output_ids:
+                early_stopping_text = (
+                    "\n\nConsidering the limited time by the user, I have to give the solution "
+                    "based on the thinking directly now.\n</think>\n\n"
+                )
+                early_stopping_ids = tokenizer(
+                    [early_stopping_text],
+                    return_tensors="pt",
+                    add_special_tokens=False,
+                ).input_ids.to(model.device)
+                input_ids = torch.cat([generated_ids[idx:idx + 1], early_stopping_ids], dim=-1)
+            else:
+                input_ids = generated_ids[idx:idx + 1]
+
+            attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
+            remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
+            if remaining_tokens > 0:
+                with torch.no_grad():
+                    followup_ids = model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=remaining_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        do_sample=temperature > 0,
+                        pad_token_id=tokenizer.pad_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                    )
+                final_ids = followup_ids[0]
+            else:
+                final_ids = input_ids[0]
+
+        outputs.append(parse_qwen3_output_with_length(tokenizer, input_length, final_ids))
+
+    return outputs
 
 def force_answer_from_prompt(
     prompt: str,
@@ -841,22 +938,20 @@ def run_selfplay_loop(
 
         outputs: List[str] = []
         if use_qwen_thinking:
-            for prompt in prompts:
-                generated = generate_qwen_with_thinking(
-                    model,
-                    tokenizer,
-                    prompt,
-                    args.thinking_budget,
-                    args.max_new_tokens,
-                    args.temperature,
-                    args.top_p,
-                )
-                outputs.append(generated)
+            outputs = generate_qwen_with_thinking_batch(
+                model,
+                tokenizer,
+                prompts,
+                args.thinking_budget,
+                args.max_new_tokens,
+                args.temperature,
+                args.top_p,
+            )
         else:
             for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
                 batch_prompts = prompts[start:start + args.selfplay_assessor_batch_size]
                 inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(model.device)
-                input_length = inputs["input_ids"].shape[1]
+                input_lengths = inputs["attention_mask"].sum(dim=1).tolist()
                 with torch.no_grad():
                     batch_outputs = model.generate(
                         **inputs,
@@ -866,7 +961,7 @@ def run_selfplay_loop(
                         top_p=args.top_p,
                         pad_token_id=tokenizer.eos_token_id,
                     )
-                for idx in range(len(batch_prompts)):
+                for idx, input_length in enumerate(input_lengths):
                     generated_tokens = batch_outputs[idx][input_length:]
                     generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
                     outputs.append(generated)
@@ -897,131 +992,169 @@ def run_selfplay_loop(
         return assessed_rows
 
     pending: List[Dict] = []
+    injector_batch_size = max(1, args.selfplay_injector_batch_size)
+
+    def generate_injector_outputs(prompts: List[str]) -> List[str]:
+        if use_qwen_thinking:
+            return generate_qwen_with_thinking_batch(
+                model,
+                tokenizer,
+                prompts,
+                args.thinking_budget,
+                args.max_new_tokens,
+                args.temperature,
+                args.top_p,
+            )
+        inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
+        input_lengths = inputs["attention_mask"].sum(dim=1).tolist()
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=args.max_new_tokens,
+                do_sample=args.temperature > 0,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        decoded: List[str] = []
+        for idx, input_length in enumerate(input_lengths):
+            generated_tokens = outputs[idx][input_length:]
+            decoded.append(tokenizer.decode(generated_tokens, skip_special_tokens=True))
+        return decoded
+
     with open(output_path, "a", encoding="utf-8") as out_handle, open(
         attempts_path, "a", encoding="utf-8"
     ) as attempts_handle:
         with tqdm(total=len(samples), desc="Self-play", unit="note") as pbar:
-            for record in samples:
-                original_note = select_note(record, args.note_field)
-                if not original_note:
-                    pbar.update(1)
-                    continue
-                stats["total_input_notes"] += 1
-                note_id = record.get("note_id")
-                error_type = (record.get("error_type") or "").strip()
+            index = 0
+            while index < len(samples):
+                batch_records = samples[index:index + injector_batch_size]
+                index += injector_batch_size
 
-                prompt_intent = args.prompt_intent
-                if args.selfplay_mode == "incorrect":
-                    if error_type:
-                        prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
-                    else:
-                        prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
-
-                generated_note = None
-                injector_raw_output = None
-                score_jaccard = None
-
-                for attempt_idx in range(1, args.selfplay_max_attempts + 1):
-                    messages = build_messages(
-                        "injector",
-                        original_note,
-                        prompt_intent,
-                        assessor_prompts,
-                        injector_prompts,
-                        args.thinking_budget,
-                        args.selfplay_mode == "correct",
-                    )
-                    prompt = build_prompt(messages)
-                    stats["attempted_generations"] += 1
-
-                    if use_qwen_thinking:
-                        generated = generate_qwen_with_thinking(
-                            model,
-                            tokenizer,
-                            prompt,
-                            args.thinking_budget,
-                            args.max_new_tokens,
-                            args.temperature,
-                            args.top_p,
-                        )
-                    else:
-                        inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
-                        input_length = inputs["input_ids"].shape[1]
-                        with torch.no_grad():
-                            outputs = model.generate(
-                                **inputs,
-                                max_new_tokens=args.max_new_tokens,
-                                do_sample=args.temperature > 0,
-                                temperature=args.temperature,
-                                top_p=args.top_p,
-                                pad_token_id=tokenizer.eos_token_id,
-                            )
-                        generated_tokens = outputs[0][input_length:]
-                        generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-
-                    candidate_note = extract_generated_note(generated)
-                    filter_meta = passes_similarity_filter(
-                        original_note,
-                        candidate_note or "",
-                        args.selfplay_min_jaccard,
-                        args.selfplay_max_jaccard,
-                    )
-                    stats["attempts_logged"] += 1
-                    if filter_meta["passed"]:
-                        stats["attempts_passed_filter"] += 1
-                    else:
-                        stats["attempts_failed_filter"] += 1
-                    attempts_handle.write(
-                        json.dumps(
-                            {
-                                "run_name": run_name,
-                                "note_id": note_id,
-                                "error_type": error_type or None,
-                                "prompt_intent": prompt_intent,
-                                "attempt_index": attempt_idx,
-                                "original_note": original_note,
-                                "generated_note": candidate_note,
-                                "score_jaccard": filter_meta["score_jaccard"],
-                                "filter_passed": filter_meta["passed"],
-                                "filter_reason": filter_meta["reason"],
-                                "injector_raw_output": generated,
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n"
-                    )
-                    attempts_handle.flush()
-                    if not filter_meta["passed"]:
-                        reason = filter_meta["reason"]
-                        if reason == "empty_generated":
-                            stats["rejected_empty"] += 1
-                        elif reason == "no_word_change":
-                            stats["rejected_no_word_change"] += 1
-                        elif reason == "low_jaccard":
-                            stats["rejected_low_jaccard"] += 1
-                        elif reason == "too_similar":
-                            stats["rejected_too_similar"] += 1
+                states: List[Dict] = []
+                for record in batch_records:
+                    original_note = select_note(record, args.note_field)
+                    if not original_note:
                         continue
-
-                    generated_note = candidate_note
-                    injector_raw_output = generated
-                    score_jaccard = filter_meta["score_jaccard"]
-                    break
-
-                if generated_note:
-                    stats["accepted_generations"] += 1
-                    pending.append(
+                    stats["total_input_notes"] += 1
+                    note_id = record.get("note_id")
+                    error_type = (record.get("error_type") or "").strip()
+                    prompt_intent = args.prompt_intent
+                    if args.selfplay_mode == "incorrect":
+                        if error_type:
+                            prompt_intent = (
+                                f"Introduce a {error_type} error while keeping the note realistic."
+                            )
+                        else:
+                            prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
+                    states.append(
                         {
-                            "run_name": run_name,
                             "note_id": note_id,
-                            "error_type": error_type or None,
+                            "error_type": error_type,
                             "prompt_intent": prompt_intent,
                             "original_note": original_note,
-                            "generated_note": generated_note,
-                            "score_jaccard": score_jaccard,
-                            "injector_raw_output": injector_raw_output,
+                            "attempts": 0,
+                            "done": False,
+                            "generated_note": None,
+                            "injector_raw_output": None,
+                            "score_jaccard": None,
                         }
                     )
+
+                if states:
+                    active_indices = [i for i in range(len(states))]
+                    while active_indices:
+                        prompts: List[str] = []
+                        prompt_indices: List[int] = []
+                        for state_idx in active_indices:
+                            state = states[state_idx]
+                            messages = build_messages(
+                                "injector",
+                                state["original_note"],
+                                state["prompt_intent"],
+                                assessor_prompts,
+                                injector_prompts,
+                                args.thinking_budget,
+                                args.selfplay_mode == "correct",
+                            )
+                            prompt = build_prompt(messages)
+                            prompts.append(prompt)
+                            prompt_indices.append(state_idx)
+
+                        outputs = generate_injector_outputs(prompts)
+                        stats["attempted_generations"] += len(outputs)
+
+                        for generated, state_idx in zip(outputs, prompt_indices):
+                            state = states[state_idx]
+                            state["attempts"] += 1
+                            candidate_note = extract_generated_note(generated)
+                            filter_meta = passes_similarity_filter(
+                                state["original_note"],
+                                candidate_note or "",
+                                args.selfplay_min_jaccard,
+                                args.selfplay_max_jaccard,
+                            )
+                            stats["attempts_logged"] += 1
+                            if filter_meta["passed"]:
+                                stats["attempts_passed_filter"] += 1
+                            else:
+                                stats["attempts_failed_filter"] += 1
+                            attempts_handle.write(
+                                json.dumps(
+                                    {
+                                        "run_name": run_name,
+                                        "note_id": state["note_id"],
+                                        "error_type": state["error_type"] or None,
+                                        "prompt_intent": state["prompt_intent"],
+                                        "attempt_index": state["attempts"],
+                                        "original_note": state["original_note"],
+                                        "generated_note": candidate_note,
+                                        "score_jaccard": filter_meta["score_jaccard"],
+                                        "filter_passed": filter_meta["passed"],
+                                        "filter_reason": filter_meta["reason"],
+                                        "injector_raw_output": generated,
+                                    },
+                                    ensure_ascii=False,
+                                )
+                                + "\n"
+                            )
+                            attempts_handle.flush()
+
+                            if filter_meta["passed"]:
+                                stats["accepted_generations"] += 1
+                                state["generated_note"] = candidate_note
+                                state["injector_raw_output"] = generated
+                                state["score_jaccard"] = filter_meta["score_jaccard"]
+                                state["done"] = True
+                            else:
+                                reason = filter_meta["reason"]
+                                if reason == "empty_generated":
+                                    stats["rejected_empty"] += 1
+                                elif reason == "no_word_change":
+                                    stats["rejected_no_word_change"] += 1
+                                elif reason == "low_jaccard":
+                                    stats["rejected_low_jaccard"] += 1
+                                elif reason == "too_similar":
+                                    stats["rejected_too_similar"] += 1
+                                if state["attempts"] >= args.selfplay_max_attempts:
+                                    state["done"] = True
+
+                        active_indices = [i for i, s in enumerate(states) if not s["done"]]
+
+                for state in states:
+                    if state["generated_note"]:
+                        pending.append(
+                            {
+                                "run_name": run_name,
+                                "note_id": state["note_id"],
+                                "error_type": state["error_type"] or None,
+                                "prompt_intent": state["prompt_intent"],
+                                "original_note": state["original_note"],
+                                "generated_note": state["generated_note"],
+                                "score_jaccard": state["score_jaccard"],
+                                "injector_raw_output": state["injector_raw_output"],
+                            }
+                        )
 
                 if len(pending) >= args.selfplay_assessor_batch_size:
                     assessed = assess_batch(pending)
@@ -1030,7 +1163,7 @@ def run_selfplay_loop(
                     out_handle.flush()
                     pending = []
 
-                pbar.update(1)
+                pbar.update(len(batch_records))
 
         if pending:
             assessed = assess_batch(pending)
