@@ -250,7 +250,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--selfplay-mode",
-        choices=["correct", "incorrect"],
+        choices=["correct", "incorrect", "mixed"],
         default="correct",
         help="Injector mode for self-play loop.",
     )
@@ -935,8 +935,6 @@ def run_selfplay_loop(
     summary_path: str,
 ) -> None:
     use_qwen_thinking = model_type == MODEL_TYPE_QWEN and args.thinking_budget > 0
-    expected_assessor = "CORRECT" if args.selfplay_mode == "correct" else "INCORRECT"
-    scenario_name = f"selfplay_{args.selfplay_mode}"
     max_notes = args.selfplay_num_notes or args.num_samples
     output_root, output_ext = os.path.splitext(output_path)
     attempts_path = f"{output_root}_attempts{output_ext or '.jsonl'}"
@@ -961,6 +959,7 @@ def run_selfplay_loop(
         "assessor_total": 0,
         "assessor_match_expected": 0,
     }
+    mixed_counter = 0
 
     def build_prompt(messages: List[Dict[str, str]]) -> str:
         if use_qwen_thinking:
@@ -1033,13 +1032,14 @@ def run_selfplay_loop(
                     model,
                     model.device,
                 )
+            expected_assessor = item.get("assessor_expected")
             match = predicted == expected_assessor
             stats["assessor_total"] += 1
             stats["assessor_match_expected"] += int(match)
             assessed_rows.append(
                 {
                     **item,
-                    "scenario": scenario_name,
+                    "scenario": f"selfplay_{item.get('selfplay_mode')}",
                     "assessor_expected": expected_assessor,
                     "assessor_predicted": predicted,
                     "assessor_match_expected": match,
@@ -1096,8 +1096,13 @@ def run_selfplay_loop(
                     stats["total_input_notes"] += 1
                     note_id = record.get("note_id")
                     error_type = (record.get("error_type") or "").strip()
+                    selfplay_mode = args.selfplay_mode
+                    if selfplay_mode == "mixed":
+                        selfplay_mode = "correct" if mixed_counter % 2 == 0 else "incorrect"
+                        mixed_counter += 1
+                    expected_assessor = "CORRECT" if selfplay_mode == "correct" else "INCORRECT"
                     prompt_intent = args.prompt_intent
-                    if args.selfplay_mode == "incorrect":
+                    if selfplay_mode == "incorrect":
                         if error_type:
                             prompt_intent = (
                                 f"Introduce a {error_type} error while keeping the note realistic."
@@ -1108,6 +1113,8 @@ def run_selfplay_loop(
                         {
                             "note_id": note_id,
                             "error_type": error_type,
+                            "selfplay_mode": selfplay_mode,
+                            "assessor_expected": expected_assessor,
                             "prompt_intent": prompt_intent,
                             "original_note": original_note,
                             "attempts": 0,
@@ -1132,7 +1139,7 @@ def run_selfplay_loop(
                                 assessor_prompts,
                                 injector_prompts,
                                 args.thinking_budget,
-                                args.selfplay_mode == "correct",
+                                state["selfplay_mode"] == "correct",
                             )
                             prompt = build_prompt(messages)
                             prompts.append(prompt)
@@ -1162,6 +1169,7 @@ def run_selfplay_loop(
                                         "run_name": run_name,
                                         "note_id": state["note_id"],
                                         "error_type": state["error_type"] or None,
+                                        "selfplay_mode": state["selfplay_mode"],
                                         "prompt_intent": state["prompt_intent"],
                                         "attempt_index": state["attempts"],
                                         "original_note": state["original_note"],
@@ -1205,6 +1213,8 @@ def run_selfplay_loop(
                                 "run_name": run_name,
                                 "note_id": state["note_id"],
                                 "error_type": state["error_type"] or None,
+                                "selfplay_mode": state["selfplay_mode"],
+                                "assessor_expected": state["assessor_expected"],
                                 "prompt_intent": state["prompt_intent"],
                                 "original_note": state["original_note"],
                                 "generated_note": state["generated_note"],
