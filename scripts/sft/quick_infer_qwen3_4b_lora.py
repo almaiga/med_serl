@@ -27,6 +27,10 @@ THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
 MODEL_TYPE_QWEN = "qwen"
 MODEL_TYPE_GENERIC = "generic"
+EARLY_STOPPING_TEXT = (
+    "\n\nConsidering the limited time by the user, I have to give the solution "
+    "based on the thinking directly now.\n</think>\n\n"
+)
 DEFAULT_NOTE_FIELDS = [
     "correct_note",
     "note",
@@ -375,14 +379,23 @@ def normalize_qwen_thinking(thinking_content: str) -> str:
     if not thinking_content:
         return ""
     cleaned = re.sub(r"</?think>", "", thinking_content, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(
+        r"Considering the limited time by the user, I have to give the solution based on the thinking directly now\.",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
     return cleaned
 
 
 def strip_qwen_think_from_content(content: str) -> str:
     if not content:
         return content
-    content = re.sub(r"</?think>", "", content, flags=re.IGNORECASE).strip()
-    return content
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
+    content = re.sub(r"</?think>", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"</?answer>", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"^answer:\s*", "", content, flags=re.IGNORECASE)
+    return content.strip()
 
 
 def parse_qwen3_output(tokenizer, input_ids, generated_ids) -> str:
@@ -468,8 +481,12 @@ def generate_qwen_with_thinking(
                 skip_special_tokens=True,
             ).strip("\n")
             thinking_content = normalize_qwen_thinking(thinking_content)
-            think_end = torch.tensor([[THINK_END_TOKEN_ID]], device=model.device)
-            input_ids = torch.cat([generated_ids, think_end], dim=-1)
+            early_stopping_ids = tokenizer(
+                [EARLY_STOPPING_TEXT],
+                return_tensors="pt",
+                add_special_tokens=False,
+            ).input_ids.to(model.device)
+            input_ids = torch.cat([generated_ids, early_stopping_ids], dim=-1)
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
@@ -550,8 +567,12 @@ def generate_qwen_with_thinking_batch(
                     skip_special_tokens=True,
                 ).strip("\n")
                 thinking_content = normalize_qwen_thinking(thinking_content)
-                think_end = torch.tensor([[THINK_END_TOKEN_ID]], device=model.device)
-                input_ids = torch.cat([generated_ids[idx:idx + 1], think_end], dim=-1)
+                early_stopping_ids = tokenizer(
+                    [EARLY_STOPPING_TEXT],
+                    return_tensors="pt",
+                    add_special_tokens=False,
+                ).input_ids.to(model.device)
+                input_ids = torch.cat([generated_ids[idx:idx + 1], early_stopping_ids], dim=-1)
                 attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
