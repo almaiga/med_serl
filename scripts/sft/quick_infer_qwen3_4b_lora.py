@@ -463,8 +463,12 @@ def parse_qwen3_output(tokenizer, input_ids, generated_ids) -> str:
     return content
 
 
-def parse_qwen3_output_with_length(tokenizer, input_length: int, generated_ids) -> str:
-    output_ids = generated_ids[input_length:].tolist()
+def parse_qwen3_output_with_length(tokenizer, input_length: int, generated_ids, original_seq_len: int = None) -> str:
+    # If original_seq_len provided, use it to slice correctly with left-padding
+    if original_seq_len is not None:
+        output_ids = generated_ids[original_seq_len:].tolist()
+    else:
+        output_ids = generated_ids[input_length:].tolist()
 
     try:
         index = len(output_ids) - output_ids[::-1].index(THINK_END_TOKEN_ID)
@@ -581,6 +585,8 @@ def generate_qwen_with_thinking_batch(
         return []
 
     model_inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
+    # For left-padding: attention_mask.sum() gives us the number of real (non-pad) tokens
+    # These real tokens are at the END of the sequence (right-aligned)
     input_lengths = model_inputs["attention_mask"].sum(dim=1).tolist()
 
     with torch.no_grad():
@@ -596,7 +602,14 @@ def generate_qwen_with_thinking_batch(
 
     outputs: List[str] = []
     for idx, input_length in enumerate(input_lengths):
-        output_ids = generated_ids[idx, input_length:].tolist()
+        # generated_ids[idx] structure with left-padding:
+        # [PAD, PAD, ..., input_token1, input_token2, ..., gen_token1, gen_token2, ...]
+        # Total length of generated_ids[idx] = num_pads + input_length + num_generated
+        # The original input starts at position: total_length - generated_length - input_length
+        # But model.generate returns sequences where input is preserved at original positions
+        # So we slice from: len(model_inputs['input_ids'][idx]) onwards
+        original_input_len = model_inputs['input_ids'][idx].shape[0]
+        output_ids = generated_ids[idx, original_input_len:].tolist()
         final_ids = generated_ids[idx]
 
         if IM_END_TOKEN_ID not in output_ids:
@@ -663,7 +676,7 @@ def generate_qwen_with_thinking_batch(
             else:
                 final_ids = input_ids[0]
 
-        outputs.append(parse_qwen3_output_with_length(tokenizer, input_length, final_ids))
+        outputs.append(parse_qwen3_output_with_length(tokenizer, input_length, final_ids, original_input_len))
 
     return outputs
 
@@ -1089,7 +1102,7 @@ def run_selfplay_loop(
             for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
                 batch_prompts = prompts[start:start + args.selfplay_assessor_batch_size]
                 inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(model.device)
-                input_lengths = inputs["attention_mask"].sum(dim=1).tolist()
+                original_lengths = [inputs['input_ids'][i].shape[0] for i in range(len(batch_prompts))]
                 with torch.no_grad():
                     batch_outputs = model.generate(
                         **inputs,
@@ -1099,8 +1112,8 @@ def run_selfplay_loop(
                         top_p=effective_top_p,
                         pad_token_id=tokenizer.eos_token_id,
                     )
-                for idx, input_length in enumerate(input_lengths):
-                    generated_tokens = batch_outputs[idx][input_length:]
+                for idx, original_len in enumerate(original_lengths):
+                    generated_tokens = batch_outputs[idx][original_len:]
                     generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
                     outputs.append(generated)
 
@@ -1145,7 +1158,7 @@ def run_selfplay_loop(
                 effective_top_p,
             )
         inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
-        input_lengths = inputs["attention_mask"].sum(dim=1).tolist()
+        original_lengths = [inputs['input_ids'][i].shape[0] for i in range(len(prompts))]
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
@@ -1156,8 +1169,8 @@ def run_selfplay_loop(
                 pad_token_id=tokenizer.eos_token_id,
             )
         decoded: List[str] = []
-        for idx, input_length in enumerate(input_lengths):
-            generated_tokens = outputs[idx][input_length:]
+        for idx, original_len in enumerate(original_lengths):
+            generated_tokens = outputs[idx][original_len:]
             decoded.append(tokenizer.decode(generated_tokens, skip_special_tokens=True))
         return decoded
 
