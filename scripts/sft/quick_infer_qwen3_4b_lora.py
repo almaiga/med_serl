@@ -1184,7 +1184,7 @@ def run_selfplay_loop(
                 effective_top_p,
                 min_p=args.min_p,
                 answer_tokens=768,  # Note (200-400 tokens) + explanation (50-100 tokens) + final_answer
-                stop_strings=['\n\n', 'Explanation:', '<|im_end|>'],  # Injector-specific stop tokens
+                stop_strings=None,  # NO stop strings for injector - let it generate full note
             )
         inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
         original_lengths = [inputs['input_ids'][i].shape[0] for i in range(len(prompts))]
