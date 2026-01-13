@@ -513,6 +513,7 @@ def generate_qwen_with_thinking(
             do_sample=temperature > 0,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            repetition_penalty=1.1,  # Light penalty during thinking
         )
 
     output_ids = generated_ids[0, input_length:].tolist()
@@ -533,16 +534,19 @@ def generate_qwen_with_thinking(
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
+                # Limit answer tokens to prevent degeneration
+                answer_tokens = min(remaining_tokens, 256)
                 with torch.no_grad():
                     generated_ids = model.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        max_new_tokens=remaining_tokens,
+                        max_new_tokens=answer_tokens,
                         temperature=temperature,
                         top_p=top_p,
                         do_sample=temperature > 0,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=tokenizer.eos_token_id,
+                        repetition_penalty=1.2,
                     )
                 answer = parse_qwen3_output_with_length(tokenizer, input_ids.size(-1), generated_ids)
                 answer = strip_qwen_think_from_content(answer).strip()
@@ -557,16 +561,19 @@ def generate_qwen_with_thinking(
         attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
         remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
         if remaining_tokens > 0:
+            # Limit answer tokens to prevent degeneration
+            answer_tokens = min(remaining_tokens, 256)
             with torch.no_grad():
                 generated_ids = model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
-                    max_new_tokens=remaining_tokens,
+                    max_new_tokens=answer_tokens,
                     temperature=temperature,
                     top_p=top_p,
                     do_sample=temperature > 0,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
+                    repetition_penalty=1.2,
                 )
 
     return parse_qwen3_output(tokenizer, model_inputs.input_ids, generated_ids)
@@ -598,6 +605,7 @@ def generate_qwen_with_thinking_batch(
             do_sample=temperature > 0,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            repetition_penalty=1.1,  # Light penalty during thinking
         )
 
     outputs: List[str] = []
@@ -628,16 +636,19 @@ def generate_qwen_with_thinking_batch(
                 attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
+                    # Limit answer tokens to prevent degeneration (max 256 for final answer)
+                    answer_tokens = min(remaining_tokens, 256)
                     with torch.no_grad():
                         followup_ids = model.generate(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
-                            max_new_tokens=remaining_tokens,
+                            max_new_tokens=answer_tokens,
                             temperature=temperature,
                             top_p=top_p,
                             do_sample=temperature > 0,
                             pad_token_id=tokenizer.pad_token_id,
                             eos_token_id=tokenizer.eos_token_id,
+                            repetition_penalty=1.2,
                         )
                     final_ids = followup_ids[0]
                     answer = parse_qwen3_output_with_length(
@@ -661,16 +672,19 @@ def generate_qwen_with_thinking_batch(
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
+                # Limit answer tokens to prevent degeneration (max 256 for final answer)
+                answer_tokens = min(remaining_tokens, 256)
                 with torch.no_grad():
                     followup_ids = model.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
-                        max_new_tokens=remaining_tokens,
+                        max_new_tokens=answer_tokens,
                         temperature=temperature,
                         top_p=top_p,
                         do_sample=temperature > 0,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=tokenizer.eos_token_id,
+                        repetition_penalty=1.2,
                     )
                 final_ids = followup_ids[0]
             else:
@@ -1106,11 +1120,12 @@ def run_selfplay_loop(
                 with torch.no_grad():
                     batch_outputs = model.generate(
                         **inputs,
-                        max_new_tokens=args.max_new_tokens,
+                        max_new_tokens=256,  # Limit assessor output - only need final_answer
                         do_sample=effective_temp > 0,
                         temperature=effective_temp,
                         top_p=effective_top_p,
                         pad_token_id=tokenizer.eos_token_id,
+                        repetition_penalty=1.2,
                     )
                 for idx, original_len in enumerate(original_lengths):
                     generated_tokens = batch_outputs[idx][original_len:]
