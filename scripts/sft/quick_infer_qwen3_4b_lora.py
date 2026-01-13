@@ -548,8 +548,6 @@ def generate_qwen_with_thinking_batch(
         return []
 
     model_inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
-    # For left-padding: attention_mask.sum() gives us the number of real (non-pad) tokens
-    # These real tokens are at the END of the sequence (right-aligned)
     input_lengths = model_inputs["attention_mask"].sum(dim=1).tolist()
 
     with torch.no_grad():
@@ -558,22 +556,16 @@ def generate_qwen_with_thinking_batch(
             max_new_tokens=thinking_budget,
             temperature=temperature,
             top_p=top_p,
-            top_k=20,  # Official Qwen3 recommendation
-            min_p=min_p,  # Prevents Chinese output
+            top_k=20,
+            min_p=min_p,
             do_sample=temperature > 0,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            repetition_penalty=1.1,  # Light penalty during thinking
+            repetition_penalty=1.1,
         )
 
     outputs: List[str] = []
     for idx, input_length in enumerate(input_lengths):
-        # generated_ids[idx] structure with left-padding:
-        # [PAD, PAD, ..., input_token1, input_token2, ..., gen_token1, gen_token2, ...]
-        # Total length of generated_ids[idx] = num_pads + input_length + num_generated
-        # The original input starts at position: total_length - generated_length - input_length
-        # But model.generate returns sequences where input is preserved at original positions
-        # So we slice from: len(model_inputs['input_ids'][idx]) onwards
         original_input_len = model_inputs['input_ids'][idx].shape[0]
         output_ids = generated_ids[idx, original_input_len:].tolist()
         final_ids = generated_ids[idx]
@@ -585,19 +577,26 @@ def generate_qwen_with_thinking_batch(
                     skip_special_tokens=True,
                 ).strip("\n")
                 thinking_content = normalize_qwen_thinking(thinking_content)
-                # Close think tag cleanly
+                
+                # FIX: Extract only the non-padded tokens from this sequence
+                # Left-padding means real tokens are at the end
+                num_pad_tokens = original_input_len - input_length
+                real_tokens = generated_ids[idx, num_pad_tokens:].unsqueeze(0)  # Remove padding
+                
+                # Now concatenate the early stopping text
                 early_stopping_ids = tokenizer(
                     [EARLY_STOPPING_TEXT],
                     return_tensors="pt",
                     add_special_tokens=False,
                 ).input_ids.to(model.device)
-                input_ids = torch.cat([generated_ids[idx:idx + 1], early_stopping_ids], dim=-1)
+                
+                # Concatenate to the REAL (non-padded) tokens
+                input_ids = torch.cat([real_tokens, early_stopping_ids], dim=-1)
                 attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
+                
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
-                    # After thinking, generate final answer
                     actual_answer_tokens = min(remaining_tokens, answer_tokens)
-                    # Build stop token list from provided strings
                     stop_token_ids = []
                     if stop_strings:
                         for stop_str in stop_strings:
@@ -605,12 +604,13 @@ def generate_qwen_with_thinking_batch(
                             if stop_ids:
                                 stop_token_ids.append(stop_ids[-1])
                     eos_ids = [tokenizer.eos_token_id] + stop_token_ids if stop_token_ids else [tokenizer.eos_token_id]
+                    
                     with torch.no_grad():
                         followup_ids = model.generate(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             max_new_tokens=actual_answer_tokens,
-                            temperature=0.3,  # Reduced from 0.6 for more deterministic formatting
+                            temperature=0.3,
                             top_p=0.95,
                             top_k=20,
                             min_p=min_p,
@@ -637,13 +637,14 @@ def generate_qwen_with_thinking_batch(
                 else:
                     outputs.append(answer)
                 continue
-            input_ids = generated_ids[idx:idx + 1]
+                
+            # Same fix for the case where thinking naturally ends
+            num_pad_tokens = original_input_len - input_length
+            input_ids = generated_ids[idx, num_pad_tokens:].unsqueeze(0)  # Remove padding
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
-                # After thinking naturally ends, generate final answer
                 actual_answer_tokens = min(remaining_tokens, answer_tokens)
-                # Build stop token list from provided strings
                 stop_token_ids = []
                 if stop_strings:
                     for stop_str in stop_strings:
@@ -656,14 +657,14 @@ def generate_qwen_with_thinking_batch(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=actual_answer_tokens,
-                        temperature=0.3,  # Reduced from 0.6 for more deterministic formatting
+                        temperature=0.3,
                         top_p=0.95,
                         top_k=20,
                         min_p=min_p,
                         do_sample=True,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=eos_ids[0] if len(eos_ids) == 1 else eos_ids,
-                        repetition_penalty=1.05,  # Very light - avoid forcing alt language
+                        repetition_penalty=1.05,
                     )
                 final_ids = followup_ids[0]
             else:
