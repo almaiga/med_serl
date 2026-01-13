@@ -659,24 +659,22 @@ def extract_generated_note(text: str) -> Optional[str]:
     # Split by "generated_note:" first to isolate the section (allow same-line)
     parts = re.split(r'generated_note:\s*', text, flags=re.IGNORECASE)
 
-    if len(parts) < 2:
-        return None
+    if len(parts) >= 2:
+        # Take everything after "generated_note:"
+        after_label = parts[1]
 
-    # Take everything after "generated_note:"
-    after_label = parts[1]
+        # Now extract until "final_answer:" (stop marker)
+        match = re.search(r'^(.*?)\s*final_answer:', after_label, re.DOTALL | re.IGNORECASE)
 
-    # Now extract until "final_answer:" (stop marker)
-    match = re.search(r'^(.*?)\s*final_answer:', after_label, re.DOTALL | re.IGNORECASE)
+        if match:
+            generated = match.group(1).strip()
+        else:
+            # If no final_answer found, take everything
+            generated = after_label.strip()
 
-    if match:
-        generated = match.group(1).strip()
-    else:
-        # If no final_answer found, take everything
-        generated = after_label.strip()
-
-    if generated:
-        cleaned = clean_generated_note(generated)
-        return cleaned if cleaned else None
+        if generated:
+            cleaned = clean_generated_note(generated)
+            return cleaned if cleaned else None
 
     # Fallback 1: "Modified Note with Error" block (quoted)
     match = re.search(r'Modified Note with Error:\s*"(.*?)"', text, re.DOTALL | re.IGNORECASE)
