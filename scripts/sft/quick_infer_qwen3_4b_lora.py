@@ -50,8 +50,9 @@ THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
 MODEL_TYPE_QWEN = "qwen"
 MODEL_TYPE_GENERIC = "generic"
-# Clean closure for thinking phase - simpler format without opening quote
-EARLY_STOPPING_TEXT = '\n</think>\n\nfinal_answer: '
+# Different early stopping for assessor vs injector
+EARLY_STOPPING_TEXT_ASSESSOR = '\n</think>\n\nfinal_answer: '
+EARLY_STOPPING_TEXT_INJECTOR = '\n</think>\n\ngenerated_note: '
 
 DEFAULT_NOTE_FIELDS = [
     "correct_note",
@@ -543,6 +544,7 @@ def generate_qwen_with_thinking_batch(
     min_p: float = 0.05,
     answer_tokens: int = 128,
     stop_strings: Optional[List[str]] = None,
+    early_stop_text: str = EARLY_STOPPING_TEXT_INJECTOR,  # Default to injector format
 ) -> List[str]:
     if not prompts:
         return []
@@ -585,7 +587,7 @@ def generate_qwen_with_thinking_batch(
                 
                 # Now concatenate the early stopping text
                 early_stopping_ids = tokenizer(
-                    [EARLY_STOPPING_TEXT],
+                    [early_stop_text],  # Use the provided early_stop_text
                     return_tensors="pt",
                     add_special_tokens=False,
                 ).input_ids.to(model.device)
@@ -1106,13 +1108,14 @@ def run_selfplay_loop(
                 model,
                 tokenizer,
                 prompts,
-                assessor_budget,  # Use shorter budget for assessor
+                assessor_budget,
                 args.max_new_tokens,
                 effective_temp,
                 effective_top_p,
                 min_p=args.min_p,
-                answer_tokens=256,  # Increased from 128 to ensure complete answer + explanation
-                stop_strings=['\n\n', 'Explanation:', '<|im_end|>'],  # Stop after explanation
+                answer_tokens=256,
+                stop_strings=['\n\n', 'Explanation:', '<|im_end|>'],
+                early_stop_text=EARLY_STOPPING_TEXT_ASSESSOR,  # Use assessor format
             )
         else:
             for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
@@ -1178,13 +1181,14 @@ def run_selfplay_loop(
                 model,
                 tokenizer,
                 prompts,
-                args.thinking_budget,  # Injector uses full thinking budget
+                args.thinking_budget,
                 args.max_new_tokens,
                 effective_temp,
                 effective_top_p,
                 min_p=args.min_p,
-                answer_tokens=768,  # Note (200-400 tokens) + explanation (50-100 tokens) + final_answer
-                stop_strings=None,  # NO stop strings for injector - let it generate full note
+                answer_tokens=768,
+                stop_strings=None,
+                early_stop_text=EARLY_STOPPING_TEXT_INJECTOR,  # Use injector format
             )
         inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
         original_lengths = [inputs['input_ids'][i].shape[0] for i in range(len(prompts))]
