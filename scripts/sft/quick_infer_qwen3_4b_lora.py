@@ -663,7 +663,15 @@ def generate_qwen_with_thinking_batch(
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
                     # After thinking, generate final answer
-                    answer_tokens = min(remaining_tokens, 128)  # Increase from 64
+                    # Short budget - assessor answer is just: final_answer: "CORRECT" or "INCORRECT"
+                    answer_tokens = min(remaining_tokens, 32)  # Reduced from 128 - assessor is short
+                    # Stop at newline after the answer
+                    stop_token_ids = []
+                    for stop_str in ['\n', '\n\n']:
+                        stop_ids = tokenizer.encode(stop_str, add_special_tokens=False)
+                        if stop_ids:
+                            stop_token_ids.append(stop_ids[-1])
+                    eos_ids = [tokenizer.eos_token_id] + stop_token_ids
                     with torch.no_grad():
                         followup_ids = model.generate(
                             input_ids=input_ids,
@@ -675,7 +683,7 @@ def generate_qwen_with_thinking_batch(
                             min_p=min_p,
                             do_sample=True,
                             pad_token_id=tokenizer.pad_token_id,
-                            eos_token_id=tokenizer.eos_token_id,
+                            eos_token_id=eos_ids[0] if len(eos_ids) == 1 else eos_ids,
                             repetition_penalty=1.05,  # Very light - avoid forcing alt language
                         )
                     final_ids = followup_ids[0]
@@ -701,10 +709,11 @@ def generate_qwen_with_thinking_batch(
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
                 # After thinking naturally ends, generate final answer
-                answer_tokens = min(remaining_tokens, 128)  # Increase from 64
-                # Get stop token IDs for early termination
+                # Assessor only needs ~20 tokens for: final_answer: "CORRECT" or "INCORRECT"
+                answer_tokens = min(remaining_tokens, 32)  # Reduced - assessor answer is short
+                # Stop at newline after the answer - no need for more text
                 stop_token_ids = []
-                for stop_str in ['\n\n', 'changes_made']:
+                for stop_str in ['\n', '\n\n']:
                     stop_ids = tokenizer.encode(stop_str, add_special_tokens=False)
                     if stop_ids:
                         stop_token_ids.append(stop_ids[-1])
@@ -1143,6 +1152,21 @@ def run_selfplay_loop(
             prompt_metas.append({"prompt": prompt})
 
         outputs: List[str] = []
+        
+        # DEBUG: Print assessor parameters and first prompt
+        if args.verbose_diff and prompts:
+            print("\n" + "="*60)
+            print("ASSESSOR GENERATION PARAMETERS:")
+            print(f"  thinking_budget: {assessor_budget}")
+            print(f"  max_new_tokens: {args.max_new_tokens}")
+            print(f"  temperature: {effective_temp}")
+            print(f"  top_p: {effective_top_p}")
+            print(f"  min_p: {args.min_p}")
+            print(f"  use_qwen_thinking: {use_qwen_thinking}")
+            print(f"\nFIRST ASSESSOR PROMPT (truncated):")
+            print(prompts[0][:2000] + "..." if len(prompts[0]) > 2000 else prompts[0])
+            print("="*60 + "\n")
+        
         if use_qwen_thinking:
             outputs = generate_qwen_with_thinking_batch(
                 model,
@@ -1176,6 +1200,13 @@ def run_selfplay_loop(
                     generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
                     outputs.append(generated)
 
+        # DEBUG: Print first raw output
+        if args.verbose_diff and outputs:
+            print("\n" + "-"*60)
+            print("FIRST ASSESSOR RAW OUTPUT:")
+            print(outputs[0][:1500] + "..." if len(outputs[0]) > 1500 else outputs[0])
+            print("-"*60 + "\n")
+        
         assessed_rows: List[Dict] = []
         for item, raw_output, meta in zip(batch, outputs, prompt_metas):
             predicted = extract_final_answer(raw_output)
