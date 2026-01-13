@@ -1161,199 +1161,177 @@ def run_selfplay_loop(
             decoded.append(tokenizer.decode(generated_tokens, skip_special_tokens=True))
         return decoded
 
+    # Constants for per-note retry logic
+    MAX_RETRIES_PER_NOTE = 4
+    
     with open(output_path, "a", encoding="utf-8") as out_handle, open(
         attempts_path, "a", encoding="utf-8"
     ) as attempts_handle:
         with tqdm(total=len(samples), desc="Self-play", unit="note") as pbar:
-            index = 0
-            while index < len(samples):
-                batch_records = samples[index:index + injector_batch_size]
-                index += injector_batch_size
-
-                states: List[Dict] = []
-                for record in batch_records:
-                    original_note = select_note(record, args.note_field)
-                    if not original_note:
-                        continue
-                    stats["total_input_notes"] += 1
-                    note_id = record.get("note_id")
-                    error_type = (record.get("error_type") or "").strip()
-                    selfplay_mode = args.selfplay_mode
-                    if selfplay_mode == "mixed":
-                        selfplay_mode = "correct" if mixed_counter % 2 == 0 else "incorrect"
-                        mixed_counter += 1
-                    expected_assessor = "CORRECT" if selfplay_mode == "correct" else "INCORRECT"
-                    prompt_intent = args.prompt_intent
-                    if selfplay_mode == "incorrect":
-                        if error_type:
-                            prompt_intent = (
-                                f"Introduce a {error_type} error while keeping the note realistic."
-                            )
-                        else:
-                            prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
-                    states.append(
-                        {
+            # Process one note at a time with retry logic
+            for record in samples:
+                original_note = select_note(record, args.note_field)
+                if not original_note:
+                    pbar.update(1)
+                    continue
+                
+                stats["total_input_notes"] += 1
+                note_id = record.get("note_id")
+                error_type = (record.get("error_type") or "").strip()
+                
+                # Determine selfplay mode
+                selfplay_mode = args.selfplay_mode
+                if selfplay_mode == "mixed":
+                    selfplay_mode = "correct" if mixed_counter % 2 == 0 else "incorrect"
+                    mixed_counter += 1
+                
+                expected_assessor = "CORRECT" if selfplay_mode == "correct" else "INCORRECT"
+                prompt_intent = args.prompt_intent
+                if selfplay_mode == "incorrect":
+                    if error_type:
+                        prompt_intent = f"Introduce a {error_type} error while keeping the note realistic."
+                    else:
+                        prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
+                
+                # Retry loop for this note (max 4 attempts)
+                success = False
+                for attempt_num in range(1, MAX_RETRIES_PER_NOTE + 1):
+                    # Build prompt for this attempt
+                    messages = build_messages(
+                        "injector",
+                        original_note,
+                        prompt_intent,
+                        assessor_prompts,
+                        injector_prompts,
+                        args.thinking_budget,
+                        selfplay_mode == "correct",
+                    )
+                    prompt = build_prompt(messages)
+                    
+                    # Generate (single note)
+                    outputs = generate_injector_outputs([prompt])
+                    stats["attempted_generations"] += 1
+                    generated = outputs[0]
+                    
+                    # Parse output
+                    parsed_output = None
+                    if HAS_PARSE_CHANGES:
+                        parsed_output = parse_raw_output(generated)
+                        candidate_note = parsed_output.get("generated_note")
+                    else:
+                        candidate_note = extract_generated_note(generated)
+                    
+                    # Apply filters
+                    filter_meta = passes_similarity_filter(
+                        original_note,
+                        candidate_note or "",
+                        args.selfplay_min_jaccard,
+                        args.selfplay_max_jaccard,
+                    )
+                    
+                    # Word-level edit check
+                    word_edit_info = {}
+                    if filter_meta["passed"] and candidate_note and HAS_PARSE_CHANGES:
+                        word_diff = compute_word_level_diff(original_note, candidate_note)
+                        word_edit_info = {
+                            "total_word_edits": word_diff["total_word_edits"],
+                            "changes": word_diff.get("changes", [])[:3],
+                        }
+                        max_edits = getattr(args, 'max_word_edits', 6)
+                        if word_diff["total_word_edits"] > max_edits:
+                            filter_meta["passed"] = False
+                            filter_meta["reason"] = "too_many_edits"
+                            stats["rejected_too_many_edits"] += 1
+                    
+                    # Update stats
+                    stats["attempts_logged"] += 1
+                    if filter_meta["passed"]:
+                        stats["attempts_passed_filter"] += 1
+                    else:
+                        stats["attempts_failed_filter"] += 1
+                    
+                    # Verbose diff logging
+                    if getattr(args, 'verbose_diff', False) and candidate_note and HAS_PARSE_CHANGES:
+                        changes_made = parsed_output.get("changes_made") if parsed_output else None
+                        diff_output = get_change_diff(
+                            original_note,
+                            candidate_note,
+                            changes_made,
+                            colorize=True
+                        )
+                        print(f"\n--- Note {note_id} Attempt {attempt_num}/{MAX_RETRIES_PER_NOTE} ---")
+                        print(diff_output)
+                        print(f"Filter: {'PASS' if filter_meta['passed'] else 'FAIL'} ({filter_meta.get('reason', 'ok')})")
+                        print("-" * 60)
+                    
+                    # Build log entry
+                    log_entry = {
+                        "run_name": run_name,
+                        "note_id": note_id,
+                        "error_type": error_type or None,
+                        "selfplay_mode": selfplay_mode,
+                        "prompt_intent": prompt_intent,
+                        "attempt_index": attempt_num,
+                        "original_note": original_note,
+                        "generated_note": candidate_note,
+                        "score_jaccard": filter_meta["score_jaccard"],
+                        "filter_passed": filter_meta["passed"],
+                        "filter_reason": filter_meta["reason"],
+                        "injector_raw_output": generated,
+                    }
+                    
+                    if parsed_output and HAS_PARSE_CHANGES:
+                        log_entry["model_changes"] = parsed_output.get("changes_made")
+                        log_entry["word_edit_info"] = word_edit_info
+                    
+                    attempts_handle.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                    attempts_handle.flush()
+                    
+                    # Check if passed
+                    if filter_meta["passed"]:
+                        stats["accepted_generations"] += 1
+                        success = True
+                        
+                        # Add to pending for assessor batch
+                        pending.append({
+                            "run_name": run_name,
                             "note_id": note_id,
-                            "error_type": error_type,
+                            "error_type": error_type or None,
                             "selfplay_mode": selfplay_mode,
                             "assessor_expected": expected_assessor,
                             "prompt_intent": prompt_intent,
                             "original_note": original_note,
-                            "attempts": 0,
-                            "done": False,
-                            "generated_note": None,
-                            "injector_raw_output": None,
-                            "score_jaccard": None,
-                        }
-                    )
-
-                if states:
-                    active_indices = [i for i in range(len(states))]
-                    while active_indices:
-                        prompts: List[str] = []
-                        prompt_indices: List[int] = []
-                        for state_idx in active_indices:
-                            state = states[state_idx]
-                            messages = build_messages(
-                                "injector",
-                                state["original_note"],
-                                state["prompt_intent"],
-                                assessor_prompts,
-                                injector_prompts,
-                                args.thinking_budget,
-                                state["selfplay_mode"] == "correct",
-                            )
-                            prompt = build_prompt(messages)
-                            prompts.append(prompt)
-                            prompt_indices.append(state_idx)
-
-                        outputs = generate_injector_outputs(prompts)
-                        stats["attempted_generations"] += len(outputs)
-
-                        for generated, state_idx in zip(outputs, prompt_indices):
-                            state = states[state_idx]
-                            state["attempts"] += 1
-                            
-                            # Try parsing with new format first, fallback to old extraction
-                            parsed_output = None
-                            if HAS_PARSE_CHANGES:
-                                parsed_output = parse_raw_output(generated)
-                                candidate_note = parsed_output.get("generated_note")
-                            else:
-                                candidate_note = extract_generated_note(generated)
-                            
-                            filter_meta = passes_similarity_filter(
-                                state["original_note"],
-                                candidate_note or "",
-                                args.selfplay_min_jaccard,
-                                args.selfplay_max_jaccard,
-                            )
-                            
-                            # Additional check: word-level edits
-                            word_edit_info = {}
-                            if filter_meta["passed"] and candidate_note and HAS_PARSE_CHANGES:
-                                word_diff = compute_word_level_diff(state["original_note"], candidate_note)
-                                word_edit_info = {
-                                    "total_word_edits": word_diff["total_word_edits"],
-                                    "changes": word_diff.get("changes", [])[:3],
-                                }
-                                max_edits = getattr(args, 'max_word_edits', 6)
-                                if word_diff["total_word_edits"] > max_edits:
-                                    filter_meta["passed"] = False
-                                    filter_meta["reason"] = "too_many_edits"
-                                    stats["rejected_too_many_edits"] += 1
-                            
-                            stats["attempts_logged"] += 1
-                            if filter_meta["passed"]:
-                                stats["attempts_passed_filter"] += 1
-                            else:
-                                stats["attempts_failed_filter"] += 1
-                            
-                            # Verbose diff logging
-                            if getattr(args, 'verbose_diff', False) and candidate_note and HAS_PARSE_CHANGES:
-                                changes_made = parsed_output.get("changes_made") if parsed_output else None
-                                diff_output = get_change_diff(
-                                    state["original_note"],
-                                    candidate_note,
-                                    changes_made,
-                                    colorize=True
-                                )
-                                print(f"\n--- Note {state['note_id']} Attempt {state['attempts']} ---")
-                                print(diff_output)
-                                print(f"Filter: {'PASS' if filter_meta['passed'] else 'FAIL'} ({filter_meta.get('reason', 'ok')})")
-                                print("-" * 60)
-                            
-                            # Build log entry with change analysis
-                            log_entry = {
-                                "run_name": run_name,
-                                "note_id": state["note_id"],
-                                "error_type": state["error_type"] or None,
-                                "selfplay_mode": state["selfplay_mode"],
-                                "prompt_intent": state["prompt_intent"],
-                                "attempt_index": state["attempts"],
-                                "original_note": state["original_note"],
-                                "generated_note": candidate_note,
-                                "score_jaccard": filter_meta["score_jaccard"],
-                                "filter_passed": filter_meta["passed"],
-                                "filter_reason": filter_meta["reason"],
-                                "injector_raw_output": generated,
-                            }
-                            
-                            # Add change analysis if available
-                            if parsed_output and HAS_PARSE_CHANGES:
-                                log_entry["model_changes"] = parsed_output.get("changes_made")
-                                log_entry["word_edit_info"] = word_edit_info
-                            
-                            attempts_handle.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-                            attempts_handle.flush()
-
-                            if filter_meta["passed"]:
-                                stats["accepted_generations"] += 1
-                                state["generated_note"] = candidate_note
-                                state["injector_raw_output"] = generated
-                                state["score_jaccard"] = filter_meta["score_jaccard"]
-                                state["done"] = True
-                            else:
-                                reason = filter_meta["reason"]
-                                if reason == "empty_generated":
-                                    stats["rejected_empty"] += 1
-                                elif reason == "no_word_change":
-                                    stats["rejected_no_word_change"] += 1
-                                elif reason == "low_jaccard":
-                                    stats["rejected_low_jaccard"] += 1
-                                elif reason == "too_similar":
-                                    stats["rejected_too_similar"] += 1
-                                # Note: too_many_edits already counted above
-                                if state["attempts"] >= args.selfplay_max_attempts:
-                                    state["done"] = True
-
-                        active_indices = [i for i, s in enumerate(states) if not s["done"]]
-
-                for state in states:
-                    if state["generated_note"]:
-                        pending.append(
-                            {
-                                "run_name": run_name,
-                                "note_id": state["note_id"],
-                                "error_type": state["error_type"] or None,
-                                "selfplay_mode": state["selfplay_mode"],
-                                "assessor_expected": state["assessor_expected"],
-                                "prompt_intent": state["prompt_intent"],
-                                "original_note": state["original_note"],
-                                "generated_note": state["generated_note"],
-                                "score_jaccard": state["score_jaccard"],
-                                "injector_raw_output": state["injector_raw_output"],
-                            }
-                        )
-
+                            "generated_note": candidate_note,
+                            "score_jaccard": filter_meta["score_jaccard"],
+                            "injector_raw_output": generated,
+                        })
+                        break  # Success - move to next note
+                    else:
+                        # Track rejection reasons
+                        reason = filter_meta["reason"]
+                        if reason == "empty_generated":
+                            stats["rejected_empty"] += 1
+                        elif reason == "no_word_change":
+                            stats["rejected_no_word_change"] += 1
+                        elif reason == "low_jaccard":
+                            stats["rejected_low_jaccard"] += 1
+                        elif reason == "too_similar":
+                            stats["rejected_too_similar"] += 1
+                        # Continue to next attempt (unless we've hit max)
+                
+                # If failed all attempts, log warning
+                if not success:
+                    print(f"[WARNING] Note {note_id} failed all {MAX_RETRIES_PER_NOTE} attempts")
+                
+                # Batch assess when we have enough
                 if len(pending) >= args.selfplay_assessor_batch_size:
                     assessed = assess_batch(pending)
                     for row in assessed:
                         out_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
                     out_handle.flush()
                     pending = []
-
-                pbar.update(len(batch_records))
+                
+                pbar.update(1)
 
         if pending:
             assessed = assess_batch(pending)
