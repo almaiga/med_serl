@@ -31,7 +31,20 @@ try:
     HAS_PARSE_CHANGES = True
 except ImportError:
     HAS_PARSE_CHANGES = False
-    print("Warning: parse_changes module not found. Verbose diff logging disabled.")
+    import sys
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    try:
+        from parse_changes import (
+            parse_raw_output, get_change_diff, format_change_log, compute_word_level_diff
+        )
+        HAS_PARSE_CHANGES = True
+    except ImportError:
+        print("[WARNING] parse_changes.py not found in script directory.")
+        print(f"[WARNING] Looked in: {script_dir}")
+        print("[WARNING] Verbose diff logging and change tracking disabled.")
+        print("[WARNING] Copy parse_changes.py to the same directory as this script.")
 
 THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
@@ -1376,10 +1389,12 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    # Set left padding for decoder-only models (critical for batched generation)
+    tokenizer.padding_side = 'left'
 
     base_model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype="auto",
+        dtype="auto",
         device_map="auto",
     )
     model = base_model
