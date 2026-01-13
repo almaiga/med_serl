@@ -50,10 +50,8 @@ THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
 MODEL_TYPE_QWEN = "qwen"
 MODEL_TYPE_GENERIC = "generic"
-EARLY_STOPPING_TEXT = (
-    "\n\nConsidering the limited time by the user, I have to give the solution "
-    "based on the thinking directly now.\n</think>\n\n"
-)
+# Clean closure for thinking phase - just close the tag without confusing explanatory text
+EARLY_STOPPING_TEXT = "\n</think>\n\n"
 DEFAULT_NOTE_FIELDS = [
     "correct_note",
     "note",
@@ -544,6 +542,7 @@ def generate_qwen_with_thinking(
                 skip_special_tokens=True,
             ).strip("\n")
             thinking_content = normalize_qwen_thinking(thinking_content)
+            # Close think tag and provide clear instruction for what comes next
             early_stopping_ids = tokenizer(
                 [EARLY_STOPPING_TEXT],
                 return_tensors="pt",
@@ -553,21 +552,21 @@ def generate_qwen_with_thinking(
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
-                # After thinking, only need final_answer - max 64 tokens
-                answer_tokens = min(remaining_tokens, 64)
+                # After thinking, generate the final answer (just the final_answer line)
+                answer_tokens = min(remaining_tokens, 128)  # Increase from 64 to 128
                 with torch.no_grad():
                     generated_ids = model.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=answer_tokens,
-                        temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                        temperature=0.6,  # Qwen3 official recommendation for thinking mode
                         top_p=0.95,  # Official recommendation
                         top_k=20,
                         min_p=min_p,
                         do_sample=True,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
+                        repetition_penalty=1.05,  # Very light penalty to avoid forcing Chinese
                     )
                 answer = parse_qwen3_output_with_length(tokenizer, input_ids.size(-1), generated_ids)
                 answer = strip_qwen_think_from_content(answer).strip()
@@ -582,21 +581,21 @@ def generate_qwen_with_thinking(
         attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
         remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
         if remaining_tokens > 0:
-            # After thinking, only need final_answer - max 64 tokens
-            answer_tokens = min(remaining_tokens, 64)
+            # After thinking naturally ends, generate final answer
+            answer_tokens = min(remaining_tokens, 128)  # Increase from 64
             with torch.no_grad():
                 generated_ids = model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=answer_tokens,
-                    temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                    temperature=0.6,  # Qwen3 official recommendation
                     top_p=0.95,  # Official recommendation
                     top_k=20,
                     min_p=min_p,
                     do_sample=True,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
-                    repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
+                    repetition_penalty=1.05,  # Very light - avoid forcing alt language
                 )
 
     return parse_qwen3_output(tokenizer, model_inputs.input_ids, generated_ids)
@@ -653,6 +652,7 @@ def generate_qwen_with_thinking_batch(
                     skip_special_tokens=True,
                 ).strip("\n")
                 thinking_content = normalize_qwen_thinking(thinking_content)
+                # Close think tag cleanly
                 early_stopping_ids = tokenizer(
                     [EARLY_STOPPING_TEXT],
                     return_tensors="pt",
@@ -662,21 +662,21 @@ def generate_qwen_with_thinking_batch(
                 attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
-                    # After thinking, we only need final_answer line - max 64 tokens
-                    answer_tokens = min(remaining_tokens, 64)
+                    # After thinking, generate final answer
+                    answer_tokens = min(remaining_tokens, 128)  # Increase from 64
                     with torch.no_grad():
                         followup_ids = model.generate(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             max_new_tokens=answer_tokens,
-                            temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                            temperature=0.6,  # Qwen3 official recommendation
                             top_p=0.95,  # Official recommendation
                             top_k=20,
                             min_p=min_p,
                             do_sample=True,
                             pad_token_id=tokenizer.pad_token_id,
                             eos_token_id=tokenizer.eos_token_id,
-                            repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
+                            repetition_penalty=1.05,  # Very light - avoid forcing alt language
                         )
                     final_ids = followup_ids[0]
                     answer = parse_qwen3_output_with_length(
@@ -700,8 +700,8 @@ def generate_qwen_with_thinking_batch(
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
-                # After thinking, we only need final_answer line - max 64 tokens
-                answer_tokens = min(remaining_tokens, 64)
+                # After thinking naturally ends, generate final answer
+                answer_tokens = min(remaining_tokens, 128)  # Increase from 64
                 # Get stop token IDs for early termination
                 stop_token_ids = []
                 for stop_str in ['\n\n', 'changes_made']:
@@ -714,14 +714,14 @@ def generate_qwen_with_thinking_batch(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=answer_tokens,
-                        temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                        temperature=0.6,  # Qwen3 official recommendation
                         top_p=0.95,  # Official recommendation
                         top_k=20,
                         min_p=min_p,
                         do_sample=True,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=eos_ids[0] if len(eos_ids) == 1 else eos_ids,
-                        repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
+                        repetition_penalty=1.05,  # Very light - avoid forcing alt language
                     )
                 final_ids = followup_ids[0]
             else:
