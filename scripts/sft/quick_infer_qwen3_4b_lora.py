@@ -99,22 +99,26 @@ def build_messages(
             user_content = assessor_prompts["user_template"].format(note=note)
         else:
             system_prompt = (
-                "You are a meticulous clinical note assessor in a self-play loop. Your job"
-                " is to analyze the note for clinical correctness, detect errors when they"
-                " exist, and provide a clear final answer with a Yes/No error decision.\n\n"
-                "CRITICAL: Your response MUST end with EXACTLY this format on the last line:\n"
+                "You are an expert medical error detection system. Your task is to carefully "
+                "analyze medical notes for potential clinical errors, diagnostic mistakes, or "
+                "treatment inaccuracies.\n\n"
+                "Calibration rules:\n"
+                "- Only answer INCORRECT if you can quote the exact sentence in the note that is wrong.\n"
+                "- If no clear error is present, answer CORRECT.\n"
+                "- Do not propose an alternative diagnosis or management unless a specific sentence "
+                "is clearly incorrect.\n\n"
+                "Classification guidelines:\n"
+                "- \"CORRECT\": No medical errors, diagnostic mistakes, or treatment inaccuracies detected\n"
+                "- \"INCORRECT\": Contains medical errors, diagnostic mistakes, treatment inaccuracies, "
+                "or clinical inconsistencies\n\n"
+                "IMPORTANT: Your reasoning is already done in the <think> phase.\n"
+                "After </think>, immediately output ONLY:\n"
                 "final_answer: \"CORRECT\"\n"
                 "OR\n"
                 "final_answer: \"INCORRECT\"\n\n"
-                "Do not add any text after the final_answer line."
+                "Do NOT explain, do NOT add any sentences, do NOT repeat your reasoning - just the final_answer line."
             )
-            user_content = (
-                "Role: assessor\n"
-                "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n\n"
-                f"Clinical note:\n{note}\n\n"
-                "Think carefully, then output:\n"
-                'final_answer: "CORRECT" or "INCORRECT"\n'
-            )
+            user_content = f"Analyze this medical note:\n\n{note}"
 
     else:
         if injector_is_correct is None:
@@ -1433,6 +1437,18 @@ def main() -> None:
 
     assessor_prompts = load_assessor_prompts(args.assessor_prompt_file)
     injector_prompts = load_injector_prompts(args.injector_prompt_file)
+    
+    # Debug: verify prompt loading
+    if assessor_prompts:
+        print(f"[INFO] Loaded assessor prompts from: {args.assessor_prompt_file}")
+        print(f"[INFO] Assessor system prompt preview: {assessor_prompts['system_prompt'][:150]}...")
+    else:
+        print("[WARNING] Using hardcoded fallback assessor prompt (file not loaded)")
+    
+    if injector_prompts:
+        print(f"[INFO] Loaded injector prompts from: {args.injector_prompt_file}")
+    else:
+        print("[WARNING] Using hardcoded fallback injector prompts")
 
     tokenizer_source = args.adapter_dir or args.model_name
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
