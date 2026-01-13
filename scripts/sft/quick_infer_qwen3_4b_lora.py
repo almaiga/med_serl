@@ -261,6 +261,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--thinking-budget", type=int, default=0, help="Thinking budget tokens.")
     parser.add_argument(
+        "--assessor-thinking-budget",
+        type=int,
+        default=256,
+        help="Thinking budget for assessor (less than injector - it's simpler task).",
+    )
+    parser.add_argument(
+        "--min-p",
+        type=float,
+        default=0.05,
+        help="Min-p sampling parameter (helps prevent Chinese output in Qwen).",
+    )
+    parser.add_argument(
         "--embedding-model",
         default="sentence-transformers/all-MiniLM-L6-v2",
         help="HF embedding model for cosine similarity.",
