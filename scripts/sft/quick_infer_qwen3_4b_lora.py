@@ -534,19 +534,19 @@ def generate_qwen_with_thinking(
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
-                # Limit answer tokens to prevent degeneration
-                answer_tokens = min(remaining_tokens, 256)
+                # After thinking, only need final_answer - max 64 tokens
+                answer_tokens = min(remaining_tokens, 64)
                 with torch.no_grad():
                     generated_ids = model.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=answer_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        do_sample=temperature > 0,
+                        temperature=0.3,  # Low temp for deterministic answer
+                        top_p=0.9,
+                        do_sample=True,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.2,
+                        repetition_penalty=1.3,
                     )
                 answer = parse_qwen3_output_with_length(tokenizer, input_ids.size(-1), generated_ids)
                 answer = strip_qwen_think_from_content(answer).strip()
@@ -561,19 +561,19 @@ def generate_qwen_with_thinking(
         attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
         remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
         if remaining_tokens > 0:
-            # Limit answer tokens to prevent degeneration
-            answer_tokens = min(remaining_tokens, 256)
+            # After thinking, only need final_answer - max 64 tokens
+            answer_tokens = min(remaining_tokens, 64)
             with torch.no_grad():
                 generated_ids = model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=answer_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    do_sample=temperature > 0,
+                    temperature=0.3,  # Low temp for deterministic answer
+                    top_p=0.9,
+                    do_sample=True,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
-                    repetition_penalty=1.2,
+                    repetition_penalty=1.3,
                 )
 
     return parse_qwen3_output(tokenizer, model_inputs.input_ids, generated_ids)
@@ -636,19 +636,19 @@ def generate_qwen_with_thinking_batch(
                 attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
-                    # Limit answer tokens to prevent degeneration (max 256 for final answer)
-                    answer_tokens = min(remaining_tokens, 256)
+                    # After thinking, we only need final_answer line - max 64 tokens
+                    answer_tokens = min(remaining_tokens, 64)
                     with torch.no_grad():
                         followup_ids = model.generate(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             max_new_tokens=answer_tokens,
-                            temperature=temperature,
-                            top_p=top_p,
-                            do_sample=temperature > 0,
+                            temperature=0.3,  # Lower temp for deterministic answer
+                            top_p=0.9,
+                            do_sample=True,
                             pad_token_id=tokenizer.pad_token_id,
                             eos_token_id=tokenizer.eos_token_id,
-                            repetition_penalty=1.2,
+                            repetition_penalty=1.3,
                         )
                     final_ids = followup_ids[0]
                     answer = parse_qwen3_output_with_length(
@@ -672,19 +672,26 @@ def generate_qwen_with_thinking_batch(
             attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
             remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
             if remaining_tokens > 0:
-                # Limit answer tokens to prevent degeneration (max 256 for final answer)
-                answer_tokens = min(remaining_tokens, 256)
+                # After thinking, we only need final_answer line - max 64 tokens
+                answer_tokens = min(remaining_tokens, 64)
+                # Get stop token IDs for early termination
+                stop_token_ids = []
+                for stop_str in ['\n\n', 'changes_made']:
+                    stop_ids = tokenizer.encode(stop_str, add_special_tokens=False)
+                    if stop_ids:
+                        stop_token_ids.append(stop_ids[-1])
+                eos_ids = [tokenizer.eos_token_id] + stop_token_ids
                 with torch.no_grad():
                     followup_ids = model.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=answer_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        do_sample=temperature > 0,
+                        temperature=0.3,  # Lower temp for more deterministic answer
+                        top_p=0.9,
+                        do_sample=True,
                         pad_token_id=tokenizer.pad_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.2,
+                        eos_token_id=eos_ids[0] if len(eos_ids) == 1 else eos_ids,
+                        repetition_penalty=1.3,
                     )
                 final_ids = followup_ids[0]
             else:
