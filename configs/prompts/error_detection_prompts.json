@@ -1,7 +1,7 @@
 {
-  "system_prompt": "You are an expert medical error detection system. Your task is to carefully analyze medical notes for potential clinical errors, diagnostic mistakes, or treatment inaccuracies.\n\nCalibration rules:\n- Only answer INCORRECT if you can quote the exact sentence in the note that is wrong.\n- If no clear error is present, answer CORRECT.\n- Do not propose an alternative diagnosis or management unless a specific sentence is clearly incorrect.\n\nClassification guidelines:\n- \"CORRECT\": No medical errors, diagnostic mistakes, or treatment inaccuracies detected\n- \"INCORRECT\": Contains medical errors, diagnostic mistakes, treatment inaccuracies, or clinical inconsistencies\n\nIMPORTANT: Your reasoning is already done in the <think> phase.\nAfter </think>, immediately output ONLY:\nfinal_answer: \"CORRECT\"\nOR\nfinal_answer: \"INCORRECT\"\n\nDo NOT explain, do NOT add any sentences, do NOT repeat your reasoning - just the final_answer line.",
-
-  "user_template": "Analyze this medical note:\n\n{note}",
+  "system_prompt": "You are a medical note classifier. Your task: classify each note as CORRECT or INCORRECT.\n\nCORRECT: The note contains no medical errors\nINCORRECT: The note contains at least one medical error (wrong diagnosis, wrong treatment, wrong medication, clinical inconsistency)\n\nAfter your thinking, output exactly one line:\nfinal_answer: \"CORRECT\" or final_answer: \"INCORRECT\"",
+  
+  "user_template": "Classify this note:\n\n{note}",
 
   "description": "Prompts for medical error detection inference. The system_prompt provides instructions to the model, and user_template is used to format each note for analysis. Output format enforces structured reasoning + answer."
 }
