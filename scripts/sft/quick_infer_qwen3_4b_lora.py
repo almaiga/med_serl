@@ -61,27 +61,6 @@ DEFAULT_NOTE_FIELDS = [
 ]
 
 
-SYSTEM_PROMPTS = {
-    "injector": (
-        "You are a clinical note transformer in a self-play loop.\n\n"
-        "You MUST strictly follow the prompt intent.\n\n"
-        "If asked to create a CORRECT note:\n"
-        "- You MUST preserve ALL clinical facts from the input note\n"
-        "- Including diagnosis, lab values, findings, and clinical interpretation\n"
-        "- You are ONLY allowed to change surface form (wording, order, phrasing)\n"
-        "- You are STRICTLY FORBIDDEN from reinterpreting, normalizing, or changing meaning\n\n"
-        "If asked to create an INCORRECT note:\n"
-        "- You MUST introduce exactly ONE subtle clinical error\n"
-        "- All other clinical facts MUST remain unchanged\n\n"
-        "CRITICAL: Your response MUST end with EXACTLY this format on the last line:\n"
-        'final_answer: "CORRECT"\n'
-        "OR\n"
-        'final_answer: "INCORRECT"\n\n'
-        "Do not add any text after the final_answer line."
-    ),
-}
-
-
 def build_messages(
     mode: str,
     note: str,
@@ -91,88 +70,39 @@ def build_messages(
     thinking_budget: int = 0,
     injector_is_correct: Optional[bool] = None,
 ) -> List[Dict[str, str]]:
+    """Build chat messages from JSON prompt configs. No hardcoded fallbacks."""
     if mode == "assessor":
-        if assessor_prompts:
-            system_prompt = assessor_prompts["system_prompt"]
-            user_content = assessor_prompts["user_template"].format(note=note)
-        else:
-            system_prompt = (
-                "You are an expert medical error detection system. Your task is to carefully "
-                "analyze medical notes for potential clinical errors, diagnostic mistakes, or "
-                "treatment inaccuracies.\n\n"
-                "Calibration rules:\n"
-                "- Only answer INCORRECT if you can quote the exact sentence in the note that is wrong.\n"
-                "- If no clear error is present, answer CORRECT.\n"
-                "- Do not propose an alternative diagnosis or management unless a specific sentence "
-                "is clearly incorrect.\n\n"
-                "Classification guidelines:\n"
-                "- \"CORRECT\": No medical errors, diagnostic mistakes, or treatment inaccuracies detected\n"
-                "- \"INCORRECT\": Contains medical errors, diagnostic mistakes, treatment inaccuracies, "
-                "or clinical inconsistencies\n\n"
-                "IMPORTANT: Your reasoning is already done in the <think> phase.\n"
-                "After </think>, immediately output ONLY:\n"
-                "final_answer: \"CORRECT\"\n"
-                "OR\n"
-                "final_answer: \"INCORRECT\"\n\n"
-                "Do NOT explain, do NOT add any sentences, do NOT repeat your reasoning - just the final_answer line."
+        if not assessor_prompts:
+            raise ValueError(
+                "assessor_prompts is required. Provide --assessor-prompt-file pointing to a JSON "
+                "file with 'system_prompt' and 'user_template' keys."
             )
-            user_content = f"Analyze this medical note:\n\n{note}"
+        system_prompt = assessor_prompts["system_prompt"]
+        user_content = assessor_prompts["user_template"].format(note=note)
 
-    else:
+    else:  # injector
+        if not injector_prompts:
+            raise ValueError(
+                "injector_prompts is required. Provide --injector-prompt-file pointing to a JSON "
+                "file with 'system_prompt_correct', 'system_prompt_incorrect', "
+                "'injector_correct_template', 'injector_incorrect_template' keys."
+            )
         if injector_is_correct is None:
             is_correct = "no clinical errors" in prompt_intent.lower()
         else:
             is_correct = injector_is_correct
-        if injector_prompts:
-            system_prompt = (
-                injector_prompts["system_prompt_correct"]
-                if is_correct
-                else injector_prompts["system_prompt_incorrect"]
-            )
-            if is_correct:
-                template = injector_prompts["injector_correct_template"]
-            else:
-                template = injector_prompts["injector_incorrect_template"]
-            user_content = template.format(note=note, prompt_intent=prompt_intent)
-        else:
-            if is_correct:
-                user_content = (
-                    "Role: injector\n"
-                    "Task: Create a CLINICALLY IDENTICAL variant of the input note.\n\n"
-                    "IMPORTANT:\n"
-                    "- You must preserve ALL clinical facts exactly.\n"
-                    "- You are allowed to make ONLY MINIMAL surface edits.\n"
-                    "- You should change as LITTLE as possible.\n"
-                    "- You MAY leave the note unchanged if no safe edit is obvious.\n"
-                    "- You MUST NOT change diagnoses, clinical conclusions, or interpretations.\n\n"
-                    "Allowed edits:\n"
-                    "- punctuation\n"
-                    "- wording (synonyms with identical meaning)\n"
-                    "- sentence order\n\n"
-                    "Forbidden edits:\n"
-                    "- changing diagnosis terms\n"
-                    "- changing medical classifications\n"
-                    "- changing clinical conclusions\n\n"
-                    f"input_note:\n{note}\n\n"
-                    "Think through the change internally; do not add commentary.\n\n"
-                    "generated_note:\n[the updated note]\n\n"
-                    'final_answer: "CORRECT"\n'
-                )
-            else:
-                user_content = (
-                    "Role: injector\n"
-                    "Task: Create a variant of the input note with EXACTLY ONE subtle clinical error.\n\n"
-                    "Rules:\n"
-                    "- Introduce exactly ONE error\n"
-                    "- All other clinical facts must remain unchanged\n"
-                    "- The error must be clinically plausible and local\n\n"
-                    f"input_note:\n{note}\n\n"
-                    "Think through the change internally; do not add commentary.\n\n"
-                    "generated_note:\n[the updated note]\n\n"
-                    'final_answer: "INCORRECT"\n'
-                )
-
-            system_prompt = SYSTEM_PROMPTS["injector"]
+        
+        system_prompt = (
+            injector_prompts["system_prompt_correct"]
+            if is_correct
+            else injector_prompts["system_prompt_incorrect"]
+        )
+        template = (
+            injector_prompts["injector_correct_template"]
+            if is_correct
+            else injector_prompts["injector_incorrect_template"]
+        )
+        user_content = template.format(note=note, prompt_intent=prompt_intent)
 
     return [
         {"role": "system", "content": system_prompt},
