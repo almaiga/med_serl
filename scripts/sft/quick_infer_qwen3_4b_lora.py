@@ -512,6 +512,7 @@ def generate_qwen_with_thinking(
     max_new_tokens: int,
     temperature: float,
     top_p: float,
+    min_p: float = 0.05,
 ) -> str:
     model_inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
     input_length = model_inputs.input_ids.size(-1)
@@ -522,6 +523,8 @@ def generate_qwen_with_thinking(
             max_new_tokens=thinking_budget,
             temperature=temperature,
             top_p=top_p,
+            top_k=20,  # Official Qwen3 recommendation
+            min_p=min_p,  # Prevents Chinese output
             do_sample=temperature > 0,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -553,12 +556,14 @@ def generate_qwen_with_thinking(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=answer_tokens,
-                        temperature=0.3,  # Low temp for deterministic answer
-                        top_p=0.9,
+                        temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                        top_p=0.95,  # Official recommendation
+                        top_k=20,
+                        min_p=min_p,
                         do_sample=True,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.3,
+                        repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
                     )
                 answer = parse_qwen3_output_with_length(tokenizer, input_ids.size(-1), generated_ids)
                 answer = strip_qwen_think_from_content(answer).strip()
@@ -580,12 +585,14 @@ def generate_qwen_with_thinking(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     max_new_tokens=answer_tokens,
-                    temperature=0.3,  # Low temp for deterministic answer
-                    top_p=0.9,
+                    temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                    top_p=0.95,  # Official recommendation
+                    top_k=20,
+                    min_p=min_p,
                     do_sample=True,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
-                    repetition_penalty=1.3,
+                    repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
                 )
 
     return parse_qwen3_output(tokenizer, model_inputs.input_ids, generated_ids)
@@ -599,6 +606,7 @@ def generate_qwen_with_thinking_batch(
     max_new_tokens: int,
     temperature: float,
     top_p: float,
+    min_p: float = 0.05,
 ) -> List[str]:
     if not prompts:
         return []
@@ -614,6 +622,8 @@ def generate_qwen_with_thinking_batch(
             max_new_tokens=thinking_budget,
             temperature=temperature,
             top_p=top_p,
+            top_k=20,  # Official Qwen3 recommendation
+            min_p=min_p,  # Prevents Chinese output
             do_sample=temperature > 0,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -655,12 +665,14 @@ def generate_qwen_with_thinking_batch(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             max_new_tokens=answer_tokens,
-                            temperature=0.3,  # Lower temp for deterministic answer
-                            top_p=0.9,
+                            temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                            top_p=0.95,  # Official recommendation
+                            top_k=20,
+                            min_p=min_p,
                             do_sample=True,
                             pad_token_id=tokenizer.pad_token_id,
                             eos_token_id=tokenizer.eos_token_id,
-                            repetition_penalty=1.3,
+                            repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
                         )
                     final_ids = followup_ids[0]
                     answer = parse_qwen3_output_with_length(
@@ -698,12 +710,14 @@ def generate_qwen_with_thinking_batch(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         max_new_tokens=answer_tokens,
-                        temperature=0.3,  # Lower temp for more deterministic answer
-                        top_p=0.9,
+                        temperature=0.5,  # Higher than 0.3 to avoid near-greedy degeneration
+                        top_p=0.95,  # Official recommendation
+                        top_k=20,
+                        min_p=min_p,
                         do_sample=True,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=eos_ids[0] if len(eos_ids) == 1 else eos_ids,
-                        repetition_penalty=1.3,
+                        repetition_penalty=1.1,  # Lighter penalty - high values cause Chinese
                     )
                 final_ids = followup_ids[0]
             else:
@@ -1052,7 +1066,9 @@ def run_selfplay_loop(
         effective_temp = 0.7 if args.temperature == 0.2 else args.temperature  # Only override default
         effective_top_p = 0.8 if args.top_p == 0.9 else args.top_p
     elif use_qwen_thinking:
-        print(f"[INFO] Using Qwen3 thinking mode (budget={args.thinking_budget})")
+        assessor_budget = getattr(args, 'assessor_thinking_budget', 256) or 256
+        print(f"[INFO] Using Qwen3 thinking mode (injector budget={args.thinking_budget}, assessor budget={assessor_budget})")
+        print(f"[INFO] Using min_p={args.min_p} (prevents Chinese output)")
         # Best practices: temp=0.6, top_p=0.95 for thinking mode
         effective_temp = 0.6 if args.temperature == 0.2 else args.temperature
         effective_top_p = 0.95 if args.top_p == 0.9 else args.top_p
@@ -1106,6 +1122,8 @@ def run_selfplay_loop(
     def assess_batch(batch: List[Dict]) -> List[Dict]:
         prompts: List[str] = []
         prompt_metas: List[Dict] = []
+        # Use assessor-specific thinking budget (shorter - it's a simpler task)
+        assessor_budget = getattr(args, 'assessor_thinking_budget', 256) or 256
         for item in batch:
             messages = build_messages(
                 "assessor",
@@ -1113,7 +1131,7 @@ def run_selfplay_loop(
                 "Assess note correctness.",
                 assessor_prompts,
                 injector_prompts,
-                args.thinking_budget,
+                assessor_budget,  # Use shorter budget for assessor
                 None,
             )
             prompt = build_prompt(messages)
@@ -1126,10 +1144,11 @@ def run_selfplay_loop(
                 model,
                 tokenizer,
                 prompts,
-                args.thinking_budget,
+                assessor_budget,  # Use shorter budget for assessor
                 args.max_new_tokens,
                 effective_temp,
                 effective_top_p,
+                min_p=args.min_p,
             )
         else:
             for start in range(0, len(prompts), args.selfplay_assessor_batch_size):
@@ -1143,8 +1162,10 @@ def run_selfplay_loop(
                         do_sample=effective_temp > 0,
                         temperature=effective_temp,
                         top_p=effective_top_p,
+                        top_k=20,  # Official Qwen3 recommendation
+                        min_p=args.min_p,  # Prevents Chinese output
                         pad_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.2,
+                        repetition_penalty=1.1,  # Lighter penalty
                     )
                 for idx, original_len in enumerate(original_lengths):
                     generated_tokens = batch_outputs[idx][original_len:]
@@ -1186,10 +1207,11 @@ def run_selfplay_loop(
                 model,
                 tokenizer,
                 prompts,
-                args.thinking_budget,
+                args.thinking_budget,  # Injector uses full thinking budget
                 args.max_new_tokens,
                 effective_temp,
                 effective_top_p,
+                min_p=args.min_p,
             )
         inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
         original_lengths = [inputs['input_ids'][i].shape[0] for i in range(len(prompts))]
@@ -1200,6 +1222,8 @@ def run_selfplay_loop(
                 do_sample=effective_temp > 0,
                 temperature=effective_temp,
                 top_p=effective_top_p,
+                top_k=20,  # Official Qwen3 recommendation
+                min_p=args.min_p,  # Prevents Chinese output
                 pad_token_id=tokenizer.eos_token_id,
             )
         decoded: List[str] = []
