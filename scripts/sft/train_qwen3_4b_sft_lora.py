@@ -281,22 +281,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True, help="Output directory.")
     parser.add_argument("--model-name", default=DEFAULT_MODEL, help="Base model name.")
     parser.add_argument("--max-seq-length", type=int, default=4096)
-    parser.add_argument("--per-device-train-batch-size", type=int, default=1)
-    parser.add_argument("--per-device-eval-batch-size", type=int, default=1)
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
-    parser.add_argument("--learning-rate", type=float, default=2e-4)
-    parser.add_argument("--num-train-epochs", type=int, default=1)
-    parser.add_argument("--warmup-ratio", type=float, default=0.03)
+    # Batch size settings optimized for RTX 6000 Pro (48GB VRAM)
+    parser.add_argument("--per-device-train-batch-size", type=int, default=8,
+                        help="Batch size per GPU (default: 8 for 48GB VRAM)")
+    parser.add_argument("--per-device-eval-batch-size", type=int, default=8)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=2,
+                        help="Accumulate gradients (effective batch = 8*2=16)")
+    # Learning rate
+    parser.add_argument("--learning-rate", type=float, default=1e-4,
+                        help="Learning rate (default: 1e-4)")
+    # Epochs
+    parser.add_argument("--num-train-epochs", type=int, default=3,
+                        help="Number of training epochs (default: 3)")
+    parser.add_argument("--warmup-ratio", type=float, default=0.05,
+                        help="Warmup ratio (default: 0.05)")
     parser.add_argument("--logging-steps", type=int, default=10)
-    parser.add_argument("--save-steps", type=int, default=200)
-    parser.add_argument("--eval-steps", type=int, default=200)
+    parser.add_argument("--save-steps", type=int, default=100)
+    parser.add_argument("--eval-steps", type=int, default=100)
     parser.add_argument("--bf16", action="store_true", help="Use bfloat16.")
     parser.add_argument("--fp16", action="store_true", help="Use float16.")
-    parser.add_argument("--lora-r", type=int, default=16)
-    parser.add_argument("--lora-alpha", type=int, default=32)
+    # LoRA settings - can use higher rank with 48GB VRAM
+    parser.add_argument("--lora-r", type=int, default=64,
+                        help="LoRA rank (default: 64, you have VRAM for it)")
+    parser.add_argument("--lora-alpha", type=int, default=128,
+                        help="LoRA alpha (default: 128, typically 2x rank)")
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--lora-target-modules", default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj")
     parser.add_argument("--filter-role", default=None, choices=["critic", "generator"])
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    # Dataloader workers - leverage your 262GB RAM
+    parser.add_argument("--dataloader-num-workers", type=int, default=4,
+                        help="Number of dataloader workers")
     return parser.parse_args()
 
 
@@ -307,14 +322,29 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    effective_batch_size = args.per_device_train_batch_size * args.gradient_accumulation_steps
+    
     print("\n" + "="*70)
     print("SFT LORA TRAINING - Medical Self-Play Model")
     print("="*70)
     print(f"Model: {args.model_name}")
     print(f"Train file: {args.train_file}")
     print(f"Output dir: {args.output_dir}")
+    print(f"\nHardware: RTX 6000 Pro (48GB VRAM), 262GB RAM")
+    print(f"\nTraining Parameters:")
+    print(f"  - Epochs: {args.num_train_epochs}")
+    print(f"  - Per-device batch size: {args.per_device_train_batch_size}")
+    print(f"  - Gradient accumulation: {args.gradient_accumulation_steps}")
+    print(f"  - Effective batch size: {effective_batch_size}")
+    print(f"  - Learning rate: {args.learning_rate}")
+    print(f"  - Warmup ratio: {args.warmup_ratio}")
+    print(f"  - Weight decay: {args.weight_decay}")
+    print(f"\nLoRA Parameters:")
+    print(f"  - Rank (r): {args.lora_r}")
+    print(f"  - Alpha: {args.lora_alpha}")
+    print(f"  - Dropout: {args.lora_dropout}")
     if args.filter_role:
-        print(f"Filtering to role: {args.filter_role}")
+        print(f"\nFiltering to role: {args.filter_role}")
     print("="*70 + "\n")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
@@ -350,14 +380,27 @@ def main() -> None:
     )
 
     sft_kwargs = {
-        "output_dir": args.output_dir, "per_device_train_batch_size": args.per_device_train_batch_size,
+        "output_dir": args.output_dir, 
+        "per_device_train_batch_size": args.per_device_train_batch_size,
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
-        "learning_rate": args.learning_rate, "num_train_epochs": args.num_train_epochs,
-        "warmup_ratio": args.warmup_ratio, "logging_steps": args.logging_steps,
-        "save_steps": args.save_steps, "eval_steps": args.eval_steps if eval_ds else None,
+        "learning_rate": args.learning_rate, 
+        "num_train_epochs": args.num_train_epochs,
+        "warmup_ratio": args.warmup_ratio, 
+        "weight_decay": args.weight_decay,
+        "logging_steps": args.logging_steps,
+        "save_steps": args.save_steps, 
+        "eval_steps": args.eval_steps if eval_ds else None,
         "evaluation_strategy": "steps" if eval_ds else "no",
-        "bf16": args.bf16, "fp16": args.fp16, "save_total_limit": 2, "report_to": "none",
+        "bf16": args.bf16, 
+        "fp16": args.fp16, 
+        "save_total_limit": 3,
+        "load_best_model_at_end": True if eval_ds else False,
+        "metric_for_best_model": "eval_loss" if eval_ds else None,
+        "report_to": "none",
+        "lr_scheduler_type": "cosine",
+        "dataloader_num_workers": args.dataloader_num_workers,
+        "dataloader_pin_memory": True,  # Speeds up data transfer to GPU
     }
     sig = inspect.signature(SFTConfig.__init__)
     sft_kwargs["max_seq_length" if "max_seq_length" in sig.parameters else "max_length"] = args.max_seq_length
