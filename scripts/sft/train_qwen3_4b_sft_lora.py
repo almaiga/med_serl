@@ -2,6 +2,10 @@
 """
 LoRA SFT training for Qwen3-4B using existing CoT JSONL data.
 
+Trains a model for medical self-play loop:
+- Assessor role: Detect errors in clinical notes
+- Injector role: Inject subtle errors or preserve correctness
+
 Example:
   python scripts/sft/train_qwen3_4b_sft_lora.py \
     --train-file data_processed/medec_cot/sft_cot_training_data.jsonl \
@@ -23,85 +27,176 @@ from trl import SFTConfig, SFTTrainer
 DEFAULT_MODEL = "Qwen/Qwen3-4B"
 
 
+# =============================================================================
+# SYSTEM PROMPTS - Aligned with inference expectations
+# =============================================================================
+
 SYSTEM_PROMPTS = {
     ("critic", "assessment"): (
-        "You are a meticulous clinical note assessor in a self-play loop. Your job"
-        " is to analyze the note for clinical correctness, detect errors when they"
-        " exist, and provide a clear final answer with a Yes/No error decision."
+        "You are a medical note assessor. Your task is to analyze clinical notes "
+        "for errors. Think through your analysis step by step, then provide your "
+        "final verdict.\n\n"
+        "Output format:\n"
+        "<think>\n[Your step-by-step reasoning]\n</think>\n\n"
+        "Label: CORRECT or INCORRECT\n"
+        "Explanation: [Brief explanation]"
     ),
     ("generator", "generation"): (
-        "You are an error injector in a self-play loop. Given a finished note, explain"
-        " the reasoning that led to creating a realistic note, either correct or with"
-        " a subtle error, and provide a clear final answer."
+        "You are a medical note editor in a self-play training loop. Your task is "
+        "to either preserve a note's correctness with minimal surface edits, or "
+        "inject a subtle clinical error. Think through your approach step by step.\n\n"
+        "Output format:\n"
+        "<think>\n[Your reasoning for the edit]\n</think>\n\n"
+        "Generated note:\n[The edited note]\n\n"
+        "Label: CORRECT or INCORRECT"
     ),
 }
 
 
-REASONING_TAGS = [
-    "reasoning",
-    "generation_reasoning",
-    "error_injection_reasoning",
-]
+# =============================================================================
+# REASONING EXTRACTION AND CLEANING
+# =============================================================================
 
-
-def to_think_tags(text: str) -> str:
-    """Convert various reasoning tags into Qwen-style <think> tags."""
+def extract_reasoning_content(text: str) -> str:
+    """
+    Extract only the reasoning content from GPT-4o output.
+    
+    GPT-4o outputs look like:
+    ```
+    <reasoning>
+    1. Clinical Picture:
+       ...detailed analysis...
+    4. Final Verdict:
+       - Status: ...
+    </reasoning>
+    
+    **Final Answer**:
+    Error Detected: Yes
+    ...
+    ```
+    
+    We want ONLY the content inside the tags, stopping before "Final Verdict"
+    or any answer-like content to keep reasoning pure.
+    """
     if not text:
-        return text
-    for tag in REASONING_TAGS:
-        text = re.sub(fr"<{tag}>", "<think>", text)
-        text = re.sub(fr"</{tag}>", "</think>", text)
-    return text
+        return ""
+    
+    # Define patterns for different tag types
+    tag_patterns = [
+        (r'<reasoning>(.*?)</reasoning>', 'reasoning'),
+        (r'<generation_reasoning>(.*?)</generation_reasoning>', 'generation'),
+        (r'<error_injection_reasoning>(.*?)</error_injection_reasoning>', 'injection'),
+    ]
+    
+    extracted = ""
+    
+    for pattern, _ in tag_patterns:
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            extracted = match.group(1).strip()
+            break
+    
+    if not extracted:
+        # No tags found - try to use raw text but clean it
+        extracted = text
+    
+    # Remove any "Final Verdict" or answer sections that leaked into reasoning
+    # These patterns mark where GPT-4o starts concluding
+    cutoff_patterns = [
+        r'\n\s*\d+\.\s*Final Verdict:.*',  # "4. Final Verdict: ..."
+        r'\n\s*Final Verdict:.*',
+        r'\n\s*\*\*Final Answer\*\*:.*',
+        r'\n\s*Error Detected:.*',
+        r'\n\s*Assessment:.*$',
+    ]
+    
+    for pattern in cutoff_patterns:
+        extracted = re.split(pattern, extracted, flags=re.DOTALL | re.IGNORECASE)[0]
+    
+    return extracted.strip()
 
+
+def format_think_block(reasoning: str) -> str:
+    """Wrap cleaned reasoning in Qwen3-style think tags."""
+    cleaned = extract_reasoning_content(reasoning)
+    if cleaned:
+        return f"<think>\n{cleaned}\n</think>"
+    return "<think>\nAnalyzing the clinical note...\n</think>"
+
+
+# =============================================================================
+# MESSAGE BUILDING - Creates training examples
+# =============================================================================
 
 def build_messages(example: Dict) -> List[Dict[str, str]]:
+    """
+    Build chat messages for SFT training.
+    
+    Output format aligns with what inference_error_detection.py expects:
+    - Label: CORRECT or Label: INCORRECT
+    - Keywords: "error", "incorrect", "correct", "no error"
+    """
     role = example.get("role", "critic")
     task = example.get("task", "assessment")
     system_prompt = SYSTEM_PROMPTS.get((role, task), SYSTEM_PROMPTS[("critic", "assessment")])
 
     note = example.get("note", "").strip()
     label = example.get("label", "CORRECT").strip().upper()
-    final_answer = "INCORRECT" if label == "ERROR" else "CORRECT"
+    
+    # Normalize label: training data uses "ERROR", inference uses "INCORRECT"
+    if label == "ERROR":
+        final_label = "INCORRECT"
+    else:
+        final_label = "CORRECT"
 
+    # Build user content based on role
     if role == "critic" and task == "assessment":
         user_content = (
-            "Role: assessor\n"
-            "Task: analyze the clinical note for errors and classify it as CORRECT or INCORRECT.\n"
-            "Output should include reasoning and a final answer formatted as:\n"
-            'final_answer: "CORRECT" or "INCORRECT"\n\n'
-            f"Clinical note:\n{note}\n"
+            "Analyze the following clinical note for medical errors.\n\n"
+            f"Clinical note:\n{note}"
         )
     else:
+        # Generator/Injector role
         correct_note = example.get("correct_note") or ""
-        source_note = correct_note.strip() or note
+        source_note = correct_note.strip() if correct_note.strip() else note
         error_type = (example.get("error_type") or "").strip()
-        if final_answer == "INCORRECT" and error_type:
-            prompt_intent = (
-                f"Introduce a {error_type} error while keeping the note realistic."
-            )
-        elif final_answer == "INCORRECT":
-            prompt_intent = "Introduce a subtle clinical error while keeping the note realistic."
+        
+        if final_label == "INCORRECT" and error_type:
+            intent = f"Inject a subtle {error_type} error while keeping the note realistic."
+        elif final_label == "INCORRECT":
+            intent = "Inject a subtle clinical error while keeping the note realistic."
         else:
-            prompt_intent = "Create a realistic note with no clinical errors."
+            intent = "Make minimal surface edits while preserving all clinical correctness."
+        
         user_content = (
-            "Role: error injector\n"
-            "Task: follow the prompt intent and transform the input note into a new note.\n"
-            f'prompt_intent: "{prompt_intent}"\n\n'
-            f"input_note:\n{source_note}\n\n"
-            "Output should include reasoning and a final answer formatted as:\n"
-            'generated_note:\n... \n'
-            'final_answer: "CORRECT" or "INCORRECT"\n\n'
+            f"Task: {intent}\n\n"
+            f"Input note:\n{source_note}"
         )
 
-    reasoning = to_think_tags(example.get("reasoning", "").strip())
+    # Build assistant response with CLEANED reasoning
+    think_block = format_think_block(example.get("reasoning", ""))
+    
     if role == "critic" and task == "assessment":
-        assistant_content = f"{reasoning}\n\nfinal_answer: \"{final_answer}\""
-    else:
+        # For assessor: output label and brief explanation
+        # Use keywords that inference parser looks for
+        if final_label == "INCORRECT":
+            explanation = "The note contains a clinical error that needs correction."
+        else:
+            explanation = "The note is clinically correct with no errors detected."
+        
         assistant_content = (
-            f"{reasoning}\n\n"
-            f"generated_note:\n{note}\n\n"
-            f"final_answer: \"{final_answer}\""
+            f"{think_block}\n\n"
+            f"Label: {final_label}\n"
+            f"Explanation: {explanation}"
         )
+    else:
+        # For generator: output the note and label
+        assistant_content = (
+            f"{think_block}\n\n"
+            f"Generated note:\n{note}\n\n"
+            f"Label: {final_label}"
+        )
+    
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
@@ -110,6 +205,7 @@ def build_messages(example: Dict) -> List[Dict[str, str]]:
 
 
 def format_for_sft(example: Dict, tokenizer) -> Dict[str, str]:
+    """Format example for SFT training using chat template."""
     messages = build_messages(example)
     text = tokenizer.apply_chat_template(
         messages,
@@ -118,6 +214,10 @@ def format_for_sft(example: Dict, tokenizer) -> Dict[str, str]:
     )
     return {"text": text}
 
+
+# =============================================================================
+# ARGUMENT PARSING
+# =============================================================================
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SFT LoRA training for Qwen3-4B.")
@@ -145,11 +245,31 @@ def parse_args() -> argparse.Namespace:
         default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
         help="Comma-separated list of target modules.",
     )
+    parser.add_argument(
+        "--filter-role",
+        default=None,
+        choices=["critic", "generator"],
+        help="Filter training data to specific role (optional).",
+    )
     return parser.parse_args()
 
 
+# =============================================================================
+# MAIN TRAINING FUNCTION
+# =============================================================================
+
 def main() -> None:
     args = parse_args()
+
+    print("\n" + "="*60)
+    print("SFT LORA TRAINING - Medical Self-Play Model")
+    print("="*60)
+    print(f"Model: {args.model_name}")
+    print(f"Train file: {args.train_file}")
+    print(f"Output dir: {args.output_dir}")
+    if args.filter_role:
+        print(f"Filtering to role: {args.filter_role}")
+    print("="*60 + "\n")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
     if tokenizer.pad_token is None:
@@ -160,6 +280,18 @@ def main() -> None:
         data_files["validation"] = args.eval_file
 
     dataset = load_dataset("json", data_files=data_files)
+    
+    # Optional: filter by role
+    if args.filter_role:
+        dataset["train"] = dataset["train"].filter(
+            lambda ex: ex.get("role") == args.filter_role
+        )
+        print(f"Filtered to {len(dataset['train'])} {args.filter_role} examples")
+        if "validation" in dataset:
+            dataset["validation"] = dataset["validation"].filter(
+                lambda ex: ex.get("role") == args.filter_role
+            )
+
     train_ds = dataset["train"].map(
         lambda ex: format_for_sft(ex, tokenizer),
         remove_columns=dataset["train"].column_names,
@@ -170,6 +302,16 @@ def main() -> None:
             lambda ex: format_for_sft(ex, tokenizer),
             remove_columns=dataset["validation"].column_names,
         )
+
+    # Print sample to verify format
+    print("\n" + "="*60)
+    print("SAMPLE TRAINING EXAMPLE")
+    print("="*60)
+    sample_text = train_ds[0]["text"]
+    # Show last 800 chars to see the assistant response format
+    print("...[truncated]...")
+    print(sample_text[-800:])
+    print("="*60 + "\n")
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
@@ -223,11 +365,13 @@ def main() -> None:
     trainer_kwargs = {k: v for k, v in trainer_kwargs.items() if k in trainer_sig.parameters}
     trainer = SFTTrainer(**trainer_kwargs)
 
+    print("Starting training...")
     trainer.train()
     trainer.save_model(args.output_dir)
 
     if trainer.is_world_process_zero():
         tokenizer.save_pretrained(args.output_dir)
+        print(f"\n✓ Model saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
