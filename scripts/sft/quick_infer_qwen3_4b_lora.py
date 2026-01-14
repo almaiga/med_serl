@@ -50,9 +50,9 @@ THINK_END_TOKEN_ID = 151668  # </think>
 IM_END_TOKEN_ID = 151645  # <|im_end|>
 MODEL_TYPE_QWEN = "qwen"
 MODEL_TYPE_GENERIC = "generic"
-# Different early stopping for assessor vs injector
-EARLY_STOPPING_TEXT_ASSESSOR = '\n</think>\n\nfinal_answer: '
-EARLY_STOPPING_TEXT_INJECTOR = '\n</think>\n\ngenerated_note:\n'  # Add newline for clarity
+# Just close the think block - let the model continue naturally with its prompted format
+EARLY_STOPPING_TEXT_ASSESSOR = '\n</think>\n\n'
+EARLY_STOPPING_TEXT_INJECTOR = '\n</think>\n\n'  # Add newline for clarity
 
 DEFAULT_NOTE_FIELDS = [
     "correct_note",
