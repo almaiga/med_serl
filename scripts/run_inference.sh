@@ -58,6 +58,9 @@ echo "=========================================="
 echo "Model: $MODEL_PATH"
 echo "Name: $MODEL_NAME"
 echo "Session: $SESSION_NAME"
+if [[ "$EXTRA_ARGS" == *"--thinking_budget"* ]]; then
+    echo "Extra Args: $EXTRA_ARGS"
+fi
 echo "=========================================="
 echo ""
 
@@ -70,6 +73,7 @@ echo '🔬 Medical Error Detection Inference'
 echo '=========================================='
 echo 'Model: $MODEL_PATH'
 echo 'Name: $MODEL_NAME'
+echo 'Args: $EXTRA_ARGS'
 echo '=========================================='
 echo ''
 

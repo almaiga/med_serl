@@ -726,7 +726,10 @@ def main():
     print(f"Dataset: {args.dataset}")
     print(f"Batch Size: {args.batch_size}")
     print(f"CoT: {not args.no_cot}")
+    if not args.no_cot and model_type == MODEL_TYPE_QWEN:
+        print(f"Thinking Budget: {args.thinking_budget}")
     print(f"Temperature: {args.temperature}")
+    print(f"Max New Tokens: {args.max_new_tokens}")
     print(f"Output: {output_subdir}")
     print(f"{'='*60}\n")
     
