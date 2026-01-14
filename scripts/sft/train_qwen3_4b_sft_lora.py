@@ -6,6 +6,10 @@ Trains a model for medical self-play loop:
 - Assessor role: Detect errors in clinical notes
 - Injector role: Inject subtle errors or preserve correctness
 
+Output formats aligned with:
+- error_detection_prompts.json (assessor)
+- error_injection_prompts_v2.json (injector)
+
 Example:
   python scripts/sft/train_qwen3_4b_sft_lora.py \
     --train-file data_processed/medec_cot/sft_cot_training_data.jsonl \
@@ -14,9 +18,10 @@ Example:
 
 import argparse
 import inspect
+import json
 import os
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from datasets import load_dataset
 from peft import LoraConfig
@@ -28,29 +33,70 @@ DEFAULT_MODEL = "Qwen/Qwen3-4B"
 
 
 # =============================================================================
-# SYSTEM PROMPTS - Aligned with inference expectations
+# SYSTEM PROMPTS - Aligned with self-play inference prompts
 # =============================================================================
 
-SYSTEM_PROMPTS = {
-    ("critic", "assessment"): (
-        "You are a medical note assessor. Your task is to analyze clinical notes "
-        "for errors. Think through your analysis step by step, then provide your "
-        "final verdict.\n\n"
-        "Output format:\n"
-        "<think>\n[Your step-by-step reasoning]\n</think>\n\n"
-        "Label: CORRECT or INCORRECT\n"
-        "Explanation: [Brief explanation]"
-    ),
-    ("generator", "generation"): (
-        "You are a medical note editor in a self-play training loop. Your task is "
-        "to either preserve a note's correctness with minimal surface edits, or "
-        "inject a subtle clinical error. Think through your approach step by step.\n\n"
-        "Output format:\n"
-        "<think>\n[Your reasoning for the edit]\n</think>\n\n"
-        "Generated note:\n[The edited note]\n\n"
-        "Label: CORRECT or INCORRECT"
-    ),
-}
+ASSESSOR_SYSTEM_PROMPT = """You are a medical note classifier.
+
+Classify each note as CORRECT or INCORRECT.
+
+CORRECT = No medical errors
+INCORRECT = Contains medical error (wrong diagnosis, treatment, or management)
+
+Think through your analysis step by step in <think> tags, then respond with EXACTLY this format:
+
+final_answer: "CORRECT"
+Explanation: [one sentence]
+
+OR
+
+final_answer: "INCORRECT"
+Explanation: [one sentence why it's wrong]"""
+
+INJECTOR_CORRECT_SYSTEM_PROMPT = """You are a minimal clinical note editor. Your ONLY task is to make a tiny surface change to ONE sentence while preserving all clinical meaning.
+
+STRICT RULES:
+1. Select EXACTLY ONE sentence from the note
+2. Change 1-3 words ONLY in that sentence
+3. Use a synonym or minor rephrasing that preserves EXACT clinical meaning
+4. Leave ALL other sentences completely unchanged - copy them exactly
+
+Think through your choice briefly in <think> tags, then output in this EXACT format:
+
+generated_note:
+[Copy the entire note with ONLY 1-3 words changed in ONE sentence]
+
+final_answer: "CORRECT"
+
+changes_made:
+{"original_sentence": "<the original sentence>", "modified_sentence": "<the modified sentence>", "words_changed": "<word1> -> <word2>"}"""
+
+INJECTOR_INCORRECT_SYSTEM_PROMPT = """You are a minimal clinical note editor. Your ONLY task is to introduce ONE subtle clinical error by changing 1-3 words in ONE sentence.
+
+STRICT RULES:
+1. Select EXACTLY ONE sentence from the note
+2. Change 1-3 words ONLY in that sentence to introduce an error
+3. The error must be clinically significant but subtle
+4. Leave ALL other sentences completely unchanged - copy them exactly
+
+Think through your choice briefly in <think> tags, then output in this EXACT format:
+
+generated_note:
+[Copy the entire note with ONLY 1-3 words changed in ONE sentence]
+
+final_answer: "INCORRECT"
+
+changes_made:
+{"original_sentence": "<the original sentence>", "modified_sentence": "<the modified sentence>", "error_type": "<type of error>", "words_changed": "<word1> -> <word2>"}"""
+
+
+def get_system_prompt(role: str, task: str, is_error: bool) -> str:
+    """Get the appropriate system prompt based on role and label."""
+    if role == "critic" and task == "assessment":
+        return ASSESSOR_SYSTEM_PROMPT
+    elif role == "generator" and task == "generation":
+        return INJECTOR_INCORRECT_SYSTEM_PROMPT if is_error else INJECTOR_CORRECT_SYSTEM_PROMPT
+    return ASSESSOR_SYSTEM_PROMPT
 
 
 # =============================================================================
@@ -59,59 +105,50 @@ SYSTEM_PROMPTS = {
 
 def extract_reasoning_content(text: str) -> str:
     """
-    Extract only the reasoning content from GPT-4o output.
-    
-    GPT-4o outputs look like:
-    ```
-    <reasoning>
-    1. Clinical Picture:
-       ...detailed analysis...
-    4. Final Verdict:
-       - Status: ...
-    </reasoning>
-    
-    **Final Answer**:
-    Error Detected: Yes
-    ...
-    ```
-    
-    We want ONLY the content inside the tags, stopping before "Final Verdict"
-    or any answer-like content to keep reasoning pure.
+    Extract only the reasoning content from GPT-4o output, removing
+    Final Verdict sections and answer blocks.
     """
     if not text:
         return ""
     
-    # Define patterns for different tag types
     tag_patterns = [
-        (r'<reasoning>(.*?)</reasoning>', 'reasoning'),
-        (r'<generation_reasoning>(.*?)</generation_reasoning>', 'generation'),
-        (r'<error_injection_reasoning>(.*?)</error_injection_reasoning>', 'injection'),
+        r'<reasoning>(.*?)</reasoning>',
+        r'<generation_reasoning>(.*?)</generation_reasoning>',
+        r'<error_injection_reasoning>(.*?)</error_injection_reasoning>',
     ]
     
     extracted = ""
-    
-    for pattern, _ in tag_patterns:
+    for pattern in tag_patterns:
         match = re.search(pattern, text, re.DOTALL)
         if match:
             extracted = match.group(1).strip()
             break
     
     if not extracted:
-        # No tags found - try to use raw text but clean it
         extracted = text
     
-    # Remove any "Final Verdict" or answer sections that leaked into reasoning
-    # These patterns mark where GPT-4o starts concluding
+    # Remove answer sections that leaked into reasoning
     cutoff_patterns = [
-        r'\n\s*\d+\.\s*Final Verdict:.*',  # "4. Final Verdict: ..."
+        r'\n\s*\d+\.\s*Final Verdict:.*',
         r'\n\s*Final Verdict:.*',
         r'\n\s*\*\*Final Answer\*\*:.*',
         r'\n\s*Error Detected:.*',
+        r'\n\s*Error Type:.*',
+        r'\n\s*Correction:.*',
         r'\n\s*Assessment:.*$',
+        r'\n\s*\d+\.\s*Ground Truth Documentation:.*',
+        r'\n\s*\d+\.\s*Modified Note with Error:.*',
+        r'\n\s*\d+\.\s*Final Note Composition:.*',
+        r'\n\s*\d+\.\s*Post-Writing Verification:.*',
     ]
     
     for pattern in cutoff_patterns:
         extracted = re.split(pattern, extracted, flags=re.DOTALL | re.IGNORECASE)[0]
+    
+    # Keep reasoning focused (max ~30 lines)
+    lines = extracted.strip().split('\n')
+    if len(lines) > 30:
+        extracted = '\n'.join(lines[:30])
     
     return extracted.strip()
 
@@ -125,77 +162,99 @@ def format_think_block(reasoning: str) -> str:
 
 
 # =============================================================================
-# MESSAGE BUILDING - Creates training examples
+# RESPONSE BUILDING
+# =============================================================================
+
+def build_assessor_response(think_block: str, is_error: bool, error_details: Optional[Dict] = None) -> str:
+    """Build assessor response matching error_detection_prompts.json format."""
+    if is_error:
+        if error_details:
+            error_sentence = error_details.get("error_sentence", "")
+            if error_sentence:
+                explanation = f"The note incorrectly states '{error_sentence[:50]}...' which should be corrected."
+            else:
+                explanation = "The note contains a clinical error in diagnosis or management."
+        else:
+            explanation = "The note contains a clinical error that affects patient care."
+        
+        return f'{think_block}\n\nfinal_answer: "INCORRECT"\nExplanation: {explanation}'
+    else:
+        return f'{think_block}\n\nfinal_answer: "CORRECT"\nExplanation: The clinical note is accurate with no medical errors detected.'
+
+
+def build_injector_response(think_block: str, note: str, is_error: bool, error_details: Optional[Dict] = None) -> str:
+    """Build injector response matching error_injection_prompts_v2.json format."""
+    if is_error:
+        if error_details:
+            changes = {
+                "original_sentence": error_details.get("corrected_sentence", "original sentence"),
+                "modified_sentence": error_details.get("error_sentence", "modified sentence"),
+                "error_type": error_details.get("error_type", "clinical error"),
+                "words_changed": "original -> modified"
+            }
+        else:
+            changes = {
+                "original_sentence": "original sentence",
+                "modified_sentence": "modified sentence with error",
+                "error_type": "clinical error",
+                "words_changed": "original -> modified"
+            }
+        return f'{think_block}\n\ngenerated_note:\n{note}\n\nfinal_answer: "INCORRECT"\n\nchanges_made:\n{json.dumps(changes)}'
+    else:
+        changes = {
+            "original_sentence": "a sentence from the note",
+            "modified_sentence": "the same sentence with minor rewording",
+            "words_changed": "word -> synonym"
+        }
+        return f'{think_block}\n\ngenerated_note:\n{note}\n\nfinal_answer: "CORRECT"\n\nchanges_made:\n{json.dumps(changes)}'
+
+
+# =============================================================================
+# MESSAGE BUILDING
 # =============================================================================
 
 def build_messages(example: Dict) -> List[Dict[str, str]]:
-    """
-    Build chat messages for SFT training.
-    
-    Output format aligns with what inference_error_detection.py expects:
-    - Label: CORRECT or Label: INCORRECT
-    - Keywords: "error", "incorrect", "correct", "no error"
-    """
+    """Build chat messages for SFT training aligned with self-play prompts."""
     role = example.get("role", "critic")
     task = example.get("task", "assessment")
-    system_prompt = SYSTEM_PROMPTS.get((role, task), SYSTEM_PROMPTS[("critic", "assessment")])
-
     note = example.get("note", "").strip()
     label = example.get("label", "CORRECT").strip().upper()
     
-    # Normalize label: training data uses "ERROR", inference uses "INCORRECT"
-    if label == "ERROR":
-        final_label = "INCORRECT"
-    else:
-        final_label = "CORRECT"
+    is_error = label in ("ERROR", "INCORRECT")
+    system_prompt = get_system_prompt(role, task, is_error)
+    error_details = example.get("error_details")
+    error_type = example.get("error_type", "")
 
-    # Build user content based on role
     if role == "critic" and task == "assessment":
-        user_content = (
-            "Analyze the following clinical note for medical errors.\n\n"
-            f"Clinical note:\n{note}"
-        )
+        user_content = f"Classify this note:\n\n{note}\n\nRespond in the required format:"
     else:
-        # Generator/Injector role
         correct_note = example.get("correct_note") or ""
         source_note = correct_note.strip() if correct_note.strip() else note
-        error_type = (example.get("error_type") or "").strip()
         
-        if final_label == "INCORRECT" and error_type:
-            intent = f"Inject a subtle {error_type} error while keeping the note realistic."
-        elif final_label == "INCORRECT":
-            intent = "Inject a subtle clinical error while keeping the note realistic."
+        if is_error:
+            prompt_intent = error_type if error_type else "subtle clinical error"
+            user_content = (
+                f"TASK: Introduce ONE subtle clinical error in the note below.\n\n"
+                f"CONSTRAINTS:\n- Change EXACTLY 1-3 words in ONE sentence\n"
+                f"- The change must create a clinical error\n- Copy all other sentences unchanged\n\n"
+                f"ERROR TYPE TO INJECT: {prompt_intent}\n\n"
+                f"INPUT NOTE:\n{source_note}\n\nOUTPUT (follow format exactly):"
+            )
         else:
-            intent = "Make minimal surface edits while preserving all clinical correctness."
-        
-        user_content = (
-            f"Task: {intent}\n\n"
-            f"Input note:\n{source_note}"
-        )
+            user_content = (
+                f"TASK: Make a MINIMAL surface edit to the note below.\n\n"
+                f"CONSTRAINTS:\n- Change EXACTLY 1-3 words in ONE sentence\n"
+                f"- Use a synonym or minor rephrasing\n- Preserve exact clinical meaning\n"
+                f"- Copy all other sentences unchanged\n\n"
+                f"INPUT NOTE:\n{source_note}\n\nOUTPUT (follow format exactly):"
+            )
 
-    # Build assistant response with CLEANED reasoning
     think_block = format_think_block(example.get("reasoning", ""))
     
     if role == "critic" and task == "assessment":
-        # For assessor: output label and brief explanation
-        # Use keywords that inference parser looks for
-        if final_label == "INCORRECT":
-            explanation = "The note contains a clinical error that needs correction."
-        else:
-            explanation = "The note is clinically correct with no errors detected."
-        
-        assistant_content = (
-            f"{think_block}\n\n"
-            f"Label: {final_label}\n"
-            f"Explanation: {explanation}"
-        )
+        assistant_content = build_assessor_response(think_block, is_error, error_details)
     else:
-        # For generator: output the note and label
-        assistant_content = (
-            f"{think_block}\n\n"
-            f"Generated note:\n{note}\n\n"
-            f"Label: {final_label}"
-        )
+        assistant_content = build_injector_response(think_block, note, is_error, error_details)
     
     return [
         {"role": "system", "content": system_prompt},
@@ -207,11 +266,7 @@ def build_messages(example: Dict) -> List[Dict[str, str]]:
 def format_for_sft(example: Dict, tokenizer) -> Dict[str, str]:
     """Format example for SFT training using chat template."""
     messages = build_messages(example)
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=False,
-    )
+    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
     return {"text": text}
 
 
@@ -240,36 +295,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
-    parser.add_argument(
-        "--lora-target-modules",
-        default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
-        help="Comma-separated list of target modules.",
-    )
-    parser.add_argument(
-        "--filter-role",
-        default=None,
-        choices=["critic", "generator"],
-        help="Filter training data to specific role (optional).",
-    )
+    parser.add_argument("--lora-target-modules", default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj")
+    parser.add_argument("--filter-role", default=None, choices=["critic", "generator"])
     return parser.parse_args()
 
 
 # =============================================================================
-# MAIN TRAINING FUNCTION
+# MAIN
 # =============================================================================
 
 def main() -> None:
     args = parse_args()
 
-    print("\n" + "="*60)
+    print("\n" + "="*70)
     print("SFT LORA TRAINING - Medical Self-Play Model")
-    print("="*60)
+    print("="*70)
     print(f"Model: {args.model_name}")
     print(f"Train file: {args.train_file}")
     print(f"Output dir: {args.output_dir}")
     if args.filter_role:
         print(f"Filtering to role: {args.filter_role}")
-    print("="*60 + "\n")
+    print("="*70 + "\n")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
     if tokenizer.pad_token is None:
@@ -281,89 +327,46 @@ def main() -> None:
 
     dataset = load_dataset("json", data_files=data_files)
     
-    # Optional: filter by role
     if args.filter_role:
-        dataset["train"] = dataset["train"].filter(
-            lambda ex: ex.get("role") == args.filter_role
-        )
+        dataset["train"] = dataset["train"].filter(lambda ex: ex.get("role") == args.filter_role)
         print(f"Filtered to {len(dataset['train'])} {args.filter_role} examples")
         if "validation" in dataset:
-            dataset["validation"] = dataset["validation"].filter(
-                lambda ex: ex.get("role") == args.filter_role
-            )
+            dataset["validation"] = dataset["validation"].filter(lambda ex: ex.get("role") == args.filter_role)
 
-    train_ds = dataset["train"].map(
-        lambda ex: format_for_sft(ex, tokenizer),
-        remove_columns=dataset["train"].column_names,
-    )
-    eval_ds = None
-    if "validation" in dataset:
-        eval_ds = dataset["validation"].map(
-            lambda ex: format_for_sft(ex, tokenizer),
-            remove_columns=dataset["validation"].column_names,
-        )
+    train_ds = dataset["train"].map(lambda ex: format_for_sft(ex, tokenizer), remove_columns=dataset["train"].column_names)
+    eval_ds = dataset["validation"].map(lambda ex: format_for_sft(ex, tokenizer), remove_columns=dataset["validation"].column_names) if "validation" in dataset else None
 
-    # Print sample to verify format
-    print("\n" + "="*60)
-    print("SAMPLE TRAINING EXAMPLE")
-    print("="*60)
-    sample_text = train_ds[0]["text"]
-    # Show last 800 chars to see the assistant response format
-    print("...[truncated]...")
-    print(sample_text[-800:])
-    print("="*60 + "\n")
+    print("\n" + "="*70 + "\nSAMPLE TRAINING EXAMPLE\n" + "="*70)
+    for i in range(min(2, len(train_ds))):
+        print(f"\n--- Example {i+1} ---\n...[truncated]...\n{train_ds[i]['text'][-600:]}")
+    print("="*70 + "\n")
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
-        torch_dtype="auto",
-    )
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, torch_dtype="auto")
 
-    target_modules = [m.strip() for m in args.lora_target_modules.split(",") if m.strip()]
     peft_config = LoraConfig(
-        r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules=target_modules,
+        r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+        bias="none", task_type="CAUSAL_LM",
+        target_modules=[m.strip() for m in args.lora_target_modules.split(",") if m.strip()],
     )
 
     sft_kwargs = {
-        "output_dir": args.output_dir,
-        "per_device_train_batch_size": args.per_device_train_batch_size,
+        "output_dir": args.output_dir, "per_device_train_batch_size": args.per_device_train_batch_size,
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
-        "learning_rate": args.learning_rate,
-        "num_train_epochs": args.num_train_epochs,
-        "warmup_ratio": args.warmup_ratio,
-        "logging_steps": args.logging_steps,
-        "save_steps": args.save_steps,
-        "evaluation_strategy": "steps" if eval_ds is not None else "no",
-        "eval_steps": args.eval_steps if eval_ds is not None else None,
-        "bf16": args.bf16,
-        "fp16": args.fp16,
-        "save_total_limit": 2,
-        "report_to": "none",
+        "learning_rate": args.learning_rate, "num_train_epochs": args.num_train_epochs,
+        "warmup_ratio": args.warmup_ratio, "logging_steps": args.logging_steps,
+        "save_steps": args.save_steps, "eval_steps": args.eval_steps if eval_ds else None,
+        "evaluation_strategy": "steps" if eval_ds else "no",
+        "bf16": args.bf16, "fp16": args.fp16, "save_total_limit": 2, "report_to": "none",
     }
     sig = inspect.signature(SFTConfig.__init__)
-    if "max_seq_length" in sig.parameters:
-        sft_kwargs["max_seq_length"] = args.max_seq_length
-    else:
-        sft_kwargs["max_length"] = args.max_seq_length
-    filtered_kwargs = {k: v for k, v in sft_kwargs.items() if k in sig.parameters}
-    training_args = SFTConfig(**filtered_kwargs)
+    sft_kwargs["max_seq_length" if "max_seq_length" in sig.parameters else "max_length"] = args.max_seq_length
+    training_args = SFTConfig(**{k: v for k, v in sft_kwargs.items() if k in sig.parameters})
 
-    trainer_kwargs = {
-        "model": model,
-        "train_dataset": train_ds,
-        "eval_dataset": eval_ds,
-        "processing_class": tokenizer,
-        "args": training_args,
-        "peft_config": peft_config,
-    }
+    trainer_kwargs = {"model": model, "train_dataset": train_ds, "eval_dataset": eval_ds,
+                      "processing_class": tokenizer, "args": training_args, "peft_config": peft_config}
     trainer_sig = inspect.signature(SFTTrainer.__init__)
-    trainer_kwargs = {k: v for k, v in trainer_kwargs.items() if k in trainer_sig.parameters}
-    trainer = SFTTrainer(**trainer_kwargs)
+    trainer = SFTTrainer(**{k: v for k, v in trainer_kwargs.items() if k in trainer_sig.parameters})
 
     print("Starting training...")
     trainer.train()
