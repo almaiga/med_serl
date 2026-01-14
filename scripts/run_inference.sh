@@ -1,7 +1,7 @@
 #!/bin/bash
 # MedSeRL Inference Script
 # Runs inference in a detached screen session
-d
+
 set -e
 
 # Install screen if not available
@@ -21,11 +21,18 @@ if [ $# -lt 1 ]; then
     echo "  $0 Qwen/Qwen3-4B"
     echo "  $0 google/medgemma-4b-it medgemma"
     echo "  $0 google/medgemma-4b-it medgemma --dataset ms --max_samples 50"
-    echo "  $0 trainer_output/qwen3-4b-medical-selfplay-sft sft_model"
+    echo "  $0 google/medgemma-4b-it medgemma --batch_size 8"
+    echo "  $0 trainer_output/qwen3-4b-medical-selfplay-sft sft_model --batch_size 4"
     echo ""
     echo "Supported models:"
     echo "  - Qwen3 models (Qwen/Qwen3-4B, etc.)"
     echo "  - MedGemma models (google/medgemma-4b-it, google/medgemma-4b-pt)"
+    echo ""
+    echo "Common options:"
+    echo "  --batch_size N       Process N samples in parallel (default: 1)"
+    echo "  --dataset [ms|uw|all]  Which test dataset to use (default: all)"
+    echo "  --max_samples N      Limit to N samples"
+    echo "  --temperature T      Sampling temperature (default: 0.7)"
     exit 1
 fi
 
@@ -71,6 +78,7 @@ python scripts/inference_error_detection.py \\
     --temperature 0 \\
     --max_new_tokens 256 \\
     --no_cot \\
+    --batch_size 1 \\
     --output_dir results/inference \\
     $EXTRA_ARGS
 

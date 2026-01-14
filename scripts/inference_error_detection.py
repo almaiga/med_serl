@@ -335,11 +335,15 @@ def run_inference(
     max_samples: int = None,
     temperature: float = 0.3,
     max_new_tokens: int = 512,
-    thinking_budget: int = 1024
+    thinking_budget: int = 1024,
+    batch_size: int = 1
 ) -> List[Dict]:
     """
-    Unified inference function for all model types.
+    Unified inference function for all model types with batch processing support.
     Handles Qwen3's special two-stage generation and standard generation for others.
+    
+    Args:
+        batch_size: Number of samples to process in parallel (default: 1)
     """
     results = []
     
@@ -350,35 +354,70 @@ def run_inference(
     model.eval()
     is_qwen = (model_type == MODEL_TYPE_QWEN)
     
-    for idx, row in tqdm(test_df.iterrows(), total=len(test_df), desc="Running inference"):
-        note = row['Text']
-        ground_truth = row['Error Flag']  # 0 = Safe, 1 = Has Error
-        error_type = row.get('Error Type', '')
+    # Set padding side to left for batch generation (required for causal LM)
+    original_padding_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    
+    # Process in batches
+    num_samples = len(test_df)
+    num_batches = (num_samples + batch_size - 1) // batch_size
+    
+    for batch_idx in tqdm(range(num_batches), desc="Processing batches"):
+        batch_start = batch_idx * batch_size
+        batch_end = min(batch_start + batch_size, num_samples)
+        batch_df = test_df.iloc[batch_start:batch_end]
         
-        # Build prompt
-        messages, enable_thinking = build_error_detection_prompt(note, prompts, use_cot, model_type)
+        # Prepare batch data
+        batch_notes = []
+        batch_metadata = []
+        batch_prompts = []
+        enable_thinking_flags = []
         
-        # Apply chat template
-        if is_qwen:
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=enable_thinking
-            )
-        else:
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
+        for idx, row in batch_df.iterrows():
+            note = row['Text']
+            batch_notes.append(note)
+            batch_metadata.append({
+                'index': idx,
+                'text_id': row.get('Text ID', f'sample_{idx}'),
+                'dataset': row.get('dataset', 'unknown'),
+                'ground_truth': row['Error Flag'],
+                'error_type': row.get('Error Type', ''),
+                'note': note
+            })
+            
+            # Build prompt
+            messages, enable_thinking = build_error_detection_prompt(note, prompts, use_cot, model_type)
+            enable_thinking_flags.append(enable_thinking)
+            
+            # Apply chat template
+            if is_qwen:
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=enable_thinking
+                )
+            else:
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True
+                )
+            batch_prompts.append(prompt)
         
-        # Tokenize input
-        model_inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
-        input_length = model_inputs.input_ids.size(-1)
+        # Tokenize batch with padding
+        model_inputs = tokenizer(
+            batch_prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048
+        ).to(model.device)
+        
+        input_lengths = (model_inputs.attention_mask.sum(dim=1)).tolist()
         
         # Generate - different logic for Qwen vs others
-        if is_qwen and enable_thinking:
+        if is_qwen and any(enable_thinking_flags):
             # Qwen3 two-stage generation with thinking
             with torch.no_grad():
                 generated_ids = model.generate(
@@ -391,33 +430,76 @@ def run_inference(
                     eos_token_id=tokenizer.eos_token_id
                 )
             
-            output_ids = generated_ids[0, input_length:].tolist()
+            # Process each sample in batch individually
+            batch_thinking_contents = []
+            batch_final_inputs = []
+            needs_second_stage = []
             
-            # Check if generation finished or thinking budget reached
-            if IM_END_TOKEN_ID not in output_ids:
-                # Check if thinking process finished
-                if THINK_END_TOKEN_ID not in output_ids:
-                    # Thinking budget reached - inject early stopping prompt
-                    early_stopping_text = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
-                    early_stopping_ids = tokenizer(
-                        [early_stopping_text], 
-                        return_tensors="pt", 
-                        add_special_tokens=False
-                    ).input_ids.to(model.device)
+            for i in range(len(batch_prompts)):
+                input_length = input_lengths[i]
+                output_ids = generated_ids[i, input_length:].tolist()
+                
+                # Check if generation finished or thinking budget reached
+                if IM_END_TOKEN_ID not in output_ids:
+                    # Check if thinking process finished
+                    if THINK_END_TOKEN_ID not in output_ids:
+                        # Thinking budget reached - inject early stopping prompt
+                        early_stopping_text = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
+                        early_stopping_ids = tokenizer(
+                            early_stopping_text,
+                            return_tensors="pt",
+                            add_special_tokens=False
+                        ).input_ids.to(model.device)
+                        
+                        new_input = torch.cat([generated_ids[i:i+1], early_stopping_ids], dim=-1)
+                    else:
+                        new_input = generated_ids[i:i+1]
                     
-                    input_ids = torch.cat([generated_ids, early_stopping_ids], dim=-1)
+                    batch_final_inputs.append(new_input)
+                    needs_second_stage.append(True)
                 else:
-                    input_ids = generated_ids
+                    # Generation complete in first stage
+                    batch_final_inputs.append(generated_ids[i:i+1])
+                    needs_second_stage.append(False)
+            
+            # Second generation stage if needed
+            if any(needs_second_stage):
+                # Pad inputs for batch processing
+                max_len = max(inp.size(-1) for inp in batch_final_inputs)
+                padded_inputs = []
+                attention_masks = []
                 
-                attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
+                for inp in batch_final_inputs:
+                    pad_len = max_len - inp.size(-1)
+                    if pad_len > 0:
+                        padding = torch.full(
+                            (1, pad_len),
+                            tokenizer.pad_token_id,
+                            dtype=inp.dtype,
+                            device=inp.device
+                        )
+                        padded_inp = torch.cat([padding, inp], dim=-1)
+                        attn_mask = torch.cat([
+                            torch.zeros((1, pad_len), dtype=torch.long, device=inp.device),
+                            torch.ones((1, inp.size(-1)), dtype=torch.long, device=inp.device)
+                        ], dim=-1)
+                    else:
+                        padded_inp = inp
+                        attn_mask = torch.ones_like(inp, dtype=torch.long)
+                    
+                    padded_inputs.append(padded_inp)
+                    attention_masks.append(attn_mask)
                 
-                # Second generation to complete the response
-                remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
+                input_ids_batch = torch.cat(padded_inputs, dim=0)
+                attention_mask_batch = torch.cat(attention_masks, dim=0)
+                
+                # Calculate remaining tokens
+                remaining_tokens = max_new_tokens - (input_ids_batch.size(-1) - max(input_lengths))
                 if remaining_tokens > 0:
                     with torch.no_grad():
                         generated_ids = model.generate(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
+                            input_ids=input_ids_batch,
+                            attention_mask=attention_mask_batch,
                             max_new_tokens=remaining_tokens,
                             temperature=temperature,
                             top_p=0.95,
@@ -426,12 +508,52 @@ def run_inference(
                             eos_token_id=tokenizer.eos_token_id
                         )
             
-            # Parse using official Qwen3 method (token-based)
-            thinking_content, content = parse_qwen3_output(
-                tokenizer, 
-                model_inputs.input_ids, 
-                generated_ids
-            )
+            # Parse each sample individually
+            for i, metadata in enumerate(batch_metadata):
+                input_length = input_lengths[i]
+                
+                # Decode only the valid tokens (excluding padding)
+                valid_tokens = generated_ids[i][generated_ids[i] != tokenizer.pad_token_id]
+                output_ids = valid_tokens[input_length:].tolist()
+                
+                # Parse using official Qwen3 method (token-based)
+                try:
+                    index = len(output_ids) - output_ids[::-1].index(THINK_END_TOKEN_ID)
+                except ValueError:
+                    index = 0
+                
+                thinking_content = tokenizer.decode(
+                    output_ids[:index],
+                    skip_special_tokens=True
+                ).strip("\n")
+                
+                content = tokenizer.decode(
+                    output_ids[index:],
+                    skip_special_tokens=True
+                ).strip("\n")
+                
+                # Parse response
+                thinking, predicted_label, explanation = parse_response(thinking_content, content)
+                
+                # Store result
+                gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
+                correct = (predicted_label == gt_label)
+                
+                results.append({
+                    'text_id': metadata['text_id'],
+                    'dataset': metadata['dataset'],
+                    'note': metadata['note'],
+                    'ground_truth_flag': int(metadata['ground_truth']),
+                    'ground_truth_label': gt_label,
+                    'error_type': metadata['error_type'],
+                    'predicted_label': predicted_label,
+                    'explanation': explanation,
+                    'thinking': thinking,
+                    'correct': correct,
+                    'thinking_content': thinking_content,
+                    'final_content': content
+                })
+        
         else:
             # Standard generation for non-Qwen models or Qwen without thinking
             with torch.no_grad():
@@ -445,37 +567,42 @@ def run_inference(
                     eos_token_id=tokenizer.eos_token_id
                 )
             
-            # Decode output
-            output_ids = generated_ids[0][input_length:]
-            content = tokenizer.decode(output_ids, skip_special_tokens=True)
-            thinking_content = ""
-        
-        # Extract label and explanation
-        thinking, predicted_label, explanation = parse_response(
-            thinking_content, 
-            content
-        )
-        
-        # Convert ground truth to label
-        gt_label = "INCORRECT" if ground_truth == 1 else "CORRECT"
-        
-        # Check if prediction is correct
-        correct = (predicted_label == gt_label)
-        
-        results.append({
-            'text_id': row.get('Text ID', f'sample_{idx}'),
-            'dataset': row.get('dataset', 'unknown'),
-            'note': note,
-            'ground_truth_flag': int(ground_truth),
-            'ground_truth_label': gt_label,
-            'error_type': error_type,
-            'predicted_label': predicted_label,
-            'explanation': explanation,
-            'thinking': thinking,
-            'correct': correct,
-            'thinking_content': thinking_content,
-            'final_content': content
-        })
+            # Decode each sample individually
+            for i, metadata in enumerate(batch_metadata):
+                input_length = input_lengths[i]
+                
+                # Get only valid tokens (excluding padding)
+                valid_tokens = generated_ids[i][generated_ids[i] != tokenizer.pad_token_id]
+                output_ids = valid_tokens[input_length:]
+                
+                # Decode
+                content = tokenizer.decode(output_ids, skip_special_tokens=True)
+                thinking_content = ""
+                
+                # Parse response
+                thinking, predicted_label, explanation = parse_response(thinking_content, content)
+                
+                # Store result
+                gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
+                correct = (predicted_label == gt_label)
+                
+                results.append({
+                    'text_id': metadata['text_id'],
+                    'dataset': metadata['dataset'],
+                    'note': metadata['note'],
+                    'ground_truth_flag': int(metadata['ground_truth']),
+                    'ground_truth_label': gt_label,
+                    'error_type': metadata['error_type'],
+                    'predicted_label': predicted_label,
+                    'explanation': explanation,
+                    'thinking': thinking,
+                    'correct': correct,
+                    'thinking_content': thinking_content,
+                    'final_content': content
+                })
+    
+    # Restore original padding side
+    tokenizer.padding_side = original_padding_side
     
     return results
 
@@ -547,6 +674,8 @@ def main():
                        help="Maximum tokens to generate (default: 512)")
     parser.add_argument("--thinking_budget", type=int, default=1024,
                        help="Thinking budget for Qwen3 (default: 1024)")
+    parser.add_argument("--batch_size", type=int, default=1,
+                       help="Batch size for parallel inference (default: 1)")
     
     # Output arguments
     parser.add_argument("--output_dir", type=str, default="results/inference",
@@ -572,6 +701,7 @@ def main():
     print(f"Model: {args.model_path}")
     print(f"Model Type: {model_type}")
     print(f"Dataset: {args.dataset}")
+    print(f"Batch Size: {args.batch_size}")
     print(f"CoT: {not args.no_cot}")
     print(f"Temperature: {args.temperature}")
     print(f"{'='*60}\n")
@@ -593,7 +723,8 @@ def main():
         max_samples=args.max_samples,
         temperature=args.temperature,
         max_new_tokens=args.max_new_tokens,
-        thinking_budget=args.thinking_budget
+        thinking_budget=args.thinking_budget,
+        batch_size=args.batch_size
     )
     
     # Calculate metrics
