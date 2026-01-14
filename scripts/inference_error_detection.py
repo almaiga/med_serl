@@ -375,19 +375,35 @@ def run_inference(
         
         for idx, row in batch_df.iterrows():
             note = row['Text']
-            # Handle NaN values properly
+            # Handle NaN values properly - convert to empty string or None
             error_type = row.get('Error Type', '')
-            if pd.isna(error_type):
+            if pd.isna(error_type) or error_type is None:
                 error_type = ''
+            else:
+                error_type = str(error_type)
+            
+            # Handle text_id NaN
+            text_id = row.get('Text ID', f'sample_{idx}')
+            if pd.isna(text_id):
+                text_id = f'sample_{idx}'
+            else:
+                text_id = str(text_id)
+            
+            # Handle dataset NaN
+            dataset = row.get('dataset', 'unknown')
+            if pd.isna(dataset):
+                dataset = 'unknown'
+            else:
+                dataset = str(dataset)
             
             batch_notes.append(note)
             batch_metadata.append({
                 'index': idx,
-                'text_id': row.get('Text ID', f'sample_{idx}'),
-                'dataset': row.get('dataset', 'unknown'),
-                'ground_truth': row['Error Flag'],
+                'text_id': text_id,
+                'dataset': dataset,
+                'ground_truth': int(row['Error Flag']),
                 'error_type': error_type,
-                'note': note
+                'note': str(note)
             })
             
             # Build prompt
@@ -540,7 +556,7 @@ def run_inference(
                 # Parse response
                 thinking, predicted_label, explanation = parse_response(thinking_content, content)
                 
-                # Store result - ensure all values are JSON serializable
+                # Store result - ensure all values are JSON serializable with proper NaN handling
                 gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
                 correct = (predicted_label == gt_label)
                 
@@ -552,11 +568,11 @@ def run_inference(
                     'ground_truth_label': gt_label,
                     'error_type': str(metadata['error_type']) if metadata['error_type'] else '',
                     'predicted_label': predicted_label,
-                    'explanation': explanation,
-                    'thinking': thinking,
+                    'explanation': explanation if explanation else '',
+                    'thinking': thinking if thinking else '',
                     'correct': bool(correct),
-                    'thinking_content': thinking_content,
-                    'final_content': content
+                    'thinking_content': thinking_content if thinking_content else '',
+                    'final_content': content if content else ''
                 })
         
         else:
@@ -587,7 +603,7 @@ def run_inference(
                 # Parse response
                 thinking, predicted_label, explanation = parse_response(thinking_content, content)
                 
-                # Store result - ensure all values are JSON serializable
+                # Store result - ensure all values are JSON serializable with proper NaN handling
                 gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
                 correct = (predicted_label == gt_label)
                 
@@ -599,11 +615,11 @@ def run_inference(
                     'ground_truth_label': gt_label,
                     'error_type': str(metadata['error_type']) if metadata['error_type'] else '',
                     'predicted_label': predicted_label,
-                    'explanation': explanation,
-                    'thinking': thinking,
+                    'explanation': explanation if explanation else '',
+                    'thinking': thinking if thinking else '',
                     'correct': bool(correct),
-                    'thinking_content': thinking_content,
-                    'final_content': content
+                    'thinking_content': thinking_content if thinking_content else '',
+                    'final_content': content if content else ''
                 })
     
     # Restore original padding side

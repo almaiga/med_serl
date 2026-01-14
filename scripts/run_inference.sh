@@ -23,10 +23,12 @@ if [ $# -lt 1 ]; then
     echo "  $0 google/medgemma-4b-it medgemma --dataset ms --max_samples 50"
     echo "  $0 google/medgemma-4b-it medgemma --batch_size 8"
     echo "  $0 trainer_output/qwen3-4b-medical-selfplay-sft sft_model --batch_size 4"
+    echo "  $0 outputs/qwen3-4b-lora qwen_lora --batch_size 4"
     echo ""
     echo "Supported models:"
     echo "  - Qwen3 models (Qwen/Qwen3-4B, etc.)"
     echo "  - MedGemma models (google/medgemma-4b-it, google/medgemma-4b-pt)"
+    echo "  - LoRA adapters (local paths with adapter_config.json)"
     echo ""
     echo "Common options:"
     echo "  --batch_size N       Process N samples in parallel (default: 1)"
@@ -77,7 +79,6 @@ python scripts/inference_error_detection.py \\
     --dataset all \\
     --temperature 0 \\
     --max_new_tokens 256 \\
-    --no_cot \\
     --batch_size 1 \\
     --output_dir results/inference \\
     $EXTRA_ARGS

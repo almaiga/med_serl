@@ -12,3 +12,4 @@ outputs/
 .env
 .kiro
 .hypothesis
+results/Qwen3-4B Lora Results Jan 14 2026.jsonl
