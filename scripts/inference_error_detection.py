@@ -537,6 +537,26 @@ def run_inference(
                 valid_tokens = generated_ids[i][generated_ids[i] != tokenizer.pad_token_id]
                 output_ids = valid_tokens[input_length:].tolist()
                 
+                # Debug: Print first sample to see what's being generated
+                if batch_idx == 0 and i == 0:
+                    print("\n" + "="*60)
+                    print("🔍 DEBUG: First sample generation analysis")
+                    print("="*60)
+                    print(f"Enable thinking flag: {enable_thinking_flags[i]}")
+                    print(f"Output length: {len(output_ids)} tokens")
+                    print(f"THINK_END_TOKEN_ID ({THINK_END_TOKEN_ID}) present: {THINK_END_TOKEN_ID in output_ids}")
+                    print(f"IM_END_TOKEN_ID ({IM_END_TOKEN_ID}) present: {IM_END_TOKEN_ID in output_ids}")
+                    
+                    # Decode with special tokens visible
+                    full_output_with_tokens = tokenizer.decode(output_ids, skip_special_tokens=False)
+                    print(f"\nFull output (with special tokens):")
+                    print(full_output_with_tokens[:500])  # First 500 chars
+                    
+                    # Also show the prompt that was used
+                    print(f"\nPrompt used:")
+                    print(batch_prompts[i][:500])  # First 500 chars
+                    print("="*60 + "\n")
+                
                 # Parse using official Qwen3 method (token-based)
                 try:
                     index = len(output_ids) - output_ids[::-1].index(THINK_END_TOKEN_ID)
@@ -555,7 +575,7 @@ def run_inference(
                 
                 # Parse response
                 thinking, predicted_label, explanation = parse_response(thinking_content, content)
-                
+
                 # Store result - ensure all values are JSON serializable with proper NaN handling
                 gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
                 correct = (predicted_label == gt_label)
