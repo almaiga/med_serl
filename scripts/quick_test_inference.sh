@@ -20,19 +20,20 @@ echo ""
 
 python scripts/inference_error_detection.py \
     --model_path "$MODEL_PATH" \
-    --model_name "$(basename $MODEL_PATH)_test" \
+    --model_name "$(basename $MODEL_PATH)" \
     --dataset all \
     --max_samples $MAX_SAMPLES \
     --batch_size $BATCH_SIZE \
     --temperature 0 \
     --max_new_tokens 256 \
     --no_cot \
-    --output_dir results/inference/quick_test
+    --output_dir results/inference
 
 echo ""
 echo "✅ Quick test completed!"
-echo "Results saved to: results/inference/quick_test/"
+echo ""
+echo "Results structure:"
+echo "  results/inference/$(basename $MODEL_PATH)/no_cot/"
 echo ""
 echo "To view results:"
-echo "  ls -lh results/inference/quick_test/"
-echo "  tail results/inference/quick_test/*_summary.json"
+echo "  cat results/inference/$(basename $MODEL_PATH)/no_cot/*_summary.json | jq"

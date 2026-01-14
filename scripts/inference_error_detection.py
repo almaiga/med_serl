@@ -375,13 +375,18 @@ def run_inference(
         
         for idx, row in batch_df.iterrows():
             note = row['Text']
+            # Handle NaN values properly
+            error_type = row.get('Error Type', '')
+            if pd.isna(error_type):
+                error_type = ''
+            
             batch_notes.append(note)
             batch_metadata.append({
                 'index': idx,
                 'text_id': row.get('Text ID', f'sample_{idx}'),
                 'dataset': row.get('dataset', 'unknown'),
                 'ground_truth': row['Error Flag'],
-                'error_type': row.get('Error Type', ''),
+                'error_type': error_type,
                 'note': note
             })
             
@@ -535,21 +540,21 @@ def run_inference(
                 # Parse response
                 thinking, predicted_label, explanation = parse_response(thinking_content, content)
                 
-                # Store result
+                # Store result - ensure all values are JSON serializable
                 gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
                 correct = (predicted_label == gt_label)
                 
                 results.append({
-                    'text_id': metadata['text_id'],
-                    'dataset': metadata['dataset'],
-                    'note': metadata['note'],
+                    'text_id': str(metadata['text_id']),
+                    'dataset': str(metadata['dataset']),
+                    'note': str(metadata['note']),
                     'ground_truth_flag': int(metadata['ground_truth']),
                     'ground_truth_label': gt_label,
-                    'error_type': metadata['error_type'],
+                    'error_type': str(metadata['error_type']) if metadata['error_type'] else '',
                     'predicted_label': predicted_label,
                     'explanation': explanation,
                     'thinking': thinking,
-                    'correct': correct,
+                    'correct': bool(correct),
                     'thinking_content': thinking_content,
                     'final_content': content
                 })
@@ -582,21 +587,21 @@ def run_inference(
                 # Parse response
                 thinking, predicted_label, explanation = parse_response(thinking_content, content)
                 
-                # Store result
+                # Store result - ensure all values are JSON serializable
                 gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
                 correct = (predicted_label == gt_label)
                 
                 results.append({
-                    'text_id': metadata['text_id'],
-                    'dataset': metadata['dataset'],
-                    'note': metadata['note'],
+                    'text_id': str(metadata['text_id']),
+                    'dataset': str(metadata['dataset']),
+                    'note': str(metadata['note']),
                     'ground_truth_flag': int(metadata['ground_truth']),
                     'ground_truth_label': gt_label,
-                    'error_type': metadata['error_type'],
+                    'error_type': str(metadata['error_type']) if metadata['error_type'] else '',
                     'predicted_label': predicted_label,
                     'explanation': explanation,
                     'thinking': thinking,
-                    'correct': correct,
+                    'correct': bool(correct),
                     'thinking_content': thinking_content,
                     'final_content': content
                 })
@@ -683,14 +688,16 @@ def main():
     
     args = parser.parse_args()
     
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
-    
     # Detect or use specified model type
     model_type = args.model_type or detect_model_type(args.model_path)
     
     # Set model name
     model_name = args.model_name or args.model_path.replace('/', '_')
+    
+    # Create output directory with CoT info
+    cot_suffix = "cot" if not args.no_cot else "no_cot"
+    output_subdir = os.path.join(args.output_dir, model_name, cot_suffix)
+    os.makedirs(output_subdir, exist_ok=True)
     
     # Load prompts
     prompts = load_prompts(args.prompt_file)
@@ -704,6 +711,7 @@ def main():
     print(f"Batch Size: {args.batch_size}")
     print(f"CoT: {not args.no_cot}")
     print(f"Temperature: {args.temperature}")
+    print(f"Output: {output_subdir}")
     print(f"{'='*60}\n")
     
     # Load model
@@ -750,14 +758,16 @@ def main():
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Save detailed results
+    # Save detailed results with proper JSON serialization
     results_file = os.path.join(
-        args.output_dir,
-        f"{model_name}_{args.dataset}_{timestamp}_results.jsonl"
+        output_subdir,
+        f"{args.dataset}_{timestamp}_results.jsonl"
     )
-    with open(results_file, 'w') as f:
+    with open(results_file, 'w', encoding='utf-8') as f:
         for result in results:
-            f.write(json.dumps(result) + '\n')
+            # Ensure proper JSON serialization
+            json_str = json.dumps(result, ensure_ascii=False)
+            f.write(json_str + '\n')
     print(f"✅ Detailed results saved to: {results_file}")
     
     # Save summary
@@ -766,18 +776,20 @@ def main():
         'model_name': model_name,
         'dataset': args.dataset,
         'cot': not args.no_cot,
+        'batch_size': args.batch_size,
         'temperature': args.temperature,
         'max_new_tokens': args.max_new_tokens,
+        'thinking_budget': args.thinking_budget if not args.no_cot else None,
         'timestamp': timestamp,
         'metrics': metrics
     }
     
     summary_file = os.path.join(
-        args.output_dir,
-        f"{model_name}_{args.dataset}_{timestamp}_summary.json"
+        output_subdir,
+        f"{args.dataset}_{timestamp}_summary.json"
     )
-    with open(summary_file, 'w') as f:
-        json.dump(summary, f, indent=2)
+    with open(summary_file, 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
     print(f"✅ Summary saved to: {summary_file}")
 
 
