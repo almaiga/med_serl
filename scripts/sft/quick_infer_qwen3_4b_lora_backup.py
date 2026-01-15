@@ -14,35 +14,167 @@ import argparse
 import json
 import os
 import random
+import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
 import torch
 from peft import PeftModel
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
-# Import all utilities from inference_utils
-from inference_utils import (
-    # Constants
-    HAS_PARSE_CHANGES, THINK_END_TOKEN_ID, IM_END_TOKEN_ID,
-    MODEL_TYPE_QWEN, MODEL_TYPE_GENERIC,
-    EARLY_STOPPING_TEXT_ASSESSOR, EARLY_STOPPING_TEXT_INJECTOR,
-    # Dataclasses
-    GenerationConfig, ThinkingConfig, FilterConfig, TokenConfig, FilterResult,
-    # Functions
-    build_messages, load_assessor_prompts, load_injector_prompts,
-    extract_final_answer, detect_model_type, normalize_qwen_thinking,
-    strip_qwen_think_from_content, parse_qwen3_output, parse_qwen3_output_with_length,
-    _build_generation_kwargs, extract_generated_note, passes_similarity_filter,
-    load_embedding_model, embed_texts, cosine_similarity, select_note,
-    load_records, scenario_samples, write_jsonl, write_summary, summarize_results,
-    jaccard_similarity,
-)
+# Import change parsing utilities (optional)
+HAS_PARSE_CHANGES = False
+try:
+    from parse_changes import parse_raw_output, get_change_diff, format_change_log, compute_word_level_diff
+    HAS_PARSE_CHANGES = True
+except ImportError:
+    import sys
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    try:
+        from parse_changes import parse_raw_output, get_change_diff, format_change_log, compute_word_level_diff
+        HAS_PARSE_CHANGES = True
+    except ImportError:
+        print(f"[WARNING] parse_changes.py not found (looked in: {script_dir}). Verbose diff logging disabled.")
 
-# Conditionally import parse_changes functions if available
-if HAS_PARSE_CHANGES:
-    from parse_changes import parse_raw_output, get_change_diff, compute_word_level_diff
+THINK_END_TOKEN_ID = 151668  # </think>
+IM_END_TOKEN_ID = 151645  # <|im_end|>
+MODEL_TYPE_QWEN = "qwen"
+MODEL_TYPE_GENERIC = "generic"
+# Just close the think block - let the model continue naturally with its prompted format
+EARLY_STOPPING_TEXT_ASSESSOR = '\n</think>\n\n'
+EARLY_STOPPING_TEXT_INJECTOR = '\n</think>\n\n'  # Add newline for clarity
+
+DEFAULT_NOTE_FIELDS = [
+    "correct_note",
+    "note",
+    "text",
+    "original_note",
+    "clinical_note",
+]
+
+
+@dataclass
+class GenerationConfig:
+    """Configuration for model generation parameters."""
+    temperature: float = 0.2
+    top_p: float = 0.9
+    top_k: int = 20
+    min_p: float = 0.05
+    repetition_penalty: float = 1.1
+    max_new_tokens: int = 1024
+    do_sample: bool = True
+
+
+@dataclass
+class ThinkingConfig:
+    """Configuration for Qwen thinking mode."""
+    thinking_budget: int = 0
+    assessor_thinking_budget: int = 256
+    answer_tokens: int = 128
+    early_stop_text_assessor: str = '\n</think>\n\n'
+    early_stop_text_injector: str = '\n</think>\n\n'
+
+
+@dataclass
+class FilterConfig:
+    """Configuration for note filtering in self-play."""
+    min_jaccard: float = 0.85
+    max_jaccard: float = 0.99
+    max_word_edits: int = 6
+
+
+@dataclass
+class TokenConfig:
+    """Special token IDs for Qwen."""
+    think_end_token_id: int = 151668  # </think>
+    im_end_token_id: int = 151645     # <|im_end|>
+
+
+@dataclass
+class FilterResult:
+    """Result of similarity filtering."""
+    passed: bool
+    score_jaccard: Optional[float]
+    reason: Optional[str]
+
+
+def build_messages(
+    mode: str,
+    note: str,
+    prompt_intent: str,
+    assessor_prompts: Optional[Dict[str, str]] = None,
+    injector_prompts: Optional[Dict[str, str]] = None,
+    thinking_budget: int = 0,
+    injector_is_correct: Optional[bool] = None,
+) -> List[Dict[str, str]]:
+    """Build chat messages from JSON prompt configs. No hardcoded fallbacks."""
+    if mode == "assessor":
+        if not assessor_prompts:
+            raise ValueError(
+                "assessor_prompts is required. Provide --assessor-prompt-file pointing to a JSON "
+                "file with 'system_prompt' and 'user_template' keys."
+            )
+        system_prompt = assessor_prompts["system_prompt"]
+        user_content = assessor_prompts["user_template"].format(note=note)
+
+    else:  # injector
+        if not injector_prompts:
+            raise ValueError(
+                "injector_prompts is required. Provide --injector-prompt-file pointing to a JSON "
+                "file with 'system_prompt_correct', 'system_prompt_incorrect', "
+                "'injector_correct_template', 'injector_incorrect_template' keys."
+            )
+        if injector_is_correct is None:
+            is_correct = "no clinical errors" in prompt_intent.lower()
+        else:
+            is_correct = injector_is_correct
+        
+        system_prompt = (
+            injector_prompts["system_prompt_correct"]
+            if is_correct
+            else injector_prompts["system_prompt_incorrect"]
+        )
+        template = (
+            injector_prompts["injector_correct_template"]
+            if is_correct
+            else injector_prompts["injector_incorrect_template"]
+        )
+        user_content = template.format(note=note, prompt_intent=prompt_intent)
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def load_assessor_prompts(prompt_file: Optional[str]) -> Optional[Dict[str, str]]:
+    if not prompt_file:
+        return None
+    with open(prompt_file, "r", encoding="utf-8") as handle:
+        prompts = json.load(handle)
+    if "system_prompt" not in prompts or "user_template" not in prompts:
+        raise ValueError("Prompt file must include system_prompt and user_template.")
+    return prompts
+
+
+def load_injector_prompts(prompt_file: Optional[str]) -> Optional[Dict[str, str]]:
+    if not prompt_file:
+        return None
+    with open(prompt_file, "r", encoding="utf-8") as handle:
+        prompts = json.load(handle)
+    required = {
+        "system_prompt_correct",
+        "system_prompt_incorrect",
+        "injector_correct_template",
+        "injector_incorrect_template",
+    }
+    if not required.issubset(set(prompts.keys())):
+        raise ValueError("Injector prompt file missing required keys.")
+    return prompts
 
 
 def parse_args() -> argparse.Namespace:
@@ -194,6 +326,170 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def extract_final_answer(text: str) -> Optional[str]:
+    """Extract final answer with multiple fallback patterns."""
+    # Pattern registry: (regex_pattern, use_findall, result_mapper)
+    patterns = [
+        (r'final_answer:\s*"(CORRECT|INCORRECT)"', True, lambda m: m[-1].upper()),
+        (r'final_answer:\s*(CORRECT|INCORRECT)', True, lambda m: m[-1].upper()),
+        (r'Answer:\s*(CORRECT|INCORRECT)', True, lambda m: m[-1].upper()),
+        (r'Assessment:\s*(CORRECT|INCORRECT)', True, lambda m: m[-1].upper()),
+    ]
+
+    for pattern, use_findall, mapper in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE) if use_findall else re.search(pattern, text, re.IGNORECASE)
+        if matches:
+            return mapper(matches)
+
+    # Special case: Error Detected field (from model's old format)
+    if re.search(r'Error Detected:\s*Yes', text, re.IGNORECASE):
+        return "INCORRECT"
+    elif re.search(r'Error Detected:\s*No', text, re.IGNORECASE):
+        return "CORRECT"
+
+    return None
+
+
+def is_lora_adapter(path: Optional[str]) -> bool:
+    if not path:
+        return False
+    return os.path.exists(os.path.join(path, "adapter_config.json"))
+
+
+def get_base_model_from_adapter(path: str) -> str:
+    adapter_config_path = os.path.join(path, "adapter_config.json")
+    if os.path.exists(adapter_config_path):
+        with open(adapter_config_path, "r", encoding="utf-8") as handle:
+            config = json.load(handle)
+        return config.get("base_model_name_or_path", "")
+    return ""
+
+
+def detect_model_type(model_name: str, adapter_dir: Optional[str]) -> str:
+    candidates = [model_name]
+    if adapter_dir:
+        candidates.append(adapter_dir)
+        if is_lora_adapter(adapter_dir):
+            base_model = get_base_model_from_adapter(adapter_dir)
+            if base_model:
+                candidates.append(base_model)
+
+    for candidate in candidates:
+        if "qwen" in candidate.lower():
+            return MODEL_TYPE_QWEN
+        config_path = os.path.join(candidate, "config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as handle:
+                    config = json.load(handle)
+                model_type_str = config.get("model_type", "").lower()
+                architectures = " ".join(config.get("architectures", [])).lower()
+                if "qwen" in model_type_str or "qwen" in architectures:
+                    return MODEL_TYPE_QWEN
+            except Exception:
+                pass
+
+    return MODEL_TYPE_GENERIC
+
+
+def normalize_qwen_thinking(thinking_content: str) -> str:
+    if not thinking_content:
+        return ""
+    cleaned = re.sub(r"</?think>", "", thinking_content, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(
+        r"Considering the limited time by the user, I have to give the solution based on the thinking directly now\.",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned
+
+
+def strip_qwen_think_from_content(content: str) -> str:
+    if not content:
+        return content
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
+    content = re.sub(r"</?think>", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"</?answer>", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"^answer:\s*", "", content, flags=re.IGNORECASE)
+    return content.strip()
+
+
+def parse_qwen3_output(tokenizer, input_ids, generated_ids) -> str:
+    input_length = input_ids.shape[1]
+    output_ids = generated_ids[0, input_length:].tolist()
+
+    try:
+        index = len(output_ids) - output_ids[::-1].index(THINK_END_TOKEN_ID)
+    except ValueError:
+        index = 0
+
+    thinking_content = tokenizer.decode(
+        output_ids[:index],
+        skip_special_tokens=True,
+    ).strip("\n")
+    content = tokenizer.decode(
+        output_ids[index:],
+        skip_special_tokens=True,
+    ).strip("\n")
+
+    thinking_content = normalize_qwen_thinking(thinking_content)
+    content = strip_qwen_think_from_content(content)
+
+    if thinking_content:
+        return f"<think>{thinking_content}</think>\n{content}"
+    return content
+
+
+def parse_qwen3_output_with_length(tokenizer, input_length: int, generated_ids, original_seq_len: int = None) -> str:
+    # If original_seq_len provided, use it to slice correctly with left-padding
+    if original_seq_len is not None:
+        output_ids = generated_ids[original_seq_len:].tolist()
+    else:
+        output_ids = generated_ids[input_length:].tolist()
+
+    try:
+        index = len(output_ids) - output_ids[::-1].index(THINK_END_TOKEN_ID)
+    except ValueError:
+        index = 0
+
+    thinking_content = tokenizer.decode(
+        output_ids[:index],
+        skip_special_tokens=True,
+    ).strip("\n")
+    content = tokenizer.decode(
+        output_ids[index:],
+        skip_special_tokens=True,
+    ).strip("\n")
+
+    thinking_content = normalize_qwen_thinking(thinking_content)
+    content = strip_qwen_think_from_content(content)
+
+    if thinking_content:
+        return f"<think>{thinking_content}</think>\n{content}"
+    return content
+
+
+def _build_generation_kwargs(
+    gen_config: GenerationConfig,
+    tokenizer,
+    max_new_tokens: int = None,
+    eos_token_id = None,
+) -> Dict:
+    """Build common generation kwargs from config."""
+    return {
+        "max_new_tokens": max_new_tokens or gen_config.max_new_tokens,
+        "temperature": gen_config.temperature,
+        "top_p": gen_config.top_p,
+        "top_k": gen_config.top_k,
+        "min_p": gen_config.min_p,
+        "do_sample": gen_config.do_sample and gen_config.temperature > 0,
+        "pad_token_id": tokenizer.pad_token_id,
+        "eos_token_id": eos_token_id or tokenizer.eos_token_id,
+        "repetition_penalty": gen_config.repetition_penalty,
+    }
+
+
 def generate_qwen_with_thinking(
     model,
     tokenizer,
@@ -231,7 +527,6 @@ def generate_qwen_with_thinking(
             ).strip("\n")
             thinking_content = normalize_qwen_thinking(thinking_content)
             # Close think tag and provide clear instruction for what comes next
-            EARLY_STOPPING_TEXT = '\n</think>\n\n'
             early_stopping_ids = tokenizer(
                 [EARLY_STOPPING_TEXT],
                 return_tensors="pt",
@@ -336,23 +631,23 @@ def generate_qwen_with_thinking_batch(
                     skip_special_tokens=True,
                 ).strip("\n")
                 thinking_content = normalize_qwen_thinking(thinking_content)
-
+                
                 # FIX: Extract only the non-padded tokens from this sequence
                 # Left-padding means real tokens are at the end
                 num_pad_tokens = original_input_len - input_length
                 real_tokens = generated_ids[idx, num_pad_tokens:].unsqueeze(0)  # Remove padding
-
+                
                 # Now concatenate the early stopping text
                 early_stopping_ids = tokenizer(
                     [early_stop_text],  # Use the provided early_stop_text
                     return_tensors="pt",
                     add_special_tokens=False,
                 ).input_ids.to(model.device)
-
+                
                 # Concatenate to the REAL (non-padded) tokens
                 input_ids = torch.cat([real_tokens, early_stopping_ids], dim=-1)
                 attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
-
+                
                 remaining_tokens = max_new_tokens - (input_ids.size(-1) - input_length)
                 if remaining_tokens > 0:
                     actual_answer_tokens = min(remaining_tokens, answer_tokens)
@@ -363,7 +658,7 @@ def generate_qwen_with_thinking_batch(
                             if stop_ids:
                                 stop_token_ids.append(stop_ids[-1])
                     eos_ids = [tokenizer.eos_token_id] + stop_token_ids if stop_token_ids else [tokenizer.eos_token_id]
-
+                    
                     with torch.no_grad():
                         followup_ids = model.generate(
                             input_ids=input_ids,
@@ -396,7 +691,7 @@ def generate_qwen_with_thinking_batch(
                 else:
                     outputs.append(answer)
                 continue
-
+                
             # Same fix for the case where thinking naturally ends
             num_pad_tokens = original_input_len - input_length
             input_ids = generated_ids[idx, num_pad_tokens:].unsqueeze(0)  # Remove padding
@@ -433,7 +728,6 @@ def generate_qwen_with_thinking_batch(
 
     return outputs
 
-
 def force_answer_from_prompt(
     prompt: str,
     tokenizer,
@@ -457,6 +751,277 @@ def force_answer_from_prompt(
     generated_tokens = outputs[0][input_length:]
     generated = tokenizer.decode(generated_tokens, skip_special_tokens=True)
     return extract_final_answer(generated)
+
+
+
+
+def strip_think_blocks(text: str) -> str:
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"</?think>", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def clean_generated_note(note: str) -> str:
+    if not note:
+        return note
+    note = strip_think_blocks(note)
+    parts = re.split(r"\*\*Injected error\*\*:\s*", note, flags=re.IGNORECASE)
+    if len(parts) > 1:
+        return parts[0].strip()
+    parts = re.split(r"Injected error:\s*", note, flags=re.IGNORECASE)
+    if len(parts) > 1:
+        return parts[0].strip()
+    note = re.sub(r'final_answer:.*', '', note, flags=re.IGNORECASE | re.DOTALL).strip()
+    return note.strip().strip('"').strip("'")
+
+
+def _try_extract_pattern(pattern: str, text: str, group_idx: int = 1) -> Optional[str]:
+    """Helper to try a regex pattern and return cleaned result."""
+    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+    if match:
+        candidate = match.group(group_idx).strip()
+        cleaned = clean_generated_note(candidate)
+        return cleaned if cleaned else None
+    return None
+
+
+def extract_generated_note(text: str) -> Optional[str]:
+    """Extract the generated_note section from injector output."""
+    # Primary pattern: generated_note: ... final_answer:
+    parts = re.split(r'generated_note:\s*', text, flags=re.IGNORECASE)
+    if len(parts) >= 2:
+        after_label = parts[1]
+        match = re.search(r'^(.*?)\s*final_answer:', after_label, re.DOTALL | re.IGNORECASE)
+        generated = match.group(1).strip() if match else after_label.strip()
+        if generated:
+            cleaned = clean_generated_note(generated)
+            if cleaned:
+                return cleaned
+
+    # Fallback patterns registry
+    fallback_patterns = [
+        r'Modified Note with Error:\s*"(.*?)"',
+        r'Modified Note with Error:\s*(.*?)(?:\n\s*\d+\.\s+|Ground Truth|Error location|final_answer:|$)',
+        r'Modified Note:\s*(.*?)(?:\n\s*\d+\.\s+|Ground Truth|Error location|final_answer:|$)',
+    ]
+
+    for pattern in fallback_patterns:
+        result = _try_extract_pattern(pattern, text)
+        if result:
+            return result
+
+    # Last resort: strip all markers and return remainder
+    cleaned = strip_think_blocks(text)
+    cleaned = re.sub(r'final_answer:.*', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = clean_generated_note(cleaned.strip())
+    return cleaned if cleaned else None
+
+
+def tokenize_for_jaccard(text: str) -> List[str]:
+    return re.findall(r"[a-zA-Z0-9]+", text.lower())
+
+
+def jaccard_similarity(text1: str, text2: str) -> float:
+    set1 = set(tokenize_for_jaccard(text1))
+    set2 = set(tokenize_for_jaccard(text2))
+    if not set1 and not set2:
+        return 1.0
+    if not set1 or not set2:
+        return 0.0
+    return len(set1 & set2) / len(set1 | set2)
+
+
+def word_counts(text: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for token in tokenize_for_jaccard(text):
+        counts[token] = counts.get(token, 0) + 1
+    return counts
+
+
+def has_word_change(original: str, generated: str) -> bool:
+    return word_counts(original) != word_counts(generated)
+
+
+def select_note(record: Dict, note_field: Optional[str]) -> Optional[str]:
+    if note_field:
+        return record.get(note_field)
+    for field in DEFAULT_NOTE_FIELDS:
+        value = record.get(field)
+        if value:
+            return value
+    return None
+
+
+def passes_similarity_filter(
+    original_note: str,
+    generated_note: str,
+    min_jaccard: float,
+    max_jaccard: Optional[float] = None,
+) -> FilterResult:
+    if not generated_note:
+        return FilterResult(passed=False, score_jaccard=None, reason="empty_generated")
+    if not has_word_change(original_note, generated_note):
+        return FilterResult(passed=False, score_jaccard=None, reason="no_word_change")
+    score_jaccard = jaccard_similarity(original_note, generated_note)
+    if score_jaccard < min_jaccard:
+        return FilterResult(passed=False, score_jaccard=score_jaccard, reason="low_jaccard")
+    if max_jaccard is not None and score_jaccard > max_jaccard:
+        return FilterResult(passed=False, score_jaccard=score_jaccard, reason="too_similar")
+    return FilterResult(passed=True, score_jaccard=score_jaccard, reason=None)
+
+
+def load_embedding_model(model_name: str, device: str):
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    model = AutoModel.from_pretrained(model_name).to(device)
+    model.eval()
+    return tokenizer, model
+
+
+def embed_texts(tokenizer, model, device: str, texts: List[str]) -> torch.Tensor:
+    with torch.no_grad():
+        inputs = tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        ).to(device)
+        outputs = model(**inputs)
+        hidden = outputs.last_hidden_state
+        mask = inputs["attention_mask"].unsqueeze(-1)
+        pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+        pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+        return pooled.detach().cpu()
+
+
+def cosine_similarity(emb_a: torch.Tensor, emb_b: torch.Tensor) -> float:
+    return float((emb_a * emb_b).sum().item())
+
+
+def load_records(jsonl_file: str) -> List[Dict]:
+    records = []
+    with open(jsonl_file, "r", encoding="utf-8") as handle:
+        for line in handle:
+            records.append(json.loads(line))
+    return records
+
+
+def scenario_samples(records: List[Dict], scenario: str, num_samples: int) -> List[Dict]:
+    if not records:
+        return []
+    if scenario == "assessor_correct":
+        pool = [r for r in records if r.get("correct_note")]
+    elif scenario == "assessor_incorrect":
+        pool = [r for r in records if r.get("incorrect_note")]
+    elif scenario == "injector_correct":
+        pool = [r for r in records if r.get("correct_note")]
+    else:
+        pool = [r for r in records if r.get("correct_note") and r.get("incorrect_note")]
+    if not pool:
+        return []
+    sample_count = min(num_samples, len(pool))
+    return random.sample(pool, sample_count)
+
+
+def write_jsonl(path: str, rows: List[Dict]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_summary(path: str, summary: Dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, ensure_ascii=False, indent=2)
+
+
+def summarize_results(rows: List[Dict]) -> Dict:
+    summary: Dict[str, Dict] = {}
+    for row in rows:
+        scenario = row["scenario"]
+        stats = summary.setdefault(
+            scenario,
+            {
+                "total": 0,
+                "correct": 0,
+                "similarity_jaccard": [],
+                "similarity_embedding": [],
+            },
+        )
+        stats["total"] += 1
+        stats["correct"] += int(bool(row.get("match")))
+        if row.get("score_jaccard") is not None:
+            stats["similarity_jaccard"].append(row["score_jaccard"])
+        if row.get("score_embedding_cosine") is not None:
+            stats["similarity_embedding"].append(row["score_embedding_cosine"])
+
+    def agg_sim(values: List[float]) -> Dict:
+        if not values:
+            return {"avg": None, "min": None, "max": None}
+        return {
+            "avg": sum(values) / len(values),
+            "min": min(values),
+            "max": max(values),
+        }
+
+    assessor_correct = summary.get("assessor_correct", {"total": 0, "correct": 0})
+    assessor_incorrect = summary.get("assessor_incorrect", {"total": 0, "correct": 0})
+    injector_correct = summary.get("injector_correct", {"total": 0, "correct": 0})
+    injector_incorrect = summary.get("injector_incorrect", {"total": 0, "correct": 0})
+
+    total_assessor = assessor_correct["total"] + assessor_incorrect["total"]
+    correct_assessor = assessor_correct["correct"] + assessor_incorrect["correct"]
+    total_injector = injector_correct["total"] + injector_incorrect["total"]
+    correct_injector = injector_correct["correct"] + injector_incorrect["correct"]
+
+    return {
+        "assessor": {
+            "correct_notes": {
+                "samples": assessor_correct["total"],
+                "correct": assessor_correct["correct"],
+                "accuracy": (assessor_correct["correct"] / assessor_correct["total"]) if assessor_correct["total"] else 0.0,
+            },
+            "incorrect_notes": {
+                "samples": assessor_incorrect["total"],
+                "correct": assessor_incorrect["correct"],
+                "accuracy": (assessor_incorrect["correct"] / assessor_incorrect["total"]) if assessor_incorrect["total"] else 0.0,
+            },
+            "overall": {
+                "samples": total_assessor,
+                "correct": correct_assessor,
+                "accuracy": (correct_assessor / total_assessor) if total_assessor else 0.0,
+            },
+        },
+        "injector": {
+            "generate_correct": {
+                "samples": injector_correct["total"],
+                "correct": injector_correct["correct"],
+                "accuracy": (injector_correct["correct"] / injector_correct["total"]) if injector_correct["total"] else 0.0,
+                "similarity_jaccard": agg_sim(summary.get("injector_correct", {}).get("similarity_jaccard", [])),
+                "similarity_embedding": agg_sim(summary.get("injector_correct", {}).get("similarity_embedding", [])),
+            },
+            "inject_errors": {
+                "samples": injector_incorrect["total"],
+                "correct": injector_incorrect["correct"],
+                "accuracy": (injector_incorrect["correct"] / injector_incorrect["total"]) if injector_incorrect["total"] else 0.0,
+                "similarity_jaccard": agg_sim(summary.get("injector_incorrect", {}).get("similarity_jaccard", [])),
+                "similarity_embedding": agg_sim(summary.get("injector_incorrect", {}).get("similarity_embedding", [])),
+            },
+            "overall": {
+                "samples": total_injector,
+                "correct": correct_injector,
+                "accuracy": (correct_injector / total_injector) if total_injector else 0.0,
+                "similarity_jaccard": agg_sim(
+                    (summary.get("injector_correct", {}).get("similarity_jaccard", []) +
+                     summary.get("injector_incorrect", {}).get("similarity_jaccard", []))
+                ),
+                "similarity_embedding": agg_sim(
+                    (summary.get("injector_correct", {}).get("similarity_embedding", []) +
+                     summary.get("injector_incorrect", {}).get("similarity_embedding", []))
+                ),
+            },
+        },
+    }
 
 
 def _determine_selfplay_mode(args: argparse.Namespace, mixed_counter: int) -> tuple[str, str, str]:
@@ -548,11 +1113,11 @@ def run_selfplay_loop(
 ) -> None:
     # Determine thinking mode: use thinking only if budget > 0 AND not explicitly disabled
     use_qwen_thinking = (
-        model_type == MODEL_TYPE_QWEN
-        and args.thinking_budget > 0
+        model_type == MODEL_TYPE_QWEN 
+        and args.thinking_budget > 0 
         and not getattr(args, 'no_thinking', False)
     )
-
+    
     # For non-thinking mode with Qwen3, use different temperature settings per best practices
     if model_type == MODEL_TYPE_QWEN and getattr(args, 'no_thinking', False):
         print("[INFO] Using Qwen3 non-thinking mode (enable_thinking=False)")
@@ -569,7 +1134,7 @@ def run_selfplay_loop(
     else:
         effective_temp = args.temperature
         effective_top_p = args.top_p
-
+    
     max_notes = args.selfplay_num_notes or args.num_samples
     output_root, output_ext = os.path.splitext(output_path)
     attempts_path = f"{output_root}_attempts{output_ext or '.jsonl'}"
@@ -633,7 +1198,7 @@ def run_selfplay_loop(
             prompt_metas.append({"prompt": prompt})
 
         outputs: List[str] = []
-
+        
         # DEBUG: Print assessor parameters and first prompt
         if args.verbose_diff and prompts:
             print("\n" + "="*60)
@@ -647,7 +1212,7 @@ def run_selfplay_loop(
             print(f"\nFIRST ASSESSOR PROMPT (truncated):")
             print(prompts[0][:2000] + "..." if len(prompts[0]) > 2000 else prompts[0])
             print("="*60 + "\n")
-
+        
         if use_qwen_thinking:
             outputs = generate_qwen_with_thinking_batch(
                 model,
@@ -690,7 +1255,7 @@ def run_selfplay_loop(
             print("FIRST ASSESSOR RAW OUTPUT:")
             print(outputs[0][:1500] + "..." if len(outputs[0]) > 1500 else outputs[0])
             print("-"*60 + "\n")
-
+        
         assessed_rows: List[Dict] = []
         for item, raw_output, meta in zip(batch, outputs, prompt_metas):
             predicted = extract_final_answer(raw_output)
@@ -756,7 +1321,7 @@ def run_selfplay_loop(
 
     # Constants for per-note retry logic
     MAX_RETRIES_PER_NOTE = 4
-
+    
     with open(output_path, "a", encoding="utf-8") as out_handle, open(
         attempts_path, "a", encoding="utf-8"
     ) as attempts_handle:
@@ -767,7 +1332,7 @@ def run_selfplay_loop(
                 if not original_note:
                     pbar.update(1)
                     continue
-
+                
                 stats["total_input_notes"] += 1
                 note_id = record.get("note_id")
                 error_type = (record.get("error_type") or "").strip()
@@ -778,7 +1343,7 @@ def run_selfplay_loop(
                     mixed_counter += 1
 
                 prompt_intent = _build_injector_prompt_intent(selfplay_mode, error_type, base_prompt_intent)
-
+                
                 # Retry loop for this note (max 4 attempts)
                 success = False
                 for attempt_num in range(1, MAX_RETRIES_PER_NOTE + 1):
@@ -793,7 +1358,7 @@ def run_selfplay_loop(
                         selfplay_mode == "correct",
                     )
                     prompt = build_prompt(messages)
-
+                    
                     # Generate (single note)
                     outputs = generate_injector_outputs([prompt])
                     stats["attempted_generations"] += 1
@@ -828,14 +1393,14 @@ def run_selfplay_loop(
                         "filter_reason": filter_meta.reason,
                         "injector_raw_output": generated,
                     }
-
+                    
                     if parsed_output and HAS_PARSE_CHANGES:
                         log_entry["model_changes"] = parsed_output.get("changes_made")
                         log_entry["word_edit_info"] = word_edit_info
-
+                    
                     attempts_handle.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
                     attempts_handle.flush()
-
+                    
                     # Check if passed
                     if filter_meta.passed:
                         stats["accepted_generations"] += 1
@@ -867,11 +1432,11 @@ def run_selfplay_loop(
                         elif reason == "too_similar":
                             stats["rejected_too_similar"] += 1
                         # Continue to next attempt (unless we've hit max)
-
+                
                 # If failed all attempts, log warning
                 if not success:
                     print(f"[WARNING] Note {note_id} failed all {MAX_RETRIES_PER_NOTE} attempts")
-
+                
                 # Batch assess when we have enough
                 if len(pending) >= args.selfplay_assessor_batch_size:
                     assessed = assess_batch(pending)
@@ -879,7 +1444,7 @@ def run_selfplay_loop(
                         out_handle.write(json.dumps(row, ensure_ascii=False) + "\n")
                     out_handle.flush()
                     pending = []
-
+                
                 pbar.update(1)
 
         if pending:
@@ -1019,7 +1584,7 @@ def main() -> None:
     for scenario in scenarios:
         samples = scenario_samples(records, scenario, args.num_samples)
         if not samples and args.input_note:
-            samples = [{"correct_note": args.input_note, "incorrect_note": args.input_note}]
+            samples = [{"correct_note": args.input_note, "incorrect_note": args_input_note}]
         scenario_samples_map[scenario] = samples
         total_examples += len(samples)
 

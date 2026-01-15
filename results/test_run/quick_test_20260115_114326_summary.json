@@ -1,0 +1,66 @@
+{
+  "assessor": {
+    "correct_notes": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0
+    },
+    "incorrect_notes": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0
+    },
+    "overall": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0
+    }
+  },
+  "injector": {
+    "generate_correct": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0,
+      "similarity_jaccard": {
+        "avg": null,
+        "min": null,
+        "max": null
+      },
+      "similarity_embedding": {
+        "avg": null,
+        "min": null,
+        "max": null
+      }
+    },
+    "inject_errors": {
+      "samples": 1,
+      "correct": 0,
+      "accuracy": 0.0,
+      "similarity_jaccard": {
+        "avg": null,
+        "min": null,
+        "max": null
+      },
+      "similarity_embedding": {
+        "avg": null,
+        "min": null,
+        "max": null
+      }
+    },
+    "overall": {
+      "samples": 1,
+      "correct": 0,
+      "accuracy": 0.0,
+      "similarity_jaccard": {
+        "avg": null,
+        "min": null,
+        "max": null
+      },
+      "similarity_embedding": {
+        "avg": null,
+        "min": null,
+        "max": null
+      }
+    }
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "assessor": {
+    "correct_notes": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0
+    },
+    "incorrect_notes": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0
+    },
+    "overall": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0
+    }
+  },
+  "injector": {
+    "generate_correct": {
+      "samples": 0,
+      "correct": 0,
+      "accuracy": 0.0,
+      "similarity_jaccard": {
+        "avg": null,
+        "min": null,
+        "max": null
+      },
+      "similarity_embedding": {
+        "avg": null,
+        "min": null,
+        "max": null
+      }
+    },
+    "inject_errors": {
+      "samples": 1,
+      "correct": 1,
+      "accuracy": 1.0,
+      "similarity_jaccard": {
+        "avg": 0.27044025157232704,
+        "min": 0.27044025157232704,
+        "max": 0.27044025157232704
+      },
+      "similarity_embedding": {
+        "avg": 0.5547938942909241,
+        "min": 0.5547938942909241,
+        "max": 0.5547938942909241
+      }
+    },
+    "overall": {
+      "samples": 1,
+      "correct": 1,
+      "accuracy": 1.0,
+      "similarity_jaccard": {
+        "avg": 0.27044025157232704,
+        "min": 0.27044025157232704,
+        "max": 0.27044025157232704
+      },
+      "similarity_embedding": {
+        "avg": 0.5547938942909241,
+        "min": 0.5547938942909241,
+        "max": 0.5547938942909241
+      }
+    }
+  }
+}
