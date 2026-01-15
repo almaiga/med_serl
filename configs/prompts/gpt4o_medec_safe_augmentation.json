@@ -113,7 +113,13 @@
         "note_id": "ms-train-418",
         "error_type": "diagnosis",
         "source": "medec_incorrect_verified",
-        "reasoning": {"error_identified": "...", "why_wrong": "...", ...}
+        "reasoning": {
+          "error_identified": "Misdiagnosis: CJD instead of Huntington",
+          "why_wrong": "Family history of father suicide at 50 suggests genetic Huntington",
+          "key_clues": ["Father suicide at 50", "1-year progression", "Choreiform movements"],
+          "correct_answer": "Huntington disease",
+          "clinical_impact": "Wrong diagnosis affects genetic counseling"
+        }
       }
     ]
   }
