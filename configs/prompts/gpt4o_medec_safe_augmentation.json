@@ -1,13 +1,15 @@
 {
   "metadata": {
-    "version": "2.0",
+    "version": "2.1",
     "safe_augmentation_strategy": "Use MEDEC errors as-is (doctor-verified). Minimal paraphrasing (1 sentence) for CORRECT. 50/50 split for calibration.",
     "key_principles": [
       "NEVER generate new errors (too risky without MD verification)",
       "Use MEDEC incorrect_note directly (already verified)",
       "Generate CORRECT with MINIMAL paraphrasing (1 sentence only - easy to verify)",
       "50/50 CORRECT/INCORRECT ratio for model calibration",
-      "Optional: Add reasoning to explain WHY errors are wrong (educational)",
+      "Add reasoning to BOTH CORRECT and INCORRECT (teaches task understanding)",
+      "CORRECT reasoning: Why paraphrase is SAFE (preserves facts)",
+      "INCORRECT reasoning: Why error is PLAUSIBLE but wrong (deception strategy)",
       "SFT teaches format, RL drives creativity - keep SFT simple!"
     ],
     "why_minimal_paraphrasing": [
@@ -22,9 +24,13 @@
 
   "correct_paraphrase_user": "Paraphrase ONE sentence only in this clinical note. Keep everything else identical.\n\n{note}\n\nOutput only the modified note:",
 
-  "reasoning_system": "You are a medical educator explaining clinical errors.\n\n**Task:** Given a clinical note pair (correct vs incorrect), explain:\n1. What the error is\n2. Why it's wrong (clinical reasoning)\n3. Key clues to detect it\n4. Clinical impact\n\n**Output JSON:**\n```json\n{\n  \"error_identified\": \"[What was wrong]\",\n  \"why_wrong\": \"[Clinical reasoning - WHY this is incorrect]\",\n  \"key_clues\": [\"Clue 1\", \"Clue 2\", \"Clue 3\"],\n  \"correct_answer\": \"[Why the correct version is right]\",\n  \"clinical_impact\": \"[Potential harm if error missed]\"\n}\n```",
+  "correct_reasoning_system": "You are a medical AI training expert explaining safe paraphrasing strategies.\n\n**Context:** You're teaching a model how to make SAFE changes that preserve medical accuracy.\n\n**Task:** Given a paraphrased note, explain why the change is safe:\n1. **What was changed** - The specific paraphrase\n2. **Why it's safe** - What medical facts were preserved\n3. **What stayed the same** - Critical elements unchanged\n4. **Paraphrase strategy** - What technique was used\n\n**Perspective:** Write from the PARAPHRASER's viewpoint (\"I changed X to Y, but preserved...\")\n\n**Output JSON:**\n```json\n{\n  \"change_made\": \"[What specific text was changed]\",\n  \"why_safe\": \"[Why this change preserves medical accuracy]\",\n  \"preserved_facts\": [\"Fact 1 preserved exactly\", \"Fact 2\", \"Fact 3\"],\n  \"paraphrase_technique\": \"[Strategy used: synonym, restructure, style change, etc.]\",\n  \"medical_equivalence\": \"[Why both versions mean the same thing medically]\"\n}\n```\n\n**Example Safe Paraphrase Reasoning:**\n\"I changed 'Patient has type 2 diabetes' to 'Patient presents with type 2 diabetes'. This is safe because: (1) the diagnosis remains exactly the same (type 2 diabetes), (2) only the verb changed (has → presents with), which are medically equivalent ways to state a diagnosis, (3) no clinical facts were altered. This is a simple synonym substitution.\"",
 
-  "reasoning_user": "Explain this medical error:\n\n**Incorrect (with error):**\n{incorrect_note}\n\n**Correct:**\n{correct_note}\n\n**Error location:** {error_sentence} → {corrected_sentence}\n\nExplain in JSON format:",
+  "correct_reasoning_user": "Explain why this paraphrase is SAFE:\n\n**Original note:**\n{original_note}\n\n**Paraphrased note:**\n{paraphrased_note}\n\nExplain from the PARAPHRASER's perspective:\n- What did I change?\n- Why is this change safe (preserves medical facts)?\n- What critical facts stayed the same?\n- What paraphrase technique did I use?\n\nOutput in JSON format:",
+
+  "reasoning_system": "You are a medical AI training expert explaining error injection strategies.\n\n**Context:** You're teaching an injector model HOW and WHY to make realistic medical errors.\n\n**Task:** Given a clinical note pair (correct vs incorrect), explain the injector's reasoning:\n1. **What change was made** - The specific injection\n2. **Why this error is plausible** - Why it looks realistic\n3. **What makes it deceptive** - Why it might fool an assessor\n4. **Clinical context** - Why this error could happen in practice\n5. **Detection difficulty** - What clues assessor needs to catch it\n\n**Perspective:** Write from the INJECTOR's viewpoint (\"I changed X to Y because...\")\n\n**Output JSON:**\n```json\n{\n  \"injection_strategy\": \"[What specific change was made]\",\n  \"why_plausible\": \"[Why this error looks realistic and could fool assessor]\",\n  \"deception_technique\": \"[What makes this error subtle/hard to detect]\",\n  \"clinical_reasoning\": \"[Why this error might occur in real practice]\",\n  \"detection_clues\": [\"Clue 1 assessor needs\", \"Clue 2\", \"Clue 3\"],\n  \"error_type_pattern\": \"[General pattern: e.g., 'similar diagnoses', 'drug class confusion']\"\n}\n```\n\n**Example Injector Reasoning:**\n\"I changed 'Huntington disease' to 'Creutzfeldt-Jakob disease' because both cause movement disorders and cognitive decline, making them easy to confuse. The deception works because without carefully checking the family history (suicide at 50 = genetic Huntington), they look similar. This is a realistic error - both are rare neurodegenerative diseases with overlapping symptoms.\"",
+
+  "reasoning_user": "Explain the injector's strategy for this error:\n\n**Original (correct) note:**\n{correct_note}\n\n**Injected (incorrect) note:**\n{incorrect_note}\n\n**What was changed:** {error_sentence} → {corrected_sentence}\n**Error type:** {error_type}\n\nExplain from the INJECTOR's perspective:\n- What change did I make?\n- Why is this error plausible/deceptive?\n- Why might this fool an assessor?\n- What pattern does this follow?\n\nOutput in JSON format:",
 
   "sft_data_generation": {
     "description": "Generate 50/50 CORRECT/INCORRECT training data from MEDEC",
@@ -49,7 +55,13 @@
       "label": "CORRECT",
       "original_note_id": "ms-train-418",
       "source": "medec_correct_paraphrased",
-      "reasoning": null
+      "reasoning": {
+        "change_made": "Changed 'Patient has type 2 diabetes' to 'Patient presents with type 2 diabetes'",
+        "why_safe": "Only the verb changed (has → presents with), diagnosis and all medical facts preserved exactly",
+        "preserved_facts": ["Diagnosis: type 2 diabetes", "All medications unchanged", "All lab values unchanged"],
+        "paraphrase_technique": "Synonym substitution for verb (medically equivalent phrasing)",
+        "medical_equivalence": "Both 'has' and 'presents with' indicate the patient's current diagnosis - no change in clinical meaning"
+      }
     },
     "incorrect_example": {
       "note": "[MEDEC incorrect_note AS-IS]",
@@ -121,11 +133,12 @@
         "error_type": "diagnosis",
         "source": "medec_incorrect_verified",
         "reasoning": {
-          "error_identified": "Misdiagnosis: CJD instead of Huntington",
-          "why_wrong": "Family history of father suicide at 50 suggests genetic Huntington",
-          "key_clues": ["Father suicide at 50", "1-year progression", "Choreiform movements"],
-          "correct_answer": "Huntington disease",
-          "clinical_impact": "Wrong diagnosis affects genetic counseling"
+          "injection_strategy": "Changed diagnosis from 'Huntington disease' to 'Creutzfeldt-Jakob disease'",
+          "why_plausible": "Both are neurodegenerative diseases causing movement disorders, cognitive decline, and psychiatric symptoms - easy to confuse without careful analysis",
+          "deception_technique": "The symptoms overlap significantly: both have abnormal movements, behavioral changes, and dementia. Without checking family history closely, they appear similar.",
+          "clinical_reasoning": "This error occurs in practice because both are rare, both affect movement and cognition, and clinicians may anchor on prominent symptoms (movements, behavior) without fully considering timeline and genetics.",
+          "detection_clues": ["Family history of suicide at 50 (Huntington is genetic, autosomal dominant)", "1-year insidious progression (Huntington), not rapid weeks-months (CJD)", "Choreiform movements more typical of Huntington"],
+          "error_type_pattern": "Similar disease presentations - requires differential diagnosis based on subtle distinguishing features"
         }
       }
     ]

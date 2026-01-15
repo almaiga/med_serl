@@ -127,25 +127,69 @@ def paraphrase_correct_note(
         return None, {"error": str(e)}
 
 
+def generate_correct_reasoning(
+    client: OpenAI,
+    original_note: str,
+    paraphrased_note: str,
+    prompts: Dict,
+) -> Optional[Dict]:
+    """
+    Generate reasoning explaining why the paraphrase is SAFE.
+
+    Teaches model what changes preserve medical accuracy.
+    """
+    if not prompts.get("correct_reasoning_system"):
+        return None
+
+    system_prompt = prompts["correct_reasoning_system"]
+    user_prompt = prompts["correct_reasoning_user"].format(
+        original_note=original_note,
+        paraphrased_note=paraphrased_note,
+    )
+
+    gen_config = prompts.get("generation_params", {}).get("reasoning", {})
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=gen_config.get("temperature", 0.3),
+            top_p=gen_config.get("top_p", 0.9),
+            max_tokens=gen_config.get("max_tokens", 1024),
+            response_format={"type": "json_object"},
+        )
+
+        reasoning = json.loads(response.choices[0].message.content)
+        return reasoning
+
+    except Exception as e:
+        print(f"Error generating correct reasoning: {e}")
+        return None
+
+
 def generate_error_reasoning(
     client: OpenAI,
     pair: MedecPair,
     prompts: Dict,
 ) -> Optional[Dict]:
     """
-    Generate reasoning explaining WHY the error is wrong.
+    Generate INJECTOR reasoning explaining HOW and WHY to make this error.
 
-    This helps the small model learn from GPT-4o's reasoning.
+    This teaches the model the injection strategy (plausible but wrong).
     """
     if not prompts.get("reasoning_system"):
         return None
 
     system_prompt = prompts["reasoning_system"]
     user_prompt = prompts["reasoning_user"].format(
-        incorrect_note=pair.incorrect_note,
         correct_note=pair.correct_note,
+        incorrect_note=pair.incorrect_note,
         error_sentence=pair.error_sentence or "N/A",
         corrected_sentence=pair.corrected_sentence or "N/A",
+        error_type=pair.error_type,
     )
 
     gen_config = prompts.get("generation_params", {}).get("reasoning", {})
@@ -202,8 +246,10 @@ def generate_safe_sft_data(
         "correct_generated": 0,
         "incorrect_used": 0,
         "correct_failed": 0,
-        "reasoning_added": 0,
-        "reasoning_failed": 0,
+        "correct_reasoning_added": 0,
+        "correct_reasoning_failed": 0,
+        "incorrect_reasoning_added": 0,
+        "incorrect_reasoning_failed": 0,
         "total_tokens_used": 0,
     }
 
@@ -221,6 +267,17 @@ def generate_safe_sft_data(
             )
 
             if paraphrased:
+                # Generate reasoning for CORRECT (why paraphrase is safe)
+                correct_reasoning = None
+                if add_reasoning:
+                    correct_reasoning = generate_correct_reasoning(
+                        client, pair.correct_note, paraphrased, prompts
+                    )
+                    if correct_reasoning:
+                        stats["correct_reasoning_added"] += 1
+                    else:
+                        stats["correct_reasoning_failed"] += 1
+
                 correct_example = {
                     "note": paraphrased,
                     "label": "CORRECT",
@@ -230,7 +287,7 @@ def generate_safe_sft_data(
                         "generation_type": "correct_paraphrase",
                         "gpt4o_tokens": meta.get("tokens_used", 0),
                     },
-                    "reasoning": None,  # No reasoning for CORRECT
+                    "reasoning": correct_reasoning,
                 }
 
                 f_correct.write(json.dumps(correct_example) + "\n")
@@ -259,15 +316,14 @@ def generate_safe_sft_data(
                 "reasoning": None,  # Will add below if requested
             }
 
-            # Optional: Add reasoning explaining WHY error is wrong
+            # Optional: Add reasoning (injector strategy - plausible but wrong)
             if add_reasoning:
                 reasoning = generate_error_reasoning(client, pair, prompts)
                 if reasoning:
                     incorrect_example["reasoning"] = reasoning
-                    stats["reasoning_added"] += 1
-                    # Note: reasoning generation also uses tokens but we don't track separately
+                    stats["incorrect_reasoning_added"] += 1
                 else:
-                    stats["reasoning_failed"] += 1
+                    stats["incorrect_reasoning_failed"] += 1
 
             f_incorrect.write(json.dumps(incorrect_example) + "\n")
             f_combined.write(json.dumps(incorrect_example) + "\n")
@@ -290,8 +346,10 @@ def generate_safe_sft_data(
     print(f"INCORRECT notes used (AS-IS): {stats['incorrect_used']}")
     print(f"CORRECT generation failures: {stats['correct_failed']}")
     if add_reasoning:
-        print(f"Reasoning added: {stats['reasoning_added']}")
-        print(f"Reasoning failures: {stats['reasoning_failed']}")
+        print(f"CORRECT reasoning added: {stats['correct_reasoning_added']}")
+        print(f"CORRECT reasoning failures: {stats['correct_reasoning_failed']}")
+        print(f"INCORRECT reasoning added: {stats['incorrect_reasoning_added']}")
+        print(f"INCORRECT reasoning failures: {stats['incorrect_reasoning_failed']}")
     print(f"Total GPT-4o tokens used: {stats['total_tokens_used']:,}")
     print(f"\nOutput files:")
     print(f"  - CORRECT only: {correct_output}")
