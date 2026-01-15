@@ -224,22 +224,41 @@ def generate_safe_sft_data(
     prompts: Dict,
     output_dir: str,
     add_reasoning: bool = True,
+    batch_size: int = 10,
+    save_every: int = 5,
 ) -> Dict:
     """
-    Generate safe SFT training data.
+    Generate safe SFT training data with batch processing and incremental saves.
 
     For each MEDEC pair:
     1. CORRECT: Generate paraphrase with GPT-4o
     2. INCORRECT: Use MEDEC incorrect_note AS-IS (doctor-verified)
     3. Optional: Add reasoning explaining the error
 
+    Features:
+    - Batch processing (configurable batch size)
+    - Incremental saves every N pairs (prevents data loss)
+    - Full path resolution (can run from anywhere)
+    - Progress tracking with stats
+
     Output: 50% CORRECT, 50% INCORRECT
     """
+    # Resolve full paths
+    output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     correct_output = os.path.join(output_dir, "sft_correct.jsonl")
     incorrect_output = os.path.join(output_dir, "sft_incorrect.jsonl")
     combined_output = os.path.join(output_dir, "sft_combined_safe.jsonl")
+    checkpoint_file = os.path.join(output_dir, "checkpoint.json")
+
+    # Load checkpoint if exists (resume from interruption)
+    start_idx = 0
+    if os.path.exists(checkpoint_file):
+        with open(checkpoint_file, 'r') as f:
+            checkpoint = json.load(f)
+            start_idx = checkpoint.get("last_completed_idx", 0) + 1
+            print(f"Resuming from pair {start_idx} (checkpoint found)")
 
     stats = {
         "total_pairs": len(pairs),
@@ -251,87 +270,134 @@ def generate_safe_sft_data(
         "incorrect_reasoning_added": 0,
         "incorrect_reasoning_failed": 0,
         "total_tokens_used": 0,
+        "batches_completed": 0,
     }
 
-    with open(correct_output, 'w') as f_correct, \
-         open(incorrect_output, 'w') as f_incorrect, \
-         open(combined_output, 'w') as f_combined:
+    # Open files in append mode for incremental writes
+    mode = 'a' if start_idx > 0 else 'w'
+    with open(correct_output, mode) as f_correct, \
+         open(incorrect_output, mode) as f_incorrect, \
+         open(combined_output, mode) as f_combined:
 
-        for pair in tqdm(pairs, desc="Generating SFT data"):
+        # Process pairs with batch saving
+        for idx, pair in enumerate(tqdm(pairs[start_idx:], desc="Generating SFT data", initial=start_idx, total=len(pairs))):
+            actual_idx = start_idx + idx
 
-            # ============================================================
-            # CORRECT: Generate paraphrase with GPT-4o
-            # ============================================================
-            paraphrased, meta = paraphrase_correct_note(
-                client, pair.correct_note, prompts
-            )
+            try:
+                # ============================================================
+                # CORRECT: Generate paraphrase with GPT-4o
+                # ============================================================
+                paraphrased, meta = paraphrase_correct_note(
+                    client, pair.correct_note, prompts
+                )
 
-            if paraphrased:
-                # Generate reasoning for CORRECT (why paraphrase is safe)
-                correct_reasoning = None
-                if add_reasoning:
-                    correct_reasoning = generate_correct_reasoning(
-                        client, pair.correct_note, paraphrased, prompts
-                    )
-                    if correct_reasoning:
-                        stats["correct_reasoning_added"] += 1
-                    else:
-                        stats["correct_reasoning_failed"] += 1
+                if paraphrased:
+                    # Generate reasoning for CORRECT (why paraphrase is safe)
+                    correct_reasoning = None
+                    if add_reasoning:
+                        correct_reasoning = generate_correct_reasoning(
+                            client, pair.correct_note, paraphrased, prompts
+                        )
+                        if correct_reasoning:
+                            stats["correct_reasoning_added"] += 1
+                        else:
+                            stats["correct_reasoning_failed"] += 1
 
-                correct_example = {
-                    "note": paraphrased,
-                    "label": "CORRECT",
+                    correct_example = {
+                        "note": paraphrased,
+                        "label": "CORRECT",
+                        "original_note_id": pair.note_id,
+                        "source": "medec_correct_paraphrased",
+                        "metadata": {
+                            "generation_type": "correct_paraphrase",
+                            "gpt4o_tokens": meta.get("tokens_used", 0),
+                        },
+                        "reasoning": correct_reasoning,
+                    }
+
+                    f_correct.write(json.dumps(correct_example) + "\n")
+                    f_combined.write(json.dumps(correct_example) + "\n")
+
+                    stats["correct_generated"] += 1
+                    stats["total_tokens_used"] += meta.get("tokens_used", 0)
+                else:
+                    stats["correct_failed"] += 1
+                    print(f"Failed to generate CORRECT paraphrase for {pair.note_id}")
+
+                # ============================================================
+                # INCORRECT: Use MEDEC AS-IS (doctor-verified)
+                # ============================================================
+                incorrect_example = {
+                    "note": pair.incorrect_note,  # AS-IS from MEDEC!
+                    "label": "INCORRECT",
                     "original_note_id": pair.note_id,
-                    "source": "medec_correct_paraphrased",
+                    "error_type": pair.error_type,
+                    "error_location": pair.error_sentence,
+                    "correction": pair.corrected_sentence,
+                    "source": "medec_incorrect_verified",
                     "metadata": {
-                        "generation_type": "correct_paraphrase",
-                        "gpt4o_tokens": meta.get("tokens_used", 0),
+                        "generation_type": "medec_verified_error",
                     },
-                    "reasoning": correct_reasoning,
+                    "reasoning": None,  # Will add below if requested
                 }
 
-                f_correct.write(json.dumps(correct_example) + "\n")
-                f_combined.write(json.dumps(correct_example) + "\n")
+                # Optional: Add reasoning (injector strategy - plausible but wrong)
+                if add_reasoning:
+                    reasoning = generate_error_reasoning(client, pair, prompts)
+                    if reasoning:
+                        incorrect_example["reasoning"] = reasoning
+                        stats["incorrect_reasoning_added"] += 1
+                    else:
+                        stats["incorrect_reasoning_failed"] += 1
 
-                stats["correct_generated"] += 1
-                stats["total_tokens_used"] += meta.get("tokens_used", 0)
-            else:
-                stats["correct_failed"] += 1
-                print(f"Failed to generate CORRECT paraphrase for {pair.note_id}")
+                f_incorrect.write(json.dumps(incorrect_example) + "\n")
+                f_combined.write(json.dumps(incorrect_example) + "\n")
 
-            # ============================================================
-            # INCORRECT: Use MEDEC AS-IS (doctor-verified)
-            # ============================================================
-            incorrect_example = {
-                "note": pair.incorrect_note,  # AS-IS from MEDEC!
-                "label": "INCORRECT",
-                "original_note_id": pair.note_id,
-                "error_type": pair.error_type,
-                "error_location": pair.error_sentence,
-                "correction": pair.corrected_sentence,
-                "source": "medec_incorrect_verified",
-                "metadata": {
-                    "generation_type": "medec_verified_error",
-                },
-                "reasoning": None,  # Will add below if requested
-            }
+                stats["incorrect_used"] += 1
 
-            # Optional: Add reasoning (injector strategy - plausible but wrong)
-            if add_reasoning:
-                reasoning = generate_error_reasoning(client, pair, prompts)
-                if reasoning:
-                    incorrect_example["reasoning"] = reasoning
-                    stats["incorrect_reasoning_added"] += 1
-                else:
-                    stats["incorrect_reasoning_failed"] += 1
+                # Incremental save checkpoint every N pairs
+                if (actual_idx + 1) % save_every == 0:
+                    # Flush file buffers
+                    f_correct.flush()
+                    f_incorrect.flush()
+                    f_combined.flush()
 
-            f_incorrect.write(json.dumps(incorrect_example) + "\n")
-            f_combined.write(json.dumps(incorrect_example) + "\n")
+                    # Save checkpoint
+                    checkpoint = {
+                        "last_completed_idx": actual_idx,
+                        "stats": stats,
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    with open(checkpoint_file, 'w') as f_ckpt:
+                        json.dump(checkpoint, f_ckpt, indent=2)
 
-            stats["incorrect_used"] += 1
+                    print(f"\n✓ Checkpoint saved at pair {actual_idx + 1}/{len(pairs)}")
+                    stats["batches_completed"] += 1
 
-            # Rate limiting (GPT-4o: ~10k RPM, so sleep briefly)
-            time.sleep(0.1)
+                # Rate limiting (GPT-4o: ~10k RPM, so sleep briefly)
+                time.sleep(0.1)
+
+            except Exception as e:
+                print(f"\n❌ Error processing pair {actual_idx} ({pair.note_id}): {e}")
+                print(f"Saving checkpoint and continuing...")
+
+                # Save checkpoint on error
+                checkpoint = {
+                    "last_completed_idx": actual_idx - 1,  # Last successful
+                    "stats": stats,
+                    "error": str(e),
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                with open(checkpoint_file, 'w') as f_ckpt:
+                    json.dump(checkpoint, f_ckpt, indent=2)
+
+                # Continue with next pair
+                continue
+
+    # Final flush and checkpoint cleanup
+    if os.path.exists(checkpoint_file):
+        os.remove(checkpoint_file)
+        print("\n✓ Checkpoint file removed (generation complete)")
 
     # Save statistics
     stats_file = os.path.join(output_dir, "generation_stats_safe.json")
@@ -351,7 +417,8 @@ def generate_safe_sft_data(
         print(f"INCORRECT reasoning added: {stats['incorrect_reasoning_added']}")
         print(f"INCORRECT reasoning failures: {stats['incorrect_reasoning_failed']}")
     print(f"Total GPT-4o tokens used: {stats['total_tokens_used']:,}")
-    print(f"\nOutput files:")
+    print(f"Batches saved: {stats['batches_completed']}")
+    print(f"\nOutput files (full paths):")
     print(f"  - CORRECT only: {correct_output}")
     print(f"  - INCORRECT only: {incorrect_output}")
     print(f"  - Combined (50/50): {combined_output}")
@@ -400,6 +467,18 @@ def main():
         default=None,
         help="OpenAI API key (or set OPENAI_API_KEY env var)",
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=10,
+        help="Batch size for processing (default: 10)",
+    )
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=5,
+        help="Save checkpoint every N pairs (default: 5)",
+    )
 
     args = parser.parse_args()
 
@@ -418,12 +497,21 @@ def main():
 
     client = OpenAI(api_key=api_key)
 
+    # Resolve full paths
+    input_jsonl = os.path.abspath(args.input_jsonl)
+    output_dir = os.path.abspath(args.output_dir)
+    prompt_file = os.path.abspath(args.prompt_file)
+
+    print(f"Input file: {input_jsonl}")
+    print(f"Output directory: {output_dir}")
+    print(f"Prompt file: {prompt_file}")
+
     # Load data
-    print("Loading MEDEC pairs...")
-    pairs = load_medec_pairs(args.input_jsonl, max_pairs=args.num_pairs)
+    print("\nLoading MEDEC pairs...")
+    pairs = load_medec_pairs(input_jsonl, max_pairs=args.num_pairs)
 
     print("Loading prompts...")
-    prompts = load_prompts(args.prompt_file)
+    prompts = load_prompts(prompt_file)
 
     # Generate
     print("\nGenerating safe SFT data...")
@@ -437,8 +525,10 @@ def main():
         pairs=pairs,
         client=client,
         prompts=prompts,
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         add_reasoning=args.add_reasoning,
+        batch_size=args.batch_size,
+        save_every=args.save_every,
     )
 
     return 0
