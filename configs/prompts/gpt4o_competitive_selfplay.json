@@ -1,0 +1,183 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "strategy": "Competitive Self-Play Error Injection",
+    "description": "Generate deceptive medical errors for adversarial self-play training. Errors must be realistic, subtle, and diverse to keep assessor challenged.",
+    "key_principles": [
+      "Use MEDEC error TYPE and LOCATION as template (doctor-verified pattern)",
+      "Apply SAME error type to PARAPHRASED note (deceptive - note looks different)",
+      "Generate VARIATIONS of the error (different drugs, different laterality, etc.)",
+      "Maintain medical plausibility (errors must be realistic)",
+      "Keep 50/50 CORRECT/INCORRECT split for calibration"
+    ],
+    "why_competitive": "By paraphrasing BOTH correct and incorrect notes, plus varying the specific error, we prevent memorization. Model must learn to detect error PATTERNS, not memorize specific notes."
+  },
+
+  "competitive_strategy": {
+    "for_correct": {
+      "approach": "Paraphrase heavily so note looks different",
+      "goal": "Model can't just memorize 'I saw this exact wording before'",
+      "example": "Original: 'Started metformin 1000mg BID' → 'Initiated metformin 1000mg twice daily'"
+    },
+    "for_incorrect": {
+      "approach": "Paraphrase note + apply SAME ERROR TYPE from MEDEC in new location or with variation",
+      "goal": "Error is subtle and embedded in novel text",
+      "example": {
+        "medec_error_pattern": "lisinopril → losartan (same class, wrong drug)",
+        "applied_to_paraphrased": "Patient on enalapril 10mg daily → Changed to: Patient on benazepril 10mg daily",
+        "why_competitive": "Same error TYPE (ACE-i confusion), different drug pair, embedded in paraphrased text"
+      }
+    }
+  },
+
+  "error_augmentation_strategy": {
+    "step_1": "Extract error type and pattern from MEDEC",
+    "step_2": "Paraphrase the correct note substantially",
+    "step_3": "Apply SAME error type to paraphrased note with variation",
+    "step_4": "Ensure error is medically plausible in new context",
+    "examples": [
+      {
+        "medec_error": {
+          "type": "diagnosis",
+          "pattern": "Huntington → Creutzfeldt-Jakob disease",
+          "reasoning": "Both cause movement disorders, family history is key differentiator"
+        },
+        "augmented_error": {
+          "paraphrase_note": "Yes - rewrite clinical presentation",
+          "apply_error": "Keep diagnosis error but could vary to 'Progressive supranuclear palsy' (also movement disorder)",
+          "maintains_pattern": "Similar presentations requiring clinical differentiation"
+        }
+      },
+      {
+        "medec_error": {
+          "type": "medication",
+          "pattern": "lisinopril → losartan (ACE-i → ARB without indication)",
+          "reasoning": "Similar classes, unjustified switch"
+        },
+        "augmented_error": {
+          "paraphrase_note": "Yes - rewrite medication section",
+          "apply_error": "enalapril → valsartan OR ramipril → candesartan",
+          "maintains_pattern": "ACE-i → ARB confusion, same error type"
+        }
+      },
+      {
+        "medec_error": {
+          "type": "laboratory",
+          "pattern": "K+ 3.5 → K+ 5.3 (transposed digits)",
+          "reasoning": "Transposition error, clinically significant"
+        },
+        "augmented_error": {
+          "paraphrase_note": "Yes - rewrite lab section",
+          "apply_error": "Na+ 135 → Na+ 153 OR Glucose 120 → 210",
+          "maintains_pattern": "Digit transposition with clinical impact"
+        }
+      },
+      {
+        "medec_error": {
+          "type": "management",
+          "pattern": "azithromycin → erythromycin (both macrolides, azithro preferred)",
+          "reasoning": "Same class, suboptimal choice"
+        },
+        "augmented_error": {
+          "paraphrase_note": "Yes - rewrite management section",
+          "apply_error": "Could use doxycycline → tetracycline OR ciprofloxacin → levofloxacin",
+          "maintains_pattern": "Same drug class, suboptimal choice"
+        }
+      }
+    ]
+  },
+
+  "injector_system_competitive": "You are a medical error injection specialist creating challenging training data for adversarial self-play.\n\n**Your Task:** Create a DECEPTIVE medical error that will challenge an error detection model.\n\n**Given:**\n- Original correct note from MEDEC\n- Error TYPE and PATTERN from MEDEC (doctor-verified)\n- Your job: Paraphrase + apply SAME error type with variation\n\n**Strategy:**\n1. **Paraphrase heavily**: Rewrite note so it looks different (change wording, structure, medical terminology)\n2. **Apply error pattern**: Use MEDEC error TYPE but with variation:\n   - Medication error: Use different drug pair in same class\n   - Diagnosis error: Use different similar condition\n   - Lab error: Use different value with same error type (transposition, decimal, etc.)\n   - Laterality: Apply to different anatomical location\n3. **Maintain realism**: Error must be medically plausible\n4. **Be subtle**: Don't make it obvious\n\n**Why This Works:**\n- Assessor can't memorize specific note text (heavily paraphrased)\n- Error pattern is realistic (based on MEDEC doctor-verified type)\n- Variation prevents exact memorization (different drug, different value)\n- Self-play stays competitive (injector can generate novel deceptive errors)\n\n**Error Type Variations:**\n\n**Medication Errors - Variation Strategy:**\n- MEDEC: lisinopril → losartan\n- Variations: enalapril → valsartan, ramipril → candesartan, benazepril → irbesartan\n- Pattern: ACE-i → ARB confusion\n\n**Diagnosis Errors - Variation Strategy:**\n- MEDEC: Huntington → CJD\n- Variations: Huntington → Progressive supranuclear palsy, Alzheimer → Frontotemporal dementia\n- Pattern: Similar neurodegenerative conditions\n\n**Lab Errors - Variation Strategy:**\n- MEDEC: K+ 3.5 → 5.3 (transposition)\n- Variations: Na+ 135 → 153, Glucose 120 → 210, Creatinine 1.2 → 2.1\n- Pattern: Digit transposition with clinical significance\n\n**Laterality Errors - Variation Strategy:**\n- MEDEC: Right → Left (shoulder dislocation)\n- Variations: Apply to different anatomy (knee, hip, lung, kidney)\n- Pattern: Laterality confusion for unilateral conditions\n\n**Your Output:**\nParaphrase the note + apply error variation. Make it look natural, as if a clinician wrote it.",
+
+  "injector_user_competitive": "**Task:** Create a deceptive medical error by paraphrasing and applying error variation.\n\n**Original MEDEC Note:**\n{correct_note}\n\n**MEDEC Error Pattern (doctor-verified):**\n- Error Type: {error_type}\n- Original Error: {error_location} → {correction}\n- Pattern: {error_pattern_description}\n\n**Your Instructions:**\n1. **Paraphrase the note heavily** (30-50% word changes, restructure sentences)\n2. **Apply SAME error type** but with variation:\n   - If medication: Use different drug pair in same class\n   - If diagnosis: Use different similar condition\n   - If lab: Use different value with same error pattern\n   - If laterality: Apply to same or similar anatomy\n3. **Make it subtle** - error should look plausible\n4. **Maintain medical realism** - everything else must be correct\n\n**Output Format:**\n```json\n{\n  \"paraphrased_note_with_error\": \"[Full note with error embedded]\",\n  \"error_applied\": {\n    \"type\": \"{error_type}\",\n    \"location\": \"[Where error was applied]\",\n    \"error_text\": \"[The incorrect text]\",\n    \"should_be\": \"[What it should be based on context]\",\n    \"variation_used\": \"[How you varied from MEDEC error]\"\n  }\n}\n```\n\n**Example:**\nIf MEDEC error was \"lisinopril → losartan\", you might use \"enalapril → valsartan\" in your paraphrased note. Same error type (ACE-i → ARB), different drug pair.",
+
+  "correct_paraphrase_system": "You are a clinical documentation expert creating heavily paraphrased medical notes.\n\n**Your Task:** Rewrite this clinical note with 30-50% word changes to prevent memorization.\n\n**Strategy:**\n- Change medical terminology (\"dyspnea\" ↔ \"shortness of breath\", \"presents with\" ↔ \"comes in for\")\n- Restructure sentences (\"Patient has diabetes. Started metformin.\" → \"Metformin was initiated for diabetes management.\")\n- Vary documentation style (telegraphic ↔ full sentences)\n- Reorder information (move vitals, change lab presentation format)\n\n**MUST Preserve:**\n- All medications (drug, dose, route, frequency)\n- All lab values (number, unit)\n- All diagnoses\n- All procedures and timeline\n\n**Goal:** Note should be recognizably about the same patient but LOOK different enough that memorization is hard.\n\n**Output:** Only the paraphrased note.",
+
+  "correct_paraphrase_user": "Paraphrase this note heavily (30-50% word changes). Preserve all medical facts.\n\n**Note:**\n{note}\n\n**Output:** Only the paraphrased note.",
+
+  "generation_config": {
+    "correct_paraphrase": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "max_tokens": 2048,
+      "presence_penalty": 0.4,
+      "frequency_penalty": 0.4,
+      "note": "Higher creativity to force substantial paraphrasing"
+    },
+    "competitive_error_injection": {
+      "temperature": 0.9,
+      "top_p": 0.95,
+      "max_tokens": 2048,
+      "presence_penalty": 0.5,
+      "frequency_penalty": 0.5,
+      "note": "High creativity for deceptive error variations"
+    }
+  },
+
+  "data_generation_pipeline": {
+    "for_each_medec_pair": [
+      "1. Generate CORRECT: Heavily paraphrase correct_note (prevents memorization)",
+      "2. Generate INCORRECT: Paraphrase correct_note + apply error variation based on MEDEC pattern",
+      "3. Output: Both look different from original, but incorrect has subtle error"
+    ],
+    "output_split": "50% CORRECT (paraphrased), 50% INCORRECT (paraphrased + error variation)",
+    "why_competitive": [
+      "Both CORRECT and INCORRECT are paraphrased → can't memorize exact text",
+      "Error variations keep assessor on its toes → must learn patterns, not examples",
+      "Self-play stays adversarial → injector can generate novel deceptive errors"
+    ]
+  },
+
+  "sft_to_rl_transition": {
+    "sft_phase": {
+      "data": "Use this competitive generation for SFT warmup",
+      "teaches": [
+        "Task format (paraphrase + error injection)",
+        "Error patterns from MEDEC",
+        "How to apply variations"
+      ]
+    },
+    "rl_phase": {
+      "injector": "Policy learns to generate even MORE deceptive errors via RL rewards",
+      "assessor": "Stays frozen or uses GPT-4o, pushes injector to improve",
+      "convergence": "Injector learns to fool assessor with realistic, subtle errors"
+    }
+  },
+
+  "quality_criteria": {
+    "for_correct": [
+      "30-50% word changes from original",
+      "All medical facts preserved",
+      "Natural clinical writing",
+      "Substantially different from MEDEC note"
+    ],
+    "for_incorrect": [
+      "30-50% word changes from original",
+      "Error type matches MEDEC pattern",
+      "Error variation (different drug, value, diagnosis)",
+      "Error is subtle and realistic",
+      "Embedded naturally in paraphrased text"
+    ]
+  },
+
+  "example_competitive_generation": {
+    "medec_original": {
+      "correct_note": "A 42-year-old woman... Suspected of Huntington disease.",
+      "incorrect_note": "A 42-year-old woman... Suspected of Creutzfeldt-Jakob disease.",
+      "error_type": "diagnosis",
+      "error_pattern": "Movement disorder with similar presentation"
+    },
+    "competitive_output": {
+      "correct_paraphrased": "A 42-year-old female presents with behavioral changes... Clinical suspicion for Huntington disease.",
+      "incorrect_paraphrased": "A 42-year-old female presents with behavioral changes... Clinical suspicion for progressive supranuclear palsy.",
+      "why_competitive": "Both paraphrased (can't memorize text), error variation (PSP instead of CJD, same pattern), assessor must detect based on family history clue"
+    }
+  },
+
+  "usage_instructions": {
+    "step1": "Generate competitive SFT data (paraphrased CORRECT + paraphrased with error variations)",
+    "step2": "Train Qwen3-4B on this data (learns task + error patterns)",
+    "step3": "RL self-play training (injector policy improves, finds more deceptive errors)",
+    "step4": "Assessor stays challenged (can't memorize, must learn error detection)"
+  }
+}

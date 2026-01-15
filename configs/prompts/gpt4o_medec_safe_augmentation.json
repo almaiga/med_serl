@@ -1,19 +1,26 @@
 {
   "metadata": {
-    "version": "1.0",
-    "safe_augmentation_strategy": "Use MEDEC errors as-is (doctor-verified). Only generate CORRECT paraphrases. 50/50 split for calibration.",
+    "version": "2.0",
+    "safe_augmentation_strategy": "Use MEDEC errors as-is (doctor-verified). Minimal paraphrasing (1 sentence) for CORRECT. 50/50 split for calibration.",
     "key_principles": [
       "NEVER generate new errors (too risky without MD verification)",
       "Use MEDEC incorrect_note directly (already verified)",
-      "Generate CORRECT paraphrases only (safe - no medical risk)",
+      "Generate CORRECT with MINIMAL paraphrasing (1 sentence only - easy to verify)",
       "50/50 CORRECT/INCORRECT ratio for model calibration",
-      "Optional: Add reasoning to explain WHY errors are wrong (educational)"
+      "Optional: Add reasoning to explain WHY errors are wrong (educational)",
+      "SFT teaches format, RL drives creativity - keep SFT simple!"
+    ],
+    "why_minimal_paraphrasing": [
+      "Easy to verify correctness (hard with heavy paraphrasing)",
+      "SFT just teaches task format, not deception",
+      "RL phase handles creativity and adversarial learning",
+      "Prevents verification errors from complex paraphrasing"
     ]
   },
 
-  "correct_paraphrase_system": "You are a clinical documentation expert creating semantically equivalent paraphrases of medical notes.\n\n**Task:** Rewrite this clinical note preserving ALL medical facts while varying the expression.\n\n**Critical Preservation (MUST be exact):**\n- All numerical values (labs, vitals, ages, doses, measurements, units)\n- All medications (drug names, doses, routes, frequencies)\n- All diagnoses and clinical assessments\n- All temporal information (durations, dates, sequences)\n- All anatomical details (laterality, locations)\n\n**What Can Vary:**\n- Sentence structure and word order\n- Medical terminology (use synonyms: \"dyspnea\" ↔ \"shortness of breath\")\n- Documentation style (telegraphic ↔ full sentences)\n- Level of detail in descriptions (can expand/compress context)\n\n**Quality:** Another physician should say \"Same patient, same facts, different wording.\"\n\n**Output:** Only the paraphrased note. No explanations.",
+  "correct_paraphrase_system": "You are a clinical documentation expert creating minimal paraphrases of medical notes for SFT training.\n\n**Task:** Make a SMALL change to this clinical note - paraphrase ONE sentence only.\n\n**Strategy:**\n- Choose ONE sentence to paraphrase (preferably not diagnosis/medication lines)\n- Keep everything else EXACTLY the same\n- The paraphrased sentence must preserve all medical facts\n\n**Why minimal changes:**\n- Easy to verify correctness\n- SFT just teaches task format\n- RL phase will handle creativity and deception\n\n**Critical Preservation (MUST be exact):**\n- All numerical values (labs, vitals, ages, doses, measurements, units)\n- All medications (drug names, doses, routes, frequencies)\n- All diagnoses and clinical assessments\n- All temporal information (durations, dates, sequences)\n\n**Example:**\nOriginal: \"Patient has type 2 diabetes. Started on metformin 1000mg BID. HbA1c is 7.2%.\"\nParaphrase ONE sentence: \"Patient presents with type 2 diabetes. Started on metformin 1000mg BID. HbA1c is 7.2%.\"\n                          ↑ Only this changed\n\n**Output:** Only the modified note. No explanations.",
 
-  "correct_paraphrase_user": "Paraphrase this clinical note. Preserve all medical facts, vary the expression.\n\n{note}\n\nOutput only the paraphrased note:",
+  "correct_paraphrase_user": "Paraphrase ONE sentence only in this clinical note. Keep everything else identical.\n\n{note}\n\nOutput only the modified note:",
 
   "reasoning_system": "You are a medical educator explaining clinical errors.\n\n**Task:** Given a clinical note pair (correct vs incorrect), explain:\n1. What the error is\n2. Why it's wrong (clinical reasoning)\n3. Key clues to detect it\n4. Clinical impact\n\n**Output JSON:**\n```json\n{\n  \"error_identified\": \"[What was wrong]\",\n  \"why_wrong\": \"[Clinical reasoning - WHY this is incorrect]\",\n  \"key_clues\": [\"Clue 1\", \"Clue 2\", \"Clue 3\"],\n  \"correct_answer\": \"[Why the correct version is right]\",\n  \"clinical_impact\": \"[Potential harm if error missed]\"\n}\n```",
 
@@ -64,10 +71,10 @@
 
   "generation_params": {
     "correct_paraphrase": {
-      "temperature": 0.7,
+      "temperature": 0.5,
       "top_p": 0.9,
       "max_tokens": 2048,
-      "note": "Moderate creativity for natural variation"
+      "note": "Low temperature for minimal, controlled paraphrasing (1 sentence only)"
     },
     "reasoning": {
       "temperature": 0.3,
