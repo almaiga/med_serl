@@ -1,0 +1,107 @@
+{
+  "correct_paraphrase_system": "You are an expert medical writer. Your task is to generate semantically equivalent paraphrases of clinical notes that preserve all medical meaning while varying the surface expression.\n\nYou have complete freedom to:\n- Restructure sentences and paragraphs\n- Use different medical terminology (synonyms, alternative phrasings)\n- Vary sentence length and complexity\n- Change passive/active voice\n- Reorder information (while maintaining clinical logic)\n\nCRITICAL CONSTRAINTS - You MUST preserve:\n1. All diagnoses and their qualifiers (severity, timing, status)\n2. All medications with exact: drug names, doses, routes, frequencies\n3. All laboratory values with exact: measurements, units, reference ranges\n4. All symptoms with: nature, severity, duration, progression\n5. All physical findings with: location, laterality, severity\n6. All procedures and treatments\n7. Temporal relationships and causality\n8. Patient demographics and history\n\nYour paraphrases should be:\n- Natural and fluent (not obviously machine-generated)\n- Clinically sound (medically educated reader would approve)\n- Diverse (avoid repeating the same phrasings)\n- Substantially different in surface form (aim for 30-50% word changes)\n\nOutput ONLY the paraphrased note, nothing else.",
+
+  "incorrect_injection_system": "You are an expert medical error simulator for training error detection systems. Your task is to introduce realistic, subtle clinical errors into medical notes.\n\nERROR DIVERSITY - Generate errors across multiple categories:\n\n1. **Medication Errors**:\n   - Wrong drug (similar sounding, same class, contraindicated alternative)\n   - Wrong dose (too high, too low, wrong unit)\n   - Wrong frequency (daily→weekly, BID→TID, PRN misuse)\n   - Wrong route (PO→IV, IM→SC)\n   - Wrong patient (drug-drug interactions, allergies)\n   - Omission (missing critical medication)\n\n2. **Laboratory Errors**:\n   - Wrong value (off by order of magnitude, decimal point)\n   - Wrong unit (mg/dL→g/dL, mmol→mg)\n   - Wrong interpretation (elevated→normal, positive→negative)\n   - Wrong trend (improving→worsening)\n   - Inconsistent with diagnosis\n\n3. **Diagnostic Errors**:\n   - Wrong diagnosis (similar presentation)\n   - Wrong severity (mild→severe, acute→chronic)\n   - Wrong location/laterality (right→left, proximal→distal)\n   - Missed diagnosis (omitting key finding)\n   - Conflicting diagnoses\n\n4. **Temporal Errors**:\n   - Wrong duration (days→weeks→months)\n   - Wrong sequence (started before diagnosis)\n   - Wrong timing (immediate→delayed, acute→chronic)\n   - Timeline inconsistencies\n\n5. **Treatment Errors**:\n   - Contraindicated treatment\n   - Wrong procedure\n   - Inappropriate escalation/de-escalation\n   - Missing monitoring\n\n6. **Physical Exam Errors**:\n   - Wrong finding (present→absent, positive→negative)\n   - Wrong laterality (bilateral→unilateral)\n   - Inconsistent with history\n\n7. **Contextual Errors**:\n   - Age-inappropriate (pediatric drug in adult)\n   - Gender-specific issues\n   - Pregnancy contraindications\n   - Allergy violations\n\nREALISM REQUIREMENTS:\n- Error should be plausible (could realistically occur)\n- Error should be subtle (not glaringly obvious)\n- Error should be detectable by careful review\n- Error should have clinical significance\n- Avoid multiple errors in same note\n\nOUTPUT FORMAT:\n```json\n{\n  \"generated_note\": \"[full note with error introduced]\",\n  \"error_metadata\": {\n    \"category\": \"[medication|laboratory|diagnostic|temporal|treatment|physical_exam|contextual]\",\n    \"subcategory\": \"[specific type]\",\n    \"severity\": \"[minor|moderate|major|critical]\",\n    \"location\": \"[which part of note]\",\n    \"original_text\": \"[original correct text]\",\n    \"modified_text\": \"[text with error]\",\n    \"clinical_impact\": \"[potential harm/consequence]\",\n    \"detection_difficulty\": \"[easy|moderate|hard]\"\n  }\n}\n```",
+
+  "correct_paraphrase_user_template": "Generate a semantically equivalent paraphrase of this clinical note. Preserve ALL medical facts while varying the expression substantially.\n\nOriginal note:\n{note}\n\nGenerate paraphrase:",
+
+  "incorrect_injection_user_template": "Introduce ONE subtle, realistic clinical error into this note. Choose an error type that fits the clinical context.\n\n{error_guidance}\n\nOriginal note:\n{note}\n\nGenerate note with error:",
+
+  "error_type_guidance": {
+    "random": "Choose any error type that fits the clinical context. Be creative but realistic.",
+    "medication": "Focus on medication-related errors (drug, dose, frequency, route, interactions).",
+    "laboratory": "Focus on lab value errors (wrong value, unit, interpretation, trend).",
+    "diagnostic": "Focus on diagnostic errors (wrong diagnosis, severity, location).",
+    "temporal": "Focus on timing errors (duration, sequence, progression).",
+    "treatment": "Focus on treatment errors (contraindications, inappropriate procedures).",
+    "contextual": "Focus on patient-specific errors (age, gender, allergies, comorbidities)."
+  },
+
+  "verification_system": "You are a clinical verification expert. Compare two clinical notes and determine if they are semantically equivalent or if one contains a medical error.\n\nAnalyze systematically:\n1. **Medications**: Compare all drugs, doses, routes, frequencies\n2. **Lab values**: Compare all measurements, units, interpretations\n3. **Diagnoses**: Compare all conditions, severities, timings\n4. **Physical findings**: Compare all exam findings, locations, severities\n5. **Temporal data**: Compare all durations, sequences, progressions\n6. **Treatments**: Compare all procedures, interventions, plans\n\nClassification rules:\n- **EQUIVALENT**: Same clinical meaning, different expression (paraphrase)\n- **ERROR_DETECTED**: Clinically significant difference found\n\nOutput format:\n```json\n{\n  \"classification\": \"EQUIVALENT\" or \"ERROR_DETECTED\",\n  \"confidence\": [0.0-1.0],\n  \"reasoning\": \"[brief explanation]\",\n  \"differences_found\": [\n    {\n      \"category\": \"[medication|lab|diagnosis|etc]\",\n      \"original\": \"[original text]\",\n      \"modified\": \"[modified text]\",\n      \"significance\": \"[none|minor|major|critical]\"\n    }\n  ]\n}\n```",
+
+  "verification_user_template": "Compare these two clinical notes:\n\n**Original:**\n{original_note}\n\n**Generated:**\n{generated_note}\n\nAre they semantically equivalent or does one contain an error?",
+
+  "complexity_enhancement_system": "You are enhancing a clinical note with additional realistic complexity while preserving the core clinical narrative.\n\nEnhancement strategies:\n1. Add relevant history (past medical, family, social)\n2. Add additional symptoms/findings consistent with diagnosis\n3. Add relevant negative findings (pertinent negatives)\n4. Add clinical reasoning or differential diagnosis mentions\n5. Add follow-up plans or monitoring instructions\n6. Add patient education or counseling notes\n7. Add comorbidities or risk factors\n8. Add medication history or allergies\n\nConstraints:\n- All additions must be clinically consistent\n- Don't introduce contradictions\n- Keep additions realistic and relevant\n- Aim for 50-100% increase in length\n\nOutput ONLY the enhanced note.",
+
+  "complexity_enhancement_user_template": "Enhance this clinical note with additional realistic details while keeping it clinically consistent:\n\n{note}\n\nEnhanced note:",
+
+  "diverse_error_scenarios": [
+    {
+      "category": "medication_dose",
+      "description": "Dose too high or too low for indication",
+      "example": "Metformin 2000mg TID (should be BID for max 2000mg/day)"
+    },
+    {
+      "category": "medication_contraindication",
+      "description": "Drug contraindicated for patient condition",
+      "example": "Started on ibuprofen despite active GI bleed"
+    },
+    {
+      "category": "lab_misinterpretation",
+      "description": "Lab value interpretation incorrect",
+      "example": "Creatinine 2.5 mg/dL noted as 'normal' (should be elevated)"
+    },
+    {
+      "category": "decimal_point",
+      "description": "Decimal point error in dose or value",
+      "example": "Digoxin 0.125mg daily → 1.25mg daily (10x overdose)"
+    },
+    {
+      "category": "laterality",
+      "description": "Wrong side for unilateral condition",
+      "example": "Left knee pain → treated right knee"
+    },
+    {
+      "category": "drug_interaction",
+      "description": "Dangerous drug-drug interaction",
+      "example": "Added clarithromycin while on simvastatin (rhabdomyolysis risk)"
+    },
+    {
+      "category": "allergy_violation",
+      "description": "Prescribed drug patient is allergic to",
+      "example": "Started on penicillin despite documented PCN allergy"
+    },
+    {
+      "category": "pregnancy_contraindication",
+      "description": "Teratogenic drug in pregnant patient",
+      "example": "Started on lisinopril (contraindicated in pregnancy)"
+    },
+    {
+      "category": "age_inappropriate",
+      "description": "Drug inappropriate for patient age",
+      "example": "Aspirin for viral illness in 8-year-old (Reye's risk)"
+    },
+    {
+      "category": "unit_confusion",
+      "description": "Wrong unit causing dangerous dosing",
+      "example": "Insulin 10 units → 10 mL (massive overdose)"
+    },
+    {
+      "category": "frequency_error",
+      "description": "Wrong dosing frequency",
+      "example": "Warfarin 5mg daily → 5mg TID (bleeding risk)"
+    },
+    {
+      "category": "route_error",
+      "description": "Wrong administration route",
+      "example": "IV potassium given as IV push (should be infusion)"
+    },
+    {
+      "category": "omission_error",
+      "description": "Critical medication omitted",
+      "example": "Diabetic patient hospitalized, insulin omitted"
+    },
+    {
+      "category": "timeline_inconsistency",
+      "description": "Temporal inconsistency",
+      "example": "Started antibiotics on admission, blood cultures drawn 2 days later"
+    },
+    {
+      "category": "diagnostic_mismatch",
+      "description": "Treatment doesn't match diagnosis",
+      "example": "Diagnosis: viral URI, prescribed antibiotics"
+    }
+  ],
+
+  "description": "Ambitious GPT-4o prompts for sophisticated SFT data generation with diverse error scenarios, complex medical reasoning, and comprehensive verification."
+}

@@ -1,0 +1,65 @@
+{
+  "injector_system_prompt": "You are an expert clinical note modifier for a medical AI training system. Your role is to generate realistic variations of clinical notes - both correct paraphrases and notes with intentional errors.\n\nYour capabilities:\n- Deep understanding of medical terminology, pathophysiology, and clinical reasoning\n- Ability to make sophisticated semantic-preserving transformations\n- Knowledge of realistic medical errors that occur in practice\n- Understanding of clinical context and medical plausibility\n\nYour outputs will be used to train and evaluate medical error detection systems. Generate natural, realistic clinical text that would be indistinguishable from human-written notes.\n\nIMPORTANT PRINCIPLES:\n1. **Medical Accuracy** (for CORRECT notes): Preserve all clinical facts, even through complex transformations\n2. **Realistic Errors** (for INCORRECT notes): Errors should be plausible, subtle, and clinically significant\n3. **Natural Language**: Write as a clinician would, not as an AI trying to follow rules\n4. **Contextual Awareness**: Consider the full clinical picture, patient demographics, and medical logic\n5. **Diversity**: Vary your approach - don't use the same patterns repeatedly",
+
+  "injector_correct_prompt": "Generate a semantically equivalent paraphrase of this clinical note. You have complete freedom in how you restructure the text, as long as ALL medical facts are preserved.\n\n**What you can change:**\n- Sentence structure, order, and length\n- Medical terminology (use synonyms, alternative phrasings, or different levels of formality)\n- Narrative style (e.g., \"Patient reports\" vs \"History reveals\" vs \"There is evidence of\")\n- Level of detail in descriptions (expand or condense as long as meaning is preserved)\n- Active vs passive voice\n- Clinical documentation style (telegraphic vs full sentences)\n\n**What you MUST preserve exactly:**\n- All diagnoses and their clinical characteristics (severity, acuity, chronicity, stability)\n- All medications with precise: generic/brand names, doses, units, routes, frequencies, durations\n- All laboratory/imaging results with exact: values, units, dates, trends, interpretations\n- All symptoms and signs with: location, quality, severity, timing, modifying factors\n- All procedures and interventions\n- All temporal information and causal relationships\n- All clinical reasoning and assessment\n- All patient demographics relevant to clinical decision-making\n\n**Clinical reasoning instructions:**\n- Think about what a clinician would naturally write\n- Consider documentation standards (SOAP, H&P, progress notes, etc.)\n- Maintain clinical logic and flow\n- Ensure all findings support the assessment/plan\n- Keep medical plausibility (don't add incompatible information)\n\n**Example transformation:**\nOriginal: \"Patient has poorly controlled type 2 diabetes with HbA1c of 9.2% on metformin 1000mg BID. Started on insulin glargine 10 units at bedtime.\"\n\nParaphrase: \"Type 2 diabetes mellitus remains suboptimally managed despite metformin 1000mg twice daily, evidenced by hemoglobin A1c level of 9.2%. Initiated basal insulin therapy with glargine 10 units administered at night.\"\n\n**Original Note:**\n{note}\n\n**Task:**\nGenerate a semantically equivalent paraphrase. Think about natural clinical documentation. Output ONLY the paraphrased note.",
+
+  "injector_incorrect_prompt": "Introduce ONE realistic medical error into this clinical note. The error should be subtle but clinically significant - the kind of mistake that could plausibly occur in practice and would be caught by careful review.\n\n**Error Type to Inject:** {error_type}\n\n**Guidelines for realistic errors:**\n\n1. **Medication Errors** - Common, clinically significant:\n   - Sound-alike drugs (hydrochlorothiazide vs hydroxychloroquine)\n   - Dose magnitude errors (10mg → 100mg, decimal point shifts)\n   - Frequency confusion (daily → weekly, BID → QID)\n   - Route errors (PO → IV for drugs with different bioavailability)\n   - Similar drugs, wrong indication (beta-blocker types, diuretic classes)\n   - Drug-condition contraindications (beta-blocker in asthma)\n   - Drug-drug interactions (warfarin + NSAIDs)\n   - Allergy violations (documented allergy ignored)\n\n2. **Laboratory/Measurement Errors** - Numerical, interpretive:\n   - Decimal point errors (2.5 → 25, 0.5 → 5.0)\n   - Unit confusion (mg/dL vs mmol/L, mcg vs mg)\n   - Wrong interpretation (\"elevated\" for normal value, \"negative\" for positive)\n   - Transposed digits (150 → 510, 8.5 → 5.8)\n   - Reference range misinterpretation\n   - Trend reversal (improving → worsening)\n\n3. **Diagnostic Errors** - Clinical reasoning:\n   - Wrong laterality (right vs left for unilateral conditions)\n   - Wrong severity (mild → severe, stable → decompensated)\n   - Wrong acuity (acute → chronic, new → longstanding)\n   - Similar conditions (MI vs unstable angina, DVT vs cellulitis)\n   - Incompatible diagnoses (contradictory conditions)\n   - Missed diagnosis (omitting key differential)\n\n4. **Temporal Errors** - Timeline, sequence:\n   - Duration confusion (days → weeks → months)\n   - Sequence reversal (treatment started before diagnosis)\n   - Timing inappropriate (immediate action for chronic issue)\n   - Timeline inconsistencies (started medication after discharge)\n\n5. **Anatomical/Localization Errors**:\n   - Wrong anatomical location (proximal → distal)\n   - Wrong distribution (focal → diffuse)\n   - Laterality (unilateral → bilateral, right → left)\n\n6. **Contextual/Patient-Specific Errors**:\n   - Age-inappropriate (pediatric dose in adult, adult drug in child)\n   - Pregnancy contraindications (teratogenic drugs)\n   - Gender-specific issues\n   - Comorbidity conflicts (drug contraindicated in existing condition)\n   - Renal/hepatic dosing errors\n\n**How to introduce the error:**\n1. Analyze the note's clinical context\n2. Identify a plausible location where this error type could occur\n3. Make the modification naturally - don't make it obvious\n4. Ensure the error is detectable but requires careful reading\n5. Maintain natural clinical writing style\n6. Don't add markers, comments, or explanations in the note itself\n\n**Error severity guide:**\n- Avoid trivial errors (typos, minor wording)\n- Aim for errors that would change clinical decision-making\n- Error should be realistic (could happen in practice)\n- Error should be subtle (not glaringly obvious)\n\n**Clinical reasoning:**\n- Think: \"What mistakes do clinicians actually make?\"\n- Consider cognitive biases (anchoring, premature closure)\n- Consider system errors (wrong patient chart, transcription errors)\n- Consider knowledge gaps (uncommon drug interactions)\n\n**Original Note:**\n{note}\n\n**Task:**\nIntroduce ONE realistic error of type: {error_type}\nOutput the modified note naturally. Make it look like a real clinical note with a mistake, not an obviously altered document.",
+
+  "assessor_system_prompt": "You are an expert medical note reviewer trained to detect clinical errors. Your task is to carefully analyze clinical notes and identify any medical errors, inconsistencies, or inaccuracies.\n\nYour expertise includes:\n- Deep medical knowledge across specialties\n- Understanding of clinical reasoning and decision-making\n- Knowledge of common medical errors and their patterns\n- Attention to detail in medications, labs, diagnoses, and procedures\n- Ability to detect subtle inconsistencies and implausibilities\n\nYour classification:\n- **CORRECT**: The note is medically accurate, internally consistent, and clinically sound\n- **INCORRECT**: The note contains one or more medical errors, inconsistencies, or clinical inaccuracies\n\nBe thorough but efficient. Focus on clinically significant issues, not trivial stylistic variations.",
+
+  "assessor_prompt": "Review this clinical note for medical errors, inconsistencies, or inaccuracies.\n\n**Systematic Review Checklist:**\n\n1. **Medications:**\n   - Are drug names correct and spelled properly?\n   - Are doses appropriate for the indication?\n   - Are routes and frequencies standard?\n   - Any contraindications with patient conditions?\n   - Any dangerous drug-drug interactions?\n   - Any allergy violations?\n\n2. **Laboratory/Measurements:**\n   - Are values physiologically plausible?\n   - Are units correct (mg/dL vs mmol/L)?\n   - Are interpretations correct (elevated/normal/low)?\n   - Do values match the clinical picture?\n   - Any decimal point errors?\n\n3. **Diagnoses:**\n   - Is the diagnosis clinically appropriate?\n   - Is severity/acuity correctly characterized?\n   - Is laterality correct (right/left)?\n   - Do symptoms/signs support the diagnosis?\n   - Any conflicting diagnoses?\n\n4. **Temporal Consistency:**\n   - Is the timeline logical and consistent?\n   - Are durations appropriate (days/weeks/months)?\n   - Is sequence of events plausible?\n   - Does timing match clinical urgency?\n\n5. **Physical Exam/Findings:**\n   - Are findings consistent with diagnosis?\n   - Is anatomical location correct?\n   - Are laterality and distribution appropriate?\n   - Do findings make physiological sense?\n\n6. **Treatment/Plan:**\n   - Is treatment appropriate for diagnosis?\n   - Are procedures indicated?\n   - Is monitoring plan adequate?\n   - Any contraindicated interventions?\n\n7. **Patient Context:**\n   - Age-appropriate medications and doses?\n   - Gender-specific considerations?\n   - Pregnancy contraindications if applicable?\n   - Comorbidity interactions?\n\n**Clinical Note:**\n{note}\n\n**Task:**\nClassify this note as CORRECT or INCORRECT.\n\n- If CORRECT: The note is medically accurate and clinically sound\n- If INCORRECT: There is at least one clinically significant error\n\nProvide brief reasoning for your classification. Focus on the most significant finding.",
+
+  "output_format_injector": "Output ONLY the modified clinical note. No explanations, no metadata, no markers. Write it exactly as a clinician would document it.",
+
+  "output_format_assessor": "Output in this format:\n\nClassification: [CORRECT or INCORRECT]\n\nReasoning: [1-2 sentences explaining your decision. If INCORRECT, specify the error found.]",
+
+  "error_types": [
+    "medication error (wrong drug, dose, frequency, or route)",
+    "laboratory value error (wrong value, unit, or interpretation)",
+    "diagnostic error (wrong diagnosis, severity, or location)",
+    "temporal error (wrong duration, timing, or sequence)",
+    "treatment error (inappropriate or contraindicated intervention)",
+    "anatomical error (wrong location, laterality, or distribution)",
+    "patient-specific error (age, gender, pregnancy, or comorbidity conflict)"
+  ],
+
+  "thinking_mode_config": {
+    "injector_thinking_budget": 512,
+    "assessor_thinking_budget": 512,
+    "injector_answer_tokens": 1024,
+    "assessor_answer_tokens": 256,
+    "enable_thinking": true,
+    "thinking_instructions": "Use the <think> section to reason through the task. For injector: analyze the clinical context, identify where to make changes, ensure medical plausibility. For assessor: systematically review each aspect of the note, identify any errors or inconsistencies."
+  },
+
+  "verification_config": {
+    "min_jaccard_similarity": 0.80,
+    "max_jaccard_similarity": 0.98,
+    "max_word_edits_correct": 999,
+    "max_word_edits_incorrect": 20,
+    "require_word_change": true
+  },
+
+  "generation_params": {
+    "injector_correct": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "presence_penalty": 0.3,
+      "frequency_penalty": 0.3
+    },
+    "injector_incorrect": {
+      "temperature": 0.9,
+      "top_p": 0.95,
+      "presence_penalty": 0.4,
+      "frequency_penalty": 0.4
+    },
+    "assessor": {
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "presence_penalty": 0.0,
+      "frequency_penalty": 0.0
+    }
+  },
+
+  "description": "GPT-4o self-play prompts with sophisticated clinical reasoning, leveraging full model capabilities. Designed for complex medical transformations and realistic error injection without the restrictive constraints needed for small models."
+}

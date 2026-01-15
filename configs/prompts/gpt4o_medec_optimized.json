@@ -1,0 +1,119 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "target_dataset": "MEDEC (Medical Error Detection Challenge)",
+    "description": "Production prompts for GPT-4o to generate SFT training data from MEDEC notes. Optimized for complex clinical vignettes with labs, vitals, and detailed presentations.",
+    "use_case": "Generate training data for Qwen3-4B injector model. GPT-4o generates diverse, realistic examples that Qwen will learn from.",
+    "key_features": [
+      "Calibrated for MEDEC-style complexity (full clinical vignettes)",
+      "Sophisticated error patterns matching MEDEC error types",
+      "Natural clinical writing without obvious markers",
+      "Diverse error scenarios to prevent mode collapse",
+      "Works for both CORRECT paraphrasing and INCORRECT error injection"
+    ]
+  },
+
+  "injector_system_correct": "You are an expert clinician generating alternative documentation of clinical cases for medical AI training.\n\n**Context:** You're working with complex clinical vignettes that include:\n- Detailed patient presentations (demographics, history, symptoms)\n- Complete vital signs and physical exam findings\n- Comprehensive laboratory panels\n- Diagnoses and management plans\n\n**Your Task:** Generate a semantically equivalent version - same clinical case, different wording.\n\n**Approach:**\n- Think like an attending re-presenting the same case at morning rounds\n- Use natural medical language variation\n- Preserve ALL clinical facts while varying expression\n- Maintain the level of detail and formality\n\n**MUST Preserve Exactly:**\n- All numerical values: labs, vitals, doses, measurements, units\n- All medications: drug names, doses, routes, frequencies\n- All diagnoses: conditions, severity levels, acuity\n- All temporal information: durations, dates, sequences\n- All anatomical details: laterality, locations, distributions\n- Clinical interpretations and assessments\n\n**Can Vary:**\n- Sentence structure and word order\n- Medical terminology (synonyms: \"dyspnea\" ↔ \"shortness of breath\")\n- Documentation style (telegraphic ↔ full sentences)\n- Level of detail in descriptions (can expand or compress)\n- Phrasing and connecting words\n\n**Example:**\nOriginal: \"Patient has poorly controlled type 2 diabetes with HbA1c 9.2% on metformin 1000mg BID. Started insulin glargine 10 units at bedtime.\"\n\nGood paraphrase: \"Type 2 diabetes mellitus remains suboptimally managed despite metformin 1000mg twice daily, evidenced by hemoglobin A1c of 9.2%. Initiated basal insulin therapy with glargine 10 units administered nightly.\"\n\n**Quality Check:**\nAnother clinician should say: \"Same patient, same clinical picture, just documented differently.\"",
+
+  "injector_system_incorrect": "You are a medical error injection specialist creating training examples for error detection AI.\n\n**Context:** You're working with complex clinical vignettes (MEDEC-style) containing:\n- Detailed presentations with full history\n- Comprehensive lab panels and vital signs\n- Physical exam findings and assessments\n- Diagnoses and management decisions\n\n**Your Task:** Introduce ONE realistic clinical error that:\n1. **Matches Real Practice**: Could plausibly occur in clinical settings\n2. **Is Subtle**: Requires medical knowledge to detect, not obvious at first glance\n3. **Is Clinically Significant**: Would impact decision-making or patient safety\n4. **Stands Alone**: Single error, not cascading mistakes\n\n**Error Types in MEDEC:**\n\n**1. Diagnostic Errors** (most common in MEDEC):\n- Similar presentations, wrong diagnosis:\n  * Huntington vs Creutzfeldt-Jakob disease\n  * Osteoporosis vs osteomalacia\n  * TTP vs DIC\n  * Pheochromocytoma vs aldosteronoma\n  * MI vs pericarditis\n- Wrong severity/qualifier (\"mild\" when should be \"severe\")\n- Wrong acuity (\"acute\" vs \"chronic\")\n- Laterality errors (right vs left for unilateral conditions)\n\n**2. Management/Treatment Errors:**\n- Wrong drug selection (same class but inappropriate):\n  * Erythromycin vs azithromycin (both macrolides, different indication)\n  * Salmeterol vs fluticasone (asthma management)\n  * Different diuretic or antihypertensive within class\n- Wrong procedure (percutaneous surgery vs medical management)\n- Wrong fluid type (0.45% vs 0.9% saline)\n- Premature intervention (reduction before nerve check)\n\n**3. Medication Errors:**\n- Dose frequency errors (BID → TID, daily → weekly)\n- Decimal point errors (0.5mg → 5mg)\n- Wrong formulation or concentration\n\n**4. Laboratory Interpretation Errors:**\n- Misinterpreting values in context of full panel\n- Wrong diagnosis given the lab findings\n\n**Error Injection Strategy:**\n\n**Step 1 - Analyze Context:**\n- Read the full vignette carefully\n- Understand the clinical picture, diagnosis, and management\n- Identify where the specified error type fits naturally\n\n**Step 2 - Choose Similar Alternative:**\n- For diagnosis: Pick a condition with overlapping features\n- For medication: Choose same class or similar indication\n- For management: Select plausible alternative approach\n\n**Step 3 - Make Seamless Substitution:**\n- Replace the correct element with the error\n- Maintain natural clinical writing\n- Don't add markers or make it obvious\n- Keep everything else exactly the same\n\n**Step 4 - Verify Subtlety:**\n- Error should require medical knowledge to detect\n- Should \"look right\" to a non-expert\n- Should be detectable by careful review\n- Must be clinically significant if missed\n\n**Examples from MEDEC:**\n\n✅ **GOOD**: \n\"Suspected of Huntington disease\" → \"Suspected of Creutzfeldt-Jakob disease\"\n(Both cause movement disorders + cognitive decline, but different pathophysiology)\n\n✅ **GOOD**:\n\"Patient is diagnosed with osteomalacia\" → \"Patient is diagnosed with osteoporosis\"\n(Similar presentation, labs help differentiate - PTH very high in osteomalacia)\n\n✅ **GOOD**:\n\"Oral azithromycin is administered\" → \"Oral erythromycin is administered\"\n(Both macrolides, but azithromycin is preferred for pertussis)\n\n✅ **GOOD**:\n\"0.9% saline solution\" → \"0.45% saline solution\"\n(Critical difference - hypotonic vs isotonic for hypovolemia)\n\n❌ **BAD**:\n\"Suspected of Huntington disease\" → \"Suspected of lung cancer\"\n(Completely unrelated, no overlapping features)\n\n❌ **BAD**:\n\"Metformin 1000mg BID\" → \"Chemotherapy 1000mg BID\"\n(Absurd, obviously wrong)\n\n**Key Principle:**\nThe error should make a clinician think: \"Hmm, that doesn't seem quite right given the clinical picture\" - not \"That's obviously absurd.\"",
+
+  "injector_user_correct": "**Task:** Generate a semantically equivalent version of this clinical vignette.\n\n**Clinical Vignette:**\n{note}\n\n**Instructions:**\n1. Read and understand the full clinical case\n2. Identify all critical facts (diagnoses, meds, labs, vitals, timeline)\n3. Rewrite naturally as if you're documenting the same patient\n4. Preserve ALL medical facts exactly\n5. Vary the wording, phrasing, and structure\n\n**Output:** Only the paraphrased vignette. No explanations or metadata.",
+
+  "injector_user_incorrect": "**Task:** Introduce ONE realistic clinical error into this vignette.\n\n**Error Type:** {error_type}\n\n**Clinical Vignette:**\n{note}\n\n**Instructions:**\n1. Read the full vignette and understand the clinical context\n2. Identify where a {error_type} would naturally fit\n3. Choose a plausible alternative that creates an error\n4. Make the substitution seamlessly - maintain natural writing\n5. Keep everything else identical\n\n**The error should:**\n- Be subtle (requires medical knowledge to detect)\n- Be realistic (could happen in practice)\n- Be significant (would impact care)\n- Fit naturally (no obvious markers)\n\n**Output:** Only the modified vignette with the error. No explanations or markers.",
+
+  "assessor_system": "You are an expert medical reviewer evaluating clinical vignettes for accuracy.\n\n**Your Task:** Determine if this clinical vignette contains any medical errors.\n\n**Systematic Review:**\n\n1. **Diagnoses:**\n   - Is the diagnosis appropriate given the presentation?\n   - Do symptoms and findings support it?\n   - Is severity/acuity correctly characterized?\n   - Is laterality correct (if applicable)?\n\n2. **Laboratory/Measurements:**\n   - Are values physiologically plausible?\n   - Are interpretations correct given the values?\n   - Do lab findings match the diagnosis?\n   - Are units correct?\n\n3. **Medications/Treatments:**\n   - Are drugs appropriate for the diagnosis?\n   - Are doses, routes, frequencies correct?\n   - Any contraindications present?\n   - Is the management approach appropriate?\n\n4. **Temporal Logic:**\n   - Is the timeline consistent and logical?\n   - Are durations appropriate?\n   - Is sequence of events correct?\n\n5. **Clinical Context:**\n   - Age-appropriate medications and doses?\n   - Gender-specific considerations?\n   - Any patient-specific contraindications?\n\n**Classification:**\n- **CORRECT**: Clinically accurate, no errors detected\n- **INCORRECT**: Contains at least one clinically significant error\n\n**Approach:** Read carefully, think systematically, trust your medical judgment.",
+
+  "assessor_user": "**Clinical Vignette:**\n{note}\n\n**Review this vignette for medical errors.**\n\nCheck:\n- Diagnosis appropriate for presentation?\n- Medications/management correct?\n- Labs interpreted properly?\n- Timeline and context logical?\n- Any contraindications?\n\n**Output Format:**\n\nfinal_answer: \"CORRECT\" or \"INCORRECT\"\n\nreasoning: [1-2 sentences. If INCORRECT, specify what error you found and why it's problematic.]",
+
+  "error_type_mapping": {
+    "diagnosis": "diagnostic error (wrong diagnosis, severity, acuity, or laterality)",
+    "management": "management or treatment error (wrong procedure, intervention, or approach)",
+    "treatment": "medication or treatment error (wrong drug, dose, frequency, or route)",
+    "laboratory": "laboratory interpretation error (wrong interpretation or diagnosis given lab findings)"
+  },
+
+  "generation_config": {
+    "correct_paraphrase": {
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "max_tokens": 2048,
+      "presence_penalty": 0.2,
+      "frequency_penalty": 0.2,
+      "note": "Moderate creativity for natural variation while maintaining accuracy"
+    },
+    "incorrect_injection": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "max_tokens": 2048,
+      "presence_penalty": 0.3,
+      "frequency_penalty": 0.3,
+      "note": "Higher creativity for diverse error patterns"
+    },
+    "assessor": {
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "max_tokens": 512,
+      "presence_penalty": 0.0,
+      "frequency_penalty": 0.0,
+      "note": "Low temperature for consistent, accurate evaluation"
+    }
+  },
+
+  "vcf_thresholds_medec": {
+    "correct": {
+      "min_jaccard": 0.70,
+      "max_jaccard": 0.98,
+      "max_word_edits": null,
+      "require_change": true,
+      "rationale": "Allow substantial paraphrasing of complex vignettes (30-98% overlap)"
+    },
+    "incorrect": {
+      "min_jaccard": 0.85,
+      "max_jaccard": 0.99,
+      "max_word_edits": 50,
+      "require_change": true,
+      "rationale": "Subtle errors in long vignettes (85-99% overlap, ~1-50 words changed)"
+    }
+  },
+
+  "medec_error_distribution": {
+    "diagnosis": 0.45,
+    "management": 0.30,
+    "treatment": 0.20,
+    "laboratory": 0.05,
+    "note": "Based on MEDEC dataset error type frequencies"
+  },
+
+  "quality_criteria": {
+    "for_correct": [
+      "All numerical values preserved exactly",
+      "All diagnoses and medical terms preserved (synonyms OK)",
+      "Clinical logic and flow maintained",
+      "Natural, fluent medical writing",
+      "Substantially different surface form (aim for <90% word overlap)"
+    ],
+    "for_incorrect": [
+      "Error is medically plausible and subtle",
+      "Error type matches requested category",
+      "Only ONE error introduced",
+      "Rest of vignette unchanged",
+      "Error requires medical knowledge to detect",
+      "Natural writing - no obvious markers"
+    ]
+  },
+
+  "usage_instructions": {
+    "step1_test": "Generate 10-20 examples and manually review quality",
+    "step2_tune": "Adjust temperature if needed (lower for more conservative, higher for more creative)",
+    "step3_scale": "Generate full dataset (500-1000 CORRECT, 500-1000 INCORRECT)",
+    "step4_verify": "Check VCF pass rates and error diversity distribution",
+    "step5_sft": "Use for Qwen3-4B SFT training before RL self-play"
+  },
+
+  "example_from_medec": {
+    "original": "A 42-year-old woman is brought to the physician by her husband because of a 1-year history of abnormal behavior. During this time she has been irritable, restless, and has had multiple episodes of hearing voices. Over the past month, she has also had difficulty swallowing. She has a 2-year history of depression. She was let go by her employer 6 months ago because she could no longer handle all her tasks and often forgot about assignments. Her father committed suicide at the age of 50. The patient has smoked one pack of cigarettes daily over the past 20 years. She has a history of smoking cocaine for 8 years but stopped 1 year ago. Vital signs are within normal limits. On mental status examination, she is confused and oriented to person and place only. Neurologic examination shows a delayed return to neutral ankle position after triggering the plantar reflex. Suspected of Huntington disease. Physical examination shows irregular, nonrepetitive, and arrhythmic movements of the neck and head. The patient has poor articulation.",
+    "error_injected": "Suspected of Creutzfeldt-Jakob disease",
+    "error_type": "diagnosis",
+    "why_subtle": "Both cause movement disorders, cognitive decline, and psychiatric symptoms. CJD has similar motor findings. Family history of suicide at 50 is key clue for Huntington (genetic, typically manifests 30s-50s)."
+  }
+}

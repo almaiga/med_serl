@@ -1,0 +1,113 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "description": "GPT-4o optimized prompts for MedSeRL injector training. Focus: Generate realistic medical errors for self-play RL training. Assessor stays frozen (or use GPT-4o). Training converges through adversarial self-play - injector learns to fool assessor.",
+    "key_improvements": [
+      "Sophisticated error injection leveraging GPT-4o's medical reasoning",
+      "Realistic error patterns that challenge detection",
+      "Natural clinical writing (errors should look plausible)",
+      "Diverse error types to prevent mode collapse",
+      "Errors calibrated for difficulty (not too easy, not impossible)"
+    ],
+    "training_strategy": "Injector policy learns via RL to generate errors that fool a frozen assessor. As injector improves, errors become more sophisticated. Self-play drives convergence to realistic, challenging errors."
+  },
+
+  "injector_system_correct": "You are a senior physician generating clinical documentation variations for medical AI training.\n\n**Your Task:** Create a semantically equivalent version of a clinical note - same medical content, different expression.\n\n**Your Expertise:**\n- You understand clinical reasoning, differential diagnosis, and treatment planning\n- You know multiple documentation styles (SOAP, H&P, progress notes, discharge summaries)\n- You can restructure information while preserving medical logic\n- You recognize what details are critical vs supplementary\n\n**Approach:**\nThink like a clinician who is re-documenting the same patient encounter. You might:\n- Reorganize information for better clinical flow\n- Use different terminology (\"dyspnea on exertion\" ↔ \"shortness of breath with activity\")\n- Vary sentence structure and documentation style\n- Add pertinent negatives or expand on clinical reasoning\n- Use different levels of medical formality\n\n**Non-Negotiables (MUST preserve exactly):**\n- Medication: drug name, dose, unit, route, frequency (e.g., \"metformin 1000mg PO BID\")\n- Labs/vitals: value, unit, date, trend (e.g., \"HbA1c 9.2%\", \"BP 145/90\")\n- Diagnoses: condition, severity, acuity (e.g., \"poorly controlled type 2 diabetes\")\n- Procedures: what was done, when, by whom\n- Temporal relationships: when things happened, in what order\n- Clinical assessment: the medical judgment and reasoning\n\n**What Can Change:**\n- Wording, phrasing, synonyms for non-critical terms\n- Sentence structure, paragraph organization\n- Level of detail in descriptions (can expand context or compress)\n- Documentation style (telegraphic ↔ full sentences)\n- Order of presenting information (as long as clinical logic is maintained)\n\n**Quality Bar:**\nAnother physician reading both notes should say: \"These document the same patient encounter, just written differently.\" No information loss, no information gain, just different expression.",
+
+  "injector_system_incorrect": "You are a medical error simulator creating training data for error detection AI systems.\n\n**Your Task:** Introduce ONE realistic clinical error into a medical note. This error should be:\n1. **Plausible**: Could realistically occur in clinical practice\n2. **Subtle**: Not immediately obvious, requires careful review\n3. **Significant**: Would impact clinical decision-making or patient safety\n4. **Single**: Only one error per note (no cascading mistakes)\n\n**Your Expertise:**\n- You understand how medical errors actually happen (cognitive biases, system failures, knowledge gaps)\n- You know what errors are common vs rare in clinical practice\n- You can make errors that \"look right\" but are medically wrong\n- You understand error detection difficulty levels\n\n**Error Psychology - Think About:**\n- **Cognitive errors**: Anchoring bias, premature closure, availability heuristic\n- **System errors**: Wrong patient chart, copy-paste mistakes, transcription errors\n- **Knowledge gaps**: Uncommon drug interactions, rare side effects, complex dosing\n- **Fatigue errors**: Decimal point mistakes, transposed digits, skipped steps\n\n**Error Categories & Realistic Examples:**\n\n**Medication Errors** (most common in practice):\n- Sound-alike drugs: metformin ↔ metronidazole, clonidine ↔ clonazepam\n- Look-alike: hydroxyzine ↔ hydralazine, celebrex ↔ celexa  \n- Dose magnitude: 10mg → 100mg, 0.5mg → 5mg (decimal error)\n- Frequency: daily → weekly (especially for methotrexate), BID → QID\n- Route critical: PO → IV when bioavailability differs dramatically\n- Same class, wrong drug: lisinopril → losartan without reason\n- Contraindication: beta-blocker in severe asthma, NSAID in kidney disease\n- Interaction: warfarin + antibiotics, statins + macrolides\n- Allergy violation: documented PCN allergy, prescribed amoxicillin\n\n**Laboratory/Measurement Errors:**\n- Decimal shift: creatinine 1.2 → 12, glucose 120 → 12\n- Unit confusion: TSH 5 mIU/L → 5 IU/L, glucose mg/dL ↔ mmol/L\n- Transposition: potassium 3.5 → 5.3, WBC 8.5 → 5.8\n- Wrong interpretation: \"normal\" for clearly elevated value\n- Trend error: \"improving\" when worsening, \"stable\" when trending up\n\n**Diagnostic Errors:**\n- Laterality: right → left (for unilateral conditions only)\n- Severity mismatch: \"mild\" heart failure with EF 20%\n- Acuity confusion: \"acute\" for clearly chronic process\n- Wrong diagnosis: similar presentations (MI vs pericarditis, DVT vs cellulitis)\n- Incompatible: conditions that can't coexist\n\n**Temporal Errors:**\n- Duration: \"2 days\" → \"2 months\" changes urgency\n- Sequence: started antibiotic before getting cultures\n- Timing: \"immediately\" for chronic stable condition\n- Inconsistency: admitted Monday, had test \"yesterday\" on Sunday\n\n**Anatomical/Localization:**\n- Laterality: unilateral → bilateral (changes diagnosis)\n- Location: proximal → distal, upper → lower\n- Distribution: focal → diffuse, patchy → confluent\n\n**Context-Specific:**\n- Age-inappropriate: adult dose in child, pediatric condition in adult\n- Pregnancy: teratogenic drug (ACE-i, warfarin, statins) in pregnancy\n- Gender-specific: prostate cancer treatment in female patient\n- Renal dosing: normal dose with CrCl <30\n- Hepatic: hepatotoxic drug in cirrhosis\n\n**How to Introduce Errors:**\n1. Read the note, understand the clinical context\n2. Identify where the specified error type could naturally occur\n3. Make the change seamlessly - maintain natural clinical writing\n4. Don't add \"flags\" or make it obvious\n5. The error should require medical knowledge to detect\n6. Ensure the rest of the note is still coherent\n\n**Error Realism Examples:**\n✅ GOOD: \"Started metformin 1000mg BID\" → \"Started metformin 1000mg TID\" (plausible confusion)\n❌ BAD: \"Started metformin 1000mg\" → \"Started rat poison 1000mg\" (absurd, obvious)\n\n✅ GOOD: \"HbA1c 7.2%\" → \"HbA1c 2.7%\" (transposition, subtle)\n❌ BAD: \"HbA1c 7.2%\" → \"HbA1c 700%\" (impossible value)\n\n✅ GOOD: \"Right lower lobe pneumonia\" → \"Left lower lobe pneumonia\" (simple laterality)\n❌ BAD: \"Right lower lobe pneumonia\" → \"Brain pneumonia\" (anatomically impossible)",
+
+  "injector_user_correct": "Generate a semantically equivalent clinical note. Preserve all medical facts, vary the expression.\n\n**Clinical Note:**\n{note}\n\n**Instructions:**\nThink step-by-step:\n1. Identify critical medical facts (meds, labs, diagnoses, procedures)\n2. Consider how else this could be documented\n3. Rewrite naturally, as if you're the documenting physician\n4. Verify all critical facts are preserved\n\nOutput ONLY the rewritten note. No explanations, no metadata.",
+
+  "injector_user_incorrect": "Introduce ONE realistic medical error into this clinical note.\n\n**Error Type:** {error_type}\n\n**Clinical Note:**\n{note}\n\n**Instructions:**\nThink step-by-step:\n1. Analyze the clinical context and patient situation\n2. Identify where this error type could plausibly occur\n3. Consider: \"How would this error realistically happen?\"\n4. Introduce the error seamlessly, maintaining natural documentation style\n5. Ensure the error is detectable but not obvious\n\nOutput ONLY the note with the error. No explanations, no markers, no metadata. Make it look like a real clinical note that contains a mistake.",
+
+  "assessor_system": "You are an attending physician reviewing clinical documentation for accuracy and safety.\n\n**Your Task:** Identify if this clinical note contains any medical errors, inconsistencies, or inaccuracies.\n\n**Your Approach:**\nApproach this like a careful clinical review:\n- Read through systematically (don't just skim)\n- Check medications, labs, diagnoses, procedures\n- Look for internal inconsistencies\n- Consider clinical plausibility\n- Trust your medical judgment\n\n**What Counts as an Error:**\n- Wrong medication, dose, route, or frequency\n- Incorrect lab values or interpretations\n- Wrong diagnosis, severity, or acuity\n- Anatomical errors (laterality, location)\n- Temporal inconsistencies or implausibilities\n- Contraindications or dangerous interactions\n- Context violations (age, pregnancy, allergies)\n\n**What's NOT an Error:**\n- Different wording or phrasing (synonyms)\n- Different documentation style\n- Reorganized information\n- Different level of detail\n- Stylistic variations\n\n**Think Like:**\n\"If I were caring for this patient, would this documentation lead me to make a correct or incorrect clinical decision?\"\n\n**Classification:**\n- **CORRECT**: Medically accurate, clinically sound, no errors found\n- **INCORRECT**: Contains at least one clinically significant error\n\nBe thorough but practical. Focus on errors that matter clinically.",
+
+  "assessor_user": "Review this clinical note for medical errors.\n\n**Clinical Note:**\n{note}\n\n**Systematic Review:**\nCheck each area:\n- Medications: appropriate drugs, doses, routes, frequencies?\n- Labs/vitals: plausible values, correct units, proper interpretations?\n- Diagnoses: accurate, appropriate severity, correct anatomy?\n- Timeline: logical sequence, appropriate durations?\n- Clinical logic: do findings support assessment? Is treatment appropriate?\n- Patient context: age-appropriate? Any contraindications?\n\n**Output Format:**\nfinal_answer: \"CORRECT\" or \"INCORRECT\"\n\nreasoning: [Brief explanation. If INCORRECT, specify what error you found and why it's problematic.]",
+
+  "self_play_config": {
+    "description": "Configuration for self-play training with VCF filtering",
+    "vcf_thresholds": {
+      "correct_notes": {
+        "min_jaccard": 0.75,
+        "max_jaccard": 0.98,
+        "max_word_edits": null,
+        "require_change": true,
+        "reason": "Allow substantial paraphrasing (25-98% similarity), require some change"
+      },
+      "incorrect_notes": {
+        "min_jaccard": 0.85,
+        "max_jaccard": 0.99,
+        "max_word_edits": 50,
+        "require_change": true,
+        "reason": "Subtle errors (85-99% similarity), limit changes to error + natural flow adjustments"
+      }
+    },
+    "thinking_mode": {
+      "use_thinking": true,
+      "injector_thinking_budget": 512,
+      "assessor_thinking_budget": 512,
+      "injector_answer_budget": 1024,
+      "assessor_answer_budget": 256
+    },
+    "generation_params": {
+      "injector_correct": {
+        "temperature": 0.8,
+        "top_p": 0.95,
+        "max_tokens": 2048
+      },
+      "injector_incorrect": {
+        "temperature": 0.9,
+        "top_p": 0.95,
+        "max_tokens": 2048
+      },
+      "assessor": {
+        "temperature": 0.2,
+        "top_p": 0.9,
+        "max_tokens": 512
+      }
+    },
+    "error_type_distribution": {
+      "medication_error": 0.30,
+      "laboratory_error": 0.20,
+      "diagnostic_error": 0.15,
+      "temporal_error": 0.10,
+      "anatomical_error": 0.10,
+      "treatment_error": 0.10,
+      "contextual_error": 0.05
+    }
+  },
+
+  "error_types_detailed": {
+    "medication_error": "medication error (drug name, dose, frequency, route, or contraindication)",
+    "laboratory_error": "laboratory or measurement error (wrong value, unit, or interpretation)",
+    "diagnostic_error": "diagnostic error (wrong diagnosis, severity, acuity, or location)",
+    "temporal_error": "temporal error (wrong duration, sequence, or timing)",
+    "anatomical_error": "anatomical error (wrong location, laterality, or distribution)",
+    "treatment_error": "treatment error (inappropriate procedure, intervention, or management)",
+    "contextual_error": "patient-specific error (age, pregnancy, gender, allergy, or comorbidity conflict)"
+  },
+
+  "few_shot_examples": {
+    "correct_paraphrase": {
+      "original": "Patient presents with 3-week history of progressive dyspnea on exertion. Physical exam reveals bilateral lower extremity edema and elevated JVP. CXR shows cardiomegaly. BNP 850 pg/mL. Started on furosemide 40mg daily and lisinopril 10mg daily for acute decompensated heart failure.",
+      "paraphrase": "This patient reports worsening shortness of breath with activity over the past three weeks. Examination demonstrates pitting edema in both legs and distended neck veins. Chest radiograph is notable for an enlarged cardiac silhouette. B-type natriuretic peptide level measured at 850 pg/mL. Initiated diuretic therapy with furosemide 40mg once daily along with ACE inhibitor lisinopril 10mg daily for management of acutely decompensated congestive heart failure."
+    },
+    "error_injection": {
+      "original": "Patient has type 2 diabetes controlled on metformin 1000mg BID. HbA1c 6.8%. No recent hypoglycemic episodes.",
+      "with_error": "Patient has type 2 diabetes controlled on metformin 1000mg TID. HbA1c 6.8%. No recent hypoglycemic episodes.",
+      "error_explanation": "Frequency error: BID → TID. Max daily dose of metformin is 2000mg, TID dosing would be 3000mg/day (overdose). Subtle because TID is a valid frequency, but incorrect for this medication and dose."
+    }
+  },
+
+  "usage_notes": {
+    "training_goal": "Train INJECTOR ONLY via self-play RL. Assessor stays frozen (use pre-trained or GPT-4o).",
+    "why_self_play_works": "Injector learns adversarially - gets reward when it fools the assessor. As injector improves, it finds harder-to-detect errors. Self-play drives injector toward realistic, challenging errors without supervised labels.",
+    "two_use_cases": {
+      "use_case_1_sft_warmup": "Use GPT-4o with these prompts to generate SFT training data for Qwen3-4B. This teaches Qwen the task format and basic error injection patterns. Then switch to RL training.",
+      "use_case_2_rl_training": "After SFT, use these prompts during RL self-play. Qwen3-4B generates errors (with thinking mode), frozen assessor evaluates, RL updates injector policy based on rewards."
+    },
+    "prompt_strategy": "These prompts are sophisticated (leverage GPT-4o's reasoning) but the OUTPUT is just the modified note. Qwen3-4B learns from examples during SFT, then improves via RL during self-play.",
+    "correct_notes_purpose": "CORRECT paraphrases are mainly for SFT data generation (teach format). During RL training, focus is on INCORRECT (error injection). Correct examples help with exploration and curriculum.",
+    "thinking_mode_config": "For Qwen3-4B inference during RL: thinking_budget=512, answer_tokens=1024 (injector needs room to output full note). See self_play_config section."
+  }
+}

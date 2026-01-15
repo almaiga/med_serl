@@ -1,0 +1,72 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "approach": "Augment existing MEDEC error pairs with reasoning and create variations",
+    "strategy": "Use MEDEC's verified error pairs as ground truth. GPT-4o adds: (1) Rich clinical reasoning explaining WHY the error is wrong, (2) Step-by-step COT for small model to learn from, (3) Variations of same error pattern in new clinical contexts",
+    "key_insight": "Don't generate errors from scratch - leverage MEDEC's curated error pairs and augment them"
+  },
+
+  "augmentation_task_1_add_reasoning": {
+    "system_prompt": "You are a medical educator creating training examples for AI error detection.\n\n**Your Task:** Given a clinical vignette with an error (and its correction), explain:\n1. **What the error is** (identify the specific mistake)\n2. **Why it's wrong** (clinical reasoning, lab interpretation, guidelines)\n3. **How to detect it** (key clues, differential diagnosis, lab patterns)\n4. **Clinical impact** (what harm could occur)\n\n**Output Format:**\n```json\n{\n  \"error_analysis\": {\n    \"error_identified\": \"[What was changed - be specific]\",\n    \"error_category\": \"[diagnosis/management/medication/lab_interpretation]\",\n    \"clinical_reasoning\": \"[Why this is wrong - explain the medical reasoning]\",\n    \"key_differentiators\": [\"[Clue 1]\", \"[Clue 2]\", \"[Clue 3]\"],\n    \"correct_reasoning\": \"[Why the correct answer is right]\",\n    \"clinical_impact\": \"[What harm could result from this error]\",\n    \"detection_strategy\": \"[How to catch this error on review]\"\n  }\n}\n```\n\n**Example:**\nError: \"Suspected of Creutzfeldt-Jakob disease\" → Correct: \"Suspected of Huntington disease\"\n\n```json\n{\n  \"error_analysis\": {\n    \"error_identified\": \"Misdiagnosis - Creutzfeldt-Jakob disease instead of Huntington disease\",\n    \"error_category\": \"diagnosis\",\n    \"clinical_reasoning\": \"Both CJD and Huntington cause movement disorders + cognitive decline, but key differentiators: (1) Family history - father suicide at 50 suggests genetic Huntington (typical onset 30s-50s, autosomal dominant), (2) Choreiform movements described (irregular, nonrepetitive) are classic for Huntington, (3) Psychiatric symptoms + job loss from cognitive decline over 1 year fits Huntington's insidious progression. CJD is typically much more rapid (weeks to months, not 1+ years) and causes myoclonus rather than chorea.\",\n    \"key_differentiators\": [\n      \"Family history: Father suicide at 50 (Huntington is genetic, often presents with depression/suicide)\",\n      \"Timeline: 1-year insidious progression (Huntington) vs weeks-months rapid decline (CJD)\",\n      \"Movement type: Choreiform movements (Huntington) vs myoclonus (CJD)\",\n      \"Psychiatric: Depression + job loss over time (Huntington) vs acute delirium (CJD)\"\n    ],\n    \"correct_reasoning\": \"Huntington disease: Autosomal dominant, CAG repeat expansion, presents with chorea + psychiatric symptoms + cognitive decline. Father's suicide at 50 is strong genetic clue. Insidious 1-year progression with job loss fits Huntington's pattern.\",\n    \"clinical_impact\": \"Misdiagnosis affects: (1) Treatment approach - no cure for either but symptomatic management differs, (2) Genetic counseling - Huntington is inherited, family members at risk, (3) Prognosis counseling - different disease courses, (4) Social support planning\",\n    \"detection_strategy\": \"When reviewing movement disorder cases: Check family history (genetic vs sporadic), assess timeline (rapid vs insidious), characterize movements (chorea vs myoclonus vs tremor), look for psychiatric prodrome\"\n  }\n}\n```",
+    "user_template": "Analyze this medical error:\n\n**Incorrect Note (with error):**\n{incorrect_note}\n\n**Correct Note:**\n{correct_note}\n\n**Error Type:** {error_type}\n**Error Location:** {error_sentence}\n**Correction:** {corrected_sentence}\n\nProvide detailed clinical reasoning analysis in JSON format."
+  },
+
+  "augmentation_task_2_create_variations": {
+    "system_prompt": "You are a medical case writer creating training variations.\n\n**Your Task:** Given an original case with a specific error pattern, create NEW clinical vignettes with the SAME error pattern but different clinical context.\n\n**Constraints:**\n1. **Same error pattern**: If original is \"wrong diagnosis between similar conditions\", create new cases with that pattern\n2. **Different clinical context**: New patient demographics, different conditions, different presentation\n3. **Same subtlety level**: Match the difficulty - if original requires lab interpretation, new case should too\n4. **Verified error**: Use well-established medical errors, not made-up scenarios\n\n**Process:**\n1. Identify the error pattern (e.g., \"similar drug names\", \"decimal point in dose\", \"laterality confusion\")\n2. Think of OTHER clinical scenarios where this error pattern occurs\n3. Write a complete clinical vignette with the error\n4. Write the corrected version\n5. Explain the error\n\n**Output Format:**\n```json\n{\n  \"original_error_pattern\": \"[Describe the pattern]\",\n  \"variations\": [\n    {\n      \"variation_id\": 1,\n      \"incorrect_note\": \"[Full clinical vignette with error]\",\n      \"correct_note\": \"[Full clinical vignette corrected]\",\n      \"error_sentence\": \"[Specific error location]\",\n      \"corrected_sentence\": \"[Correction]\",\n      \"error_explanation\": \"[Why this is wrong and how it mirrors original pattern]\"\n    },\n    {\n      \"variation_id\": 2,\n      \"incorrect_note\": \"...\",\n      \"correct_note\": \"...\",\n      \"error_sentence\": \"...\",\n      \"corrected_sentence\": \"...\",\n      \"error_explanation\": \"...\"\n    }\n  ]\n}\n```\n\n**Example:**\nOriginal: Azithromycin ↔ Erythromycin (same class, different first-line choice)\n\nVariations could be:\n- Lisinopril ↔ Enalapril (both ACE inhibitors, lisinopril often preferred)\n- Metoprolol ↔ Atenolol (both beta-blockers, different indications)\n- Omeprazole ↔ Famotidine (both acid reducers, different mechanisms)\n\n**Quality Check:**\n- Variation should teach the SAME lesson as original\n- Error should be equally subtle\n- Clinical context should be realistic and complete",
+    "user_template": "Create 2-3 variations of this error pattern:\n\n**Original Case:**\n{incorrect_note}\n\n**Correct Version:**\n{correct_note}\n\n**Error Type:** {error_type}\n**Error Pattern:** {error_sentence} → {corrected_sentence}\n\nCreate NEW clinical vignettes with the SAME error pattern but different medical context."
+  },
+
+  "augmentation_task_3_copy_then_modify": {
+    "system_prompt": "You are creating training data that teaches models to: (1) Copy text accurately, (2) Make precise surgical modifications.\n\n**Teaching Strategy:**\nSmall models need to learn: \"Copy everything exactly, then change ONE specific thing.\"\n\n**Your Task:**\nGiven a correct note and an error to inject, provide:\n1. **Explicit copy instruction**: \"Copy this note word-for-word\"\n2. **Modification instruction**: \"Change ONLY [specific location] from [X] to [Y]\"\n3. **Verification checklist**: Did you preserve everything else?\n\n**Output Format:**\n```json\n{\n  \"instruction\": \"Copy the following clinical note exactly, with ONE modification.\",\n  \"original_note\": \"[Full note]\",\n  \"modification_required\": {\n    \"location\": \"[Where in the note - be specific]\",\n    \"original_text\": \"[Exact text to find]\",\n    \"replacement_text\": \"[Exact replacement]\",\n    \"reason\": \"[Why making this change - simulate what error type]\"\n  },\n  \"expected_output\": \"[Full note with modification applied]\",\n  \"verification\": {\n    \"check_preservation\": [\"All patient demographics unchanged\", \"All lab values unchanged\", \"All other clinical details unchanged\"],\n    \"check_modification\": \"Only the diagnosis/medication/management changed at specified location\"\n  }\n}\n```\n\n**This teaches:**\n- Precision: Change exactly what's specified, nothing more\n- Copy fidelity: Preserve everything else perfectly\n- Surgical editing: Make minimal targeted changes\n- Verification: Check your work\n\n**Example:**\n```json\n{\n  \"instruction\": \"Copy the following clinical note exactly, with ONE modification.\",\n  \"original_note\": \"[Full 300-word vignette about Huntington]\",\n  \"modification_required\": {\n    \"location\": \"In the assessment section, after neurologic examination findings\",\n    \"original_text\": \"Suspected of Huntington disease.\",\n    \"replacement_text\": \"Suspected of Creutzfeldt-Jakob disease.\",\n    \"reason\": \"Simulate diagnostic error - similar movement disorder presentations\"\n  },\n  \"expected_output\": \"[Full note with only that one sentence changed]\",\n  \"verification\": {\n    \"check_preservation\": [\n      \"Patient demographics: 42-year-old woman ✓\",\n      \"Family history: Father suicide at 50 ✓\",\n      \"Timeline: 1-year history ✓\",\n      \"All other sentences word-for-word ✓\"\n    ],\n    \"check_modification\": \"Only diagnosis line changed: Huntington → CJD\"\n  }\n}\n```",
+    "user_template": "Create copy-then-modify training example:\n\n**Correct Note:**\n{correct_note}\n\n**Error to Inject:**\n- Location: {error_sentence}\n- Change to: {corrected_sentence} (but inject the error direction)\n- Error type: {error_type}\n\nProvide explicit copy-then-modify instructions with verification."
+  },
+
+  "filter_enforcement": {
+    "description": "After augmentation, verify correctness with filters",
+    "filters": [
+      {
+        "name": "exact_preservation_check",
+        "check": "All sentences except modified one are EXACTLY identical (char-by-char)",
+        "implementation": "string_diff(original, modified, exclude=error_location)"
+      },
+      {
+        "name": "numerical_preservation",
+        "check": "All numbers (labs, vitals, doses, ages) unchanged except intentional modification",
+        "implementation": "extract_all_numbers(original) == extract_all_numbers(modified, exclude=error_location)"
+      },
+      {
+        "name": "medical_term_preservation",
+        "check": "All medical diagnoses, medications (except intentional change) preserved",
+        "implementation": "extract_medical_terms(original, medical_ner) == extract_medical_terms(modified, exclude=error_location)"
+      },
+      {
+        "name": "single_change_enforcement",
+        "check": "Only ONE location modified, everything else identical",
+        "implementation": "count_differences(original, modified) == 1"
+      },
+      {
+        "name": "error_plausibility",
+        "check": "The injected error is medically plausible (not absurd)",
+        "implementation": "llm_verify_plausibility(error_type, modification)"
+      }
+    ],
+    "verification_prompt": "Verify this augmented example:\n\nOriginal: {correct_note}\nModified: {incorrect_note}\nIntended change: {error_location}\n\nCheck:\n1. Is everything else EXACTLY preserved?\n2. Is only ONE thing changed?\n3. Are all numbers/meds/diagnoses (except the error) identical?\n4. Is the error plausible?\n\nOutput: PASS or FAIL with reason"
+  },
+
+  "full_pipeline": {
+    "step1": "Load MEDEC error pair (incorrect_note, correct_note, error_sentence, corrected_sentence)",
+    "step2": "Task 1 - Add rich clinical reasoning explaining the error",
+    "step3": "Task 2 - Create 2-3 variations with same error pattern, different context",
+    "step4": "Task 3 - Create copy-then-modify training format",
+    "step5": "Apply filters to verify correctness",
+    "step6": "Output: Original MEDEC pair + reasoning + variations + copy-then-modify examples",
+    "output_count": "Each MEDEC pair → 1 original + 1 reasoning + 2-3 variations + copy-then-modify = ~5-7 training examples"
+  },
+
+  "usage": {
+    "input": "data_processed/medec_paired/train_val_split/sft_train.jsonl",
+    "process": "For each MEDEC pair, run augmentation tasks 1-3, apply filters",
+    "output": "Augmented training data with: reasoning, variations, copy-then-modify examples",
+    "target_model": "Qwen3-4B learns from: (1) GPT-4o's reasoning, (2) diverse examples of same pattern, (3) explicit copy-modify strategy"
+  }
+}
