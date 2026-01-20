@@ -2,6 +2,8 @@ import json
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from pathlib import Path
+from datetime import datetime
+from tqdm import tqdm
 
 # Load prompt template
 def load_prompt_config(config_path):
@@ -52,15 +54,32 @@ def extract_with_model(model, tokenizer, system_prompt, user_template, note_text
     response = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
     return response.strip()
 
+# Save extraction results
+def save_extraction(output_path, note_obj, extraction, error_occurred=False):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    result = {
+        "note_id": note_obj.get("note_id"),
+        "error_type": note_obj.get("error_type"),
+        "corrected_sentence": note_obj.get("corrected_sentence"),
+        "extraction": extraction,
+        "extraction_error": error_occurred,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    with open(output_path, 'a') as f:
+        f.write(json.dumps(result) + '\n')
+
 # Main execution
 if __name__ == "__main__":
     config_path = Path("configs/prompts/clinical_note_extractor.json")
     data_path = Path("data_processed/medec_paired/train_val_split/sft_train.jsonl")
+    output_path = Path("data_processed/parsed_medical_note/extractions.jsonl")
     
     # Load configuration and data
     print("Loading configuration and data...")
     config = load_prompt_config(config_path)
-    notes = load_medical_notes(data_path, num_examples=6)
+    notes = load_medical_notes(data_path, num_examples=50)
     
     print("Loading Llama 3.1-8B-Instruct...")
     model, tokenizer = load_model()
@@ -68,22 +87,22 @@ if __name__ == "__main__":
     system_prompt = config.get("system_prompt", "")
     user_template = config.get("user_template", "")
     
-    # Process each note
-    for i, note_obj in enumerate(notes):
-        print(f"\n{'='*80}")
-        print(f"Example {i+1} - Note ID: {note_obj.get('note_id')}")
-        print(f"{'='*80}")
-        
+    # Process each note with progress bar
+    for note_obj in tqdm(notes, desc="Processing notes", unit="note"):
+        note_id = note_obj.get('note_id')
         corrected_note = note_obj.get("correct_note", "")
         error_type = note_obj.get("error_type", "")
         corrected_sentence = note_obj.get("corrected_sentence", "")
         
-        print(f"Error Type: {error_type}")
-        print(f"\nGround Truth Corrected Sentence:\n{corrected_sentence}")
+        tqdm.write(f"\nProcessing: {note_id} (Error Type: {error_type})")
         
         # Extract using the model
-        print("\nExtracting with model...")
-        extraction = extract_with_model(model, tokenizer, system_prompt, user_template, corrected_note)
-        
-        print(f"\nModel Extraction:\n{extraction}")
-        print(f"\n{'='*80}\n")
+        try:
+            extraction = extract_with_model(model, tokenizer, system_prompt, user_template, corrected_note)
+            save_extraction(output_path, note_obj, extraction, error_occurred=False)
+            tqdm.write(f"✓ Successfully extracted for {note_id}")
+        except Exception as e:
+            tqdm.write(f"✗ Error during extraction for {note_id}: {str(e)}")
+            save_extraction(output_path, note_obj, str(e), error_occurred=True)
+    
+    print(f"\n✓ All extractions saved to: {output_path}")
