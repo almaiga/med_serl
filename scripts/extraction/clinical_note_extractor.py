@@ -60,7 +60,7 @@ if __name__ == "__main__":
     # Load configuration and data
     print("Loading configuration and data...")
     config = load_prompt_config(config_path)
-    notes = load_medical_notes(data_path, num_examples=3)
+    notes = load_medical_notes(data_path, num_examples=6)
     
     print("Loading Llama 3.1-8B-Instruct...")
     model, tokenizer = load_model()
