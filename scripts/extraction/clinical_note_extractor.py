@@ -9,7 +9,7 @@ def load_prompt_config(config_path):
         return json.load(f)
 
 # Load medical notes from JSONL
-def load_medical_notes(jsonl_path, num_examples=3):
+def load_medical_notes(jsonl_path, num_examples=5):
     notes = []
     with open(jsonl_path, 'r') as f:
         for i, line in enumerate(f):
