@@ -31,7 +31,7 @@ def load_model(model_name="meta-llama/Llama-3.1-8B-Instruct"):
 
 # Extract using the model
 def extract_with_model(model, tokenizer, system_prompt, user_template, note_text, max_new_tokens=512):
-    user_input = user_template.format(clinical_note=note_text)
+    user_input = user_template.format(note_text=note_text)
     
     messages = [
         {"role": "system", "content": system_prompt},
