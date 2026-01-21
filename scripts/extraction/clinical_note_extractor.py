@@ -11,7 +11,7 @@ def load_prompt_config(config_path):
         return json.load(f)
 
 # Load medical notes from JSONL
-def load_medical_notes(jsonl_path, num_examples=5):
+def load_medical_notes(jsonl_path, num_examples=None):
     notes = []
     with open(jsonl_path, 'r') as f:
         for i, line in enumerate(f):
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     # Load configuration and data
     print("Loading configuration and data...")
     config = load_prompt_config(config_path)
-    notes = load_medical_notes(data_path, num_examples=50)
+    notes = load_medical_notes(data_path, num_examples=None)
     
     print("Loading Llama 3.1-8B-Instruct...")
     model, tokenizer = load_model()
