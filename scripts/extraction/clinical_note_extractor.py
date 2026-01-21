@@ -61,7 +61,9 @@ def save_extraction(output_path, note_obj, extraction, error_occurred=False):
     result = {
         "note_id": note_obj.get("note_id"),
         "error_type": note_obj.get("error_type"),
+       # "error_sentence": note_obj.get("error_sentence"),
         "corrected_sentence": note_obj.get("corrected_sentence"),
+        "correct_note": note_obj.get("correct_note"),
         "extraction": extraction,
         "extraction_error": error_occurred,
         "timestamp": datetime.now().isoformat()
@@ -94,7 +96,7 @@ if __name__ == "__main__":
         error_type = note_obj.get("error_type", "")
         corrected_sentence = note_obj.get("corrected_sentence", "")
         
-        tqdm.write(f"\nProcessing: {note_id} (Error Type: {error_type})")
+        tqdm.write(f"\nProcessing: {note_id}")
         
         # Extract using the model
         try:
