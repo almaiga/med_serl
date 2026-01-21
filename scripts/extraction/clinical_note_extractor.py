@@ -32,7 +32,7 @@ def load_model(model_name="meta-llama/Llama-3.1-8B-Instruct"):
     return model, tokenizer
 
 # Extract using the model
-def extract_with_model(model, tokenizer, system_prompt, user_template, note_text, max_new_tokens=512):
+def extract_with_model(model, tokenizer, system_prompt, user_template, note_text, max_new_tokens=1024):
     user_input = user_template.format(note_text=note_text)
     
     messages = [
