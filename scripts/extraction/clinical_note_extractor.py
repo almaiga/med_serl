@@ -15,7 +15,7 @@ def load_medical_notes(jsonl_path, num_examples=None):
     notes = []
     with open(jsonl_path, 'r') as f:
         for i, line in enumerate(f):
-            if i >= num_examples:
+            if num_examples is not None and i >= num_examples:
                 break
             notes.append(json.loads(line))
     return notes
