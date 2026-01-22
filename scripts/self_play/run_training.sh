@@ -5,12 +5,15 @@
 set -e
 
 # Configuration
-CONFIG_FILE="scripts/self_play/configs/self_play.yaml"
 OUTPUT_DIR="outputs/self_play"
 EXPERIMENT_NAME="medserl_selfplay_v1"
 
 # Model (adjust as needed)
 MODEL_PATH="Qwen/Qwen3-4B"
+
+# Get absolute path to project root
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
 
 # Create output directory
 mkdir -p $OUTPUT_DIR
@@ -30,11 +33,12 @@ if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
 fi
 
 echo "=== Starting Self-Play Training ==="
+echo "Using config directory: $CONFIG_DIR"
 
 # Step 2: Launch training with verl
 python3 -m verl.trainer.main_ppo \
-    --config-path ./scripts/self_play/configs \
-    --config-name self_play.yaml \
+    --config-path "$CONFIG_DIR" \
+    --config-name self_play \
     algorithm.adv_estimator=reinforce_plus_plus \
     algorithm.kl_coef=0.01 \
     model.path=$MODEL_PATH \
@@ -43,5 +47,5 @@ python3 -m verl.trainer.main_ppo \
     reward.reward_fn_path=scripts/self_play/rewards/zero_sum_reward.py
 
 echo "=== Training Complete ==="
-echo "Outputs saved to: $OUTPUT_DIR"pip
+echo "Outputs saved to: $OUTPUT_DIR"
 echo "Game logs saved to: results/self_play/"
