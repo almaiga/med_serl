@@ -41,10 +41,7 @@ python3 -m verl.trainer.main_ppo \
     --config-name self_play \
     algorithm.adv_estimator=reinforce_plus_plus \
     algorithm.kl_coef=0.01 \
-    model.path=$MODEL_PATH \
-    trainer.output_dir=$OUTPUT_DIR \
-    trainer.experiment_name=$EXPERIMENT_NAME \
-    reward.reward_fn_path=scripts/self_play/rewards/zero_sum_reward.py
+    actor_rollout_ref.model.path=$MODEL_PATH
 
 echo "=== Training Complete ==="
 echo "Outputs saved to: $OUTPUT_DIR"
