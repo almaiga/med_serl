@@ -33,7 +33,8 @@ echo "=== Starting Self-Play Training ==="
 
 # Step 2: Launch training with verl
 python3 -m verl.trainer.main_ppo \
-    $CONFIG_FILE \
+    --config-path scripts/self_play/configs \
+    --config-name self_play.yaml \
     algorithm.adv_estimator=reinforce_plus_plus \
     algorithm.kl_coef=0.01 \
     model.path=$MODEL_PATH \
