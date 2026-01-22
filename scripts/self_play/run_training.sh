@@ -70,6 +70,8 @@ python3 -m verl.trainer.main_ppo \
     algorithm.gamma=1.0 \
     algorithm.lam=0.95 \
     algorithm.kl_ctrl.kl_coef=0.001 \
+    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
+    custom_reward_function.name=compute_score \
     trainer.logger=console \
     trainer.project_name='medserl-selfplay' \
     trainer.experiment_name=$EXPERIMENT_NAME \
