@@ -57,10 +57,8 @@ def create_verl_example(
         "prompt": initial_prompt,
         "ability": "medical_error_detection",
         "reward_model": {
-            "ground_truth": {
-                "note_id": example.get("note_id", ""),
-                "error_type": example.get("error_type", ""),
-            }
+            "style": "rule",
+            "ground_truth": example.get("note_id", "")  # Simple string ID
         },
         "extra_info": {
             "note_id": example.get("note_id", ""),
@@ -94,7 +92,10 @@ def convert_to_parquet(
         ("data_source", pa.string()),
         ("prompt", pa.string()),  # JSON-encoded chat messages
         ("ability", pa.string()),
-        ("reward_model", pa.string()),  # JSON-encoded
+        ("reward_model", pa.struct([  # Keep as struct for verl compatibility
+            ("style", pa.string()),
+            ("ground_truth", pa.string()),  # Simple string value
+        ])),
         ("extra_info", pa.struct([  # Keep as struct for verl compatibility
             ("note_id", pa.string()),
             ("correct_note", pa.string()),
@@ -111,7 +112,7 @@ def convert_to_parquet(
             "data_source": ex["data_source"],
             "prompt": json.dumps(ex["prompt"]),
             "ability": ex["ability"],
-            "reward_model": json.dumps(ex["reward_model"]),
+            "reward_model": ex["reward_model"],  # Keep as dict
             "extra_info": ex["extra_info"],  # Keep as dict
         })
     
