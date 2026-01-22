@@ -26,10 +26,14 @@ python3 scripts/self_play/preprocess_medec.py \
     --output data_processed/self_play/train.parquet
 
 # Also preprocess validation data if exists
+VAL_FILE="data_processed/self_play/val.parquet"
 if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
     python3 scripts/self_play/preprocess_medec.py \
         --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
-        --output data_processed/self_play/val.parquet
+        --output "$VAL_FILE"
+else
+    echo "Warning: No separate validation file found, will use training file for validation"
+    VAL_FILE="data_processed/self_play/train.parquet"
 fi
 
 echo "=== Starting Self-Play Training ==="
@@ -40,7 +44,7 @@ echo "Using verl default config with overrides"
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="$PROJECT_ROOT/data_processed/self_play/train.parquet" \
-    data.val_files="$PROJECT_ROOT/data_processed/self_play/val.parquet" \
+    data.val_files="$PROJECT_ROOT/$VAL_FILE" \
     data.train_batch_size=64 \
     data.max_prompt_length=256 \
     data.max_response_length=512 \
