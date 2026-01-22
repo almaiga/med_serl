@@ -222,6 +222,11 @@ trainer:
 transfer_queue:
   enable: false
 
+# Global Profiler (required by verl)
+global_profiler:
+  enable: false
+  tool: null  # nsys, torch, or null
+
 # Ray distributed training config
 ray_kwargs:
   ray_init:
