@@ -89,13 +89,20 @@ def convert_to_parquet(
     ]
     
     # Convert to PyArrow table
-    # verl expects specific schema
+    # verl expects specific schema with nested structs for dicts
     schema = pa.schema([
         ("data_source", pa.string()),
         ("prompt", pa.string()),  # JSON-encoded chat messages
         ("ability", pa.string()),
         ("reward_model", pa.string()),  # JSON-encoded
-        ("extra_info", pa.string()),  # JSON-encoded
+        ("extra_info", pa.struct([  # Keep as struct for verl compatibility
+            ("note_id", pa.string()),
+            ("correct_note", pa.string()),
+            ("incorrect_note", pa.string()),
+            ("error_type", pa.string()),
+            ("error_sentence", pa.string()),
+            ("corrected_sentence", pa.string()),
+        ])),
     ])
     
     rows = []
@@ -105,7 +112,7 @@ def convert_to_parquet(
             "prompt": json.dumps(ex["prompt"]),
             "ability": ex["ability"],
             "reward_model": json.dumps(ex["reward_model"]),
-            "extra_info": json.dumps(ex["extra_info"]),
+            "extra_info": ex["extra_info"],  # Keep as dict
         })
     
     table = pa.Table.from_pylist(rows, schema=schema)
