@@ -14,7 +14,7 @@ data:
 
 # Model configuration
 model:
-  path: "Qwen/Qwen2.5-7B-Instruct"  # Adjust as needed
+  path: "Qwen/Qwen3-4b"  # Adjust as needed
   trust_remote_code: true
 
 # Actor/Rollout configuration
