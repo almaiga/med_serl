@@ -1,5 +1,13 @@
-# MedSeRL Self-Play Configuration
-# Uses verl with REINFORCE++ for medical error detection game
+# MedSeRL Self-Play Configuration for verl REINFORCE++
+
+# Ray distributed training config
+ray_kwargs:
+  ray_init:
+    num_cpus: null  # auto-detect
+    num_gpus: null  # auto-detect
+    local_mode: false
+  placement_group:
+    strategy: "SPREAD"
 
 # Data configuration
 data:
@@ -8,65 +16,97 @@ data:
   val_files:
     - data_processed/self_play/val.parquet
   train_batch_size: 32
-  micro_batch_size: 8
+  val_batch_size: 32
   max_prompt_length: 2048
   max_response_length: 2048
+  pad_to_multiple_of: 8
 
 # Model configuration
 model:
-  path: "Qwen/Qwen3-4b"  # Adjust as needed
+  path: "Qwen/Qwen2.5-7B-Instruct"
   trust_remote_code: true
+  torch_dtype: bfloat16
 
-# Actor/Rollout configuration
+# Actor/Rollout/Reference model configuration
 actor_rollout_ref:
   actor:
-    learning_rate: 5e-7
-    lr_scheduler: cosine
-    lr_end: 5e-8
-    warmup_steps: 10
-    gradient_accumulation_steps: 4
+    optim:
+      lr: 5e-7
+      scheduler_type: cosine
+      min_lr: 5e-8
+      warmup_ratio: 0.03
+    ppo_mini_batch_size: 4
+    ppo_micro_batch_size: 1
+    gradient_checkpointing: true
     
   rollout:
-    name: sglang
+    log_prob_micro_batch_size: 8
+    tensor_model_parallel_size: 1
+    gpu_memory_utilization: 0.8
+    
+    # Generation config
     temperature: 1.0
     top_p: 1.0
+    top_k: -1
     max_new_tokens: 2048
     
     # Multi-turn configuration for self-play
-    multi_turn: true
-    tool_kwargs:
-      tools_config_file: scripts/self_play/tools/tool_config.yaml
-      max_turns: 2  # Injector turn + Assessor turn
-      
+    enable_chunked_prefill: false
+    
   ref:
-    # Reference model for KL penalty
-    sync_interval: 1
+    log_prob_micro_batch_size: 8
+    fsdp_config:
+      param_offload: false
+      grad_offload: false
 
-# Algorithm configuration
+# Algorithm configuration (REINFORCE++)
 algorithm:
-  adv_estimator: reinforce_plus_plus  # REINFORCE++ not GRPO
-  kl_coef: 0.01  # β = 0.01 per Self-RedTeam
-  clip_range: 0.2
-  entropy_coef: 0.0
-  
-  # Advantage normalization (unified for v1)
+  adv_estimator: reinforce_plus_plus
+  kl_ctrl: fixed  # fixed KL coefficient
+  kl_coef: 0.01
+  gamma: 1.0
+  lam: 0.95
+  cliprange: 0.2
+  cliprange_value: 0.2
+  vf_coef: 0.1
+  ent_coef: 0.0
   normalize_advantage: true
+  normalize_reward: false
 
-# Reward configuration  
-reward:
-  reward_fn_path: scripts/self_play/rewards/zero_sum_reward.py
-  
-# Training configuration
+# Reward configuration
+reward_model:
+  enable: true
+  input_tokenizer: model  # use same tokenizer as model
+  style: "rule"  # rule-based reward (not learned)
+
+# Trainer configuration
 trainer:
-  total_steps: 300
-  save_interval: 50
-  eval_interval: 25
-  log_interval: 10
+  project_name: medserl_selfplay
+  experiment_name: selfplay_v1
+  logger: ["console", "wandb"]
   
-  output_dir: outputs/self_play
-  experiment_name: medserl_selfplay_v1
+  total_epochs: 10
+  total_training_steps: 300
+  
+  test_freq: 50
+  save_freq: 50
+  log_freq: 10
+  
+  default_hdfs_dir: null
+  default_local_dir: outputs/self_play
 
-# Distributed configuration
-distributed:
-  num_actors: 4
-  num_gpus_per_actor: 1
+# Checkpoint configuration
+checkpoint:
+  save_optimizer: false
+  save_scheduler: false
+
+# Resource allocation
+resource_pool_manager:
+  actor:
+    num_gpus_per_actor: 1
+  rollout:
+    num_gpus_per_rollout_worker: 1
+  critic:
+    num_gpus_per_critic: 1
+  ref:
+    num_gpus_per_ref: 1
