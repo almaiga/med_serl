@@ -41,7 +41,7 @@ python3 -m verl.trainer.main_ppo \
     --config-name self_play \
     algorithm.adv_estimator=reinforce_plus_plus \
     algorithm.kl_coef=0.01 \
-    actor_rollout_ref.model.path=$MODEL_PATH
+    model.path=$MODEL_PATH
 
 echo "=== Training Complete ==="
 echo "Outputs saved to: $OUTPUT_DIR"

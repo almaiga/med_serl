@@ -23,7 +23,7 @@ data:
 
 # Model configuration
 model:
-  path: "Qwen/Qwen2.5-7B-Instruct"
+  path: "Qwen/Qwen3-4B"
   trust_remote_code: true
   torch_dtype: bfloat16
 
