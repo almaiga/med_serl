@@ -1,0 +1,17 @@
+# Tool configuration for self-play game
+
+tools:
+  - name: medical_game
+    class: scripts.self_play.tools.medical_game_tool.MedicalGameTool
+    config:
+      benign_ratio: 0.5  # 50% benign, 50% error injection
+      max_turns: 2
+      # Prompt config file paths
+      injection_prompts_path: "configs/prompts/error_injection_prompts_v2.json"
+      detection_prompts_path: "configs/prompts/error_detection_prompts.json"
+
+# Multi-turn settings
+multi_turn:
+  enabled: true
+  max_turns: 2
+  turn_separator: "\n---\n"

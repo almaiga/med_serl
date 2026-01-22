@@ -1,0 +1,35 @@
+[{
+  "change_type": "pseudo_factual",
+  "description": "Replace a medical term with a clinically equivalent synonym",
+  "target_sections": ["history.past_medical_history", "history.history_of_present_illness", "examination.physical_exam_findings", "course_and_outcome.diagnosis_primary", "clinical_data.microbiology"],
+  "system_prompt": "You are a medical terminology expert with access to UMLS, SNOMED-CT, and medical databases.\n\nYour task: Replace the specified medical term with a clinically IDENTICAL synonym.\n\nRules:\n1. The replacement must have the SAME clinical meaning (same UMLS CUI or SNOMED code)\n2. Examples of valid substitutions:\n   - \"Streptococcus pneumoniae\" → \"pneumococcus\"\n   - \"myocardial infarction\" → \"heart attack\"\n   - \"dyspnea\" → \"shortness of breath\"\n   - \"Huntington disease\" → \"Huntington's chorea\"\n   - \"depression\" → \"major depressive disorder\"\n3. Do NOT change any clinical facts, just the terminology\n4. Return the FULL modified note with the substitution applied",
+  "user_template": "Replace the medical term \"{target_term}\" with a clinically equivalent synonym in this note.\n\nClinical Note:\n\"\"\"\n{note_text}\n\"\"\"\n\nOutput JSON:\n{\n  \"original_term\": \"the term being replaced\",\n  \"replacement_term\": \"the synonym\",\n  \"umls_cui\": \"UMLS CUI if known, else null\",\n  \"modified_note\": \"full note with substitution applied\",\n  \"change_made\": true\n}"
+},
+{
+  "change_type": "temporal_rephrasing",
+  "description": "Rephrase time expressions while preserving exact duration/timing",
+  "target_sections": ["history.history_of_present_illness", "history.past_medical_history", "history.social_history"],
+  "system_prompt": "You are a clinical documentation specialist.\n\nYour task: Rephrase the specified time expression while keeping the EXACT same duration/timing.\n\nRules:\n1. Valid temporal rephrasings:\n   - \"1-year history\" → \"12-month history\"\n   - \"1-day history\" → \"24-hour history\"\n   - \"2 weeks ago\" → \"14 days ago\"\n   - \"past 20 years\" → \"last two decades\"\n   - \"6 months ago\" → \"half a year ago\"\n2. The clinical timeline must remain IDENTICAL\n3. Return the FULL modified note with the substitution applied",
+  "user_template": "Rephrase the time expression \"{target_term}\" while preserving the exact duration in this note.\n\nClinical Note:\n\"\"\"\n{note_text}\n\"\"\"\n\nOutput JSON:\n{\n  \"original_expression\": \"the time expression being replaced\",\n  \"replacement_expression\": \"the rephrased version\",\n  \"modified_note\": \"full note with substitution applied\",\n  \"change_made\": true\n}"
+},
+{
+  "change_type": "irrelevant_correlation",
+  "description": "Change non-clinical details that don't affect diagnosis/treatment",
+  "target_sections": ["demographics.occupation", "history.social_history"],
+  "system_prompt": "You are a clinical relevance analyst.\n\nYour task: Change the specified non-clinical detail to something equivalent that has NO impact on diagnosis or treatment.\n\nRules:\n1. Valid irrelevant changes:\n   - Who brings patient: \"husband\" → \"wife\" / \"family member\"\n   - Geographic locations with same exposure risk\n   - Time of day (if not clinically relevant)\n2. Do NOT change anything that affects:\n   - Exposure risk or occupational hazards relevant to diagnosis\n   - Genetic inheritance patterns\n   - Clinically significant timing\n3. Return the FULL modified note with the substitution applied",
+  "user_template": "Change the non-clinical detail \"{target_term}\" to something equivalent that doesn't affect diagnosis in this note.\n\nClinical Note:\n\"\"\"\n{note_text}\n\"\"\"\n\nOutput JSON:\n{\n  \"original_detail\": \"the detail being replaced\",\n  \"replacement_detail\": \"the equivalent detail\",\n  \"clinical_impact\": \"none - explain why\",\n  \"modified_note\": \"full note with substitution applied\",\n  \"change_made\": true\n}"
+},
+{
+  "change_type": "equivalent_citation",
+  "description": "Replace specific drug/procedure with its class or standard equivalent",
+  "target_sections": ["history.medications_prior_to_admission", "course_and_outcome.plan_and_treatment", "examination.physical_exam_findings"],
+  "system_prompt": "You are a pharmacology and medical standards expert with access to RxNorm, RadLex, and clinical guidelines.\n\nYour task: Replace the specified drug, procedure, or finding with its clinically equivalent class or standard term.\n\nRules:\n1. Valid drug-to-class abstractions (RxNorm-based):\n   - \"metoprolol\" → \"beta-blocker\"\n   - \"lisinopril\" → \"ACE inhibitor\"\n   - \"cocaine\" → \"stimulant substance\"\n2. Valid finding standardizations:\n   - \"plantar reflex\" → \"Babinski reflex test\"\n3. The clinical meaning must remain IDENTICAL\n4. Return the FULL modified note with the substitution applied",
+  "user_template": "Replace \"{target_term}\" with its clinically equivalent class or standard term in this note.\n\nClinical Note:\n\"\"\"\n{note_text}\n\"\"\"\n\nOutput JSON:\n{\n  \"original_term\": \"the term being replaced\",\n  \"replacement_term\": \"the class/standard equivalent\",\n  \"source_database\": \"RxNorm/RadLex/ICD-10/etc\",\n  \"modified_note\": \"full note with substitution applied\",\n  \"change_made\": true\n}"
+},
+{
+  "change_type": "logical_restatement",
+  "description": "Rephrase a clinical statement while preserving exact meaning",
+  "target_sections": ["examination.physical_exam_findings", "course_and_outcome.diagnosis_primary", "history.history_of_present_illness"],
+  "system_prompt": "You are a medical writing specialist.\n\nYour task: Rephrase the specified clinical statement using different sentence structure while preserving the EXACT clinical meaning.\n\nRules:\n1. Valid logical restatements:\n   - \"Vital signs are within normal limits\" → \"Vitals unremarkable\"\n   - \"Suspected of Huntington disease\" → \"Clinical presentation consistent with Huntington disease\"\n   - \"The patient has poor articulation\" → \"Dysarthria noted on examination\"\n2. ALL clinical facts must remain identical\n3. Return the FULL modified note with the substitution applied",
+  "user_template": "Rephrase the sentence \"{original_sentence}\" using different sentence structure while preserving the exact meaning in this note.\n\nClinical Note:\n\"\"\"\n{note_text}\n\"\"\"\n\nOutput JSON:\n{\n  \"original_sentence\": \"the sentence being replaced\",\n  \"replacement_sentence\": \"the rephrased version\",\n  \"preserved_facts\": [\"list\", \"of\", \"facts\"],\n  \"modified_note\": \"full note with substitution applied\",\n  \"change_made\": true\n}"
+}]

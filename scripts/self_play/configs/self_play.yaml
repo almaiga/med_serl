@@ -1,0 +1,72 @@
+# MedSeRL Self-Play Configuration
+# Uses verl with REINFORCE++ for medical error detection game
+
+# Data configuration
+data:
+  train_files:
+    - data_processed/self_play/train.parquet
+  val_files:
+    - data_processed/self_play/val.parquet
+  train_batch_size: 32
+  micro_batch_size: 8
+  max_prompt_length: 2048
+  max_response_length: 2048
+
+# Model configuration
+model:
+  path: "Qwen/Qwen2.5-7B-Instruct"  # Adjust as needed
+  trust_remote_code: true
+
+# Actor/Rollout configuration
+actor_rollout_ref:
+  actor:
+    learning_rate: 5e-7
+    lr_scheduler: cosine
+    lr_end: 5e-8
+    warmup_steps: 10
+    gradient_accumulation_steps: 4
+    
+  rollout:
+    name: sglang
+    temperature: 1.0
+    top_p: 1.0
+    max_new_tokens: 2048
+    
+    # Multi-turn configuration for self-play
+    multi_turn: true
+    tool_kwargs:
+      tools_config_file: scripts/self_play/tools/tool_config.yaml
+      max_turns: 2  # Injector turn + Assessor turn
+      
+  ref:
+    # Reference model for KL penalty
+    sync_interval: 1
+
+# Algorithm configuration
+algorithm:
+  adv_estimator: reinforce_plus_plus  # REINFORCE++ not GRPO
+  kl_coef: 0.01  # β = 0.01 per Self-RedTeam
+  clip_range: 0.2
+  entropy_coef: 0.0
+  
+  # Advantage normalization (unified for v1)
+  normalize_advantage: true
+
+# Reward configuration  
+reward:
+  reward_fn_path: scripts/self_play/rewards/zero_sum_reward.py
+  
+# Training configuration
+trainer:
+  total_steps: 300
+  save_interval: 50
+  eval_interval: 25
+  log_interval: 10
+  
+  output_dir: outputs/self_play
+  experiment_name: medserl_selfplay_v1
+
+# Distributed configuration
+distributed:
+  num_actors: 4
+  num_gpus_per_actor: 1
