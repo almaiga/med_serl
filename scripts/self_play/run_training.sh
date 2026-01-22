@@ -10,7 +10,7 @@ OUTPUT_DIR="outputs/self_play"
 EXPERIMENT_NAME="medserl_selfplay_v1"
 
 # Model (adjust as needed)
-MODEL_PATH="Qwen/Qwen2.5-7B-Instruct"
+MODEL_PATH="Qwen/Qwen3-4B"
 
 # Create output directory
 mkdir -p $OUTPUT_DIR
@@ -43,5 +43,5 @@ python3 -m verl.trainer.main_ppo \
     reward.reward_fn_path=scripts/self_play/rewards/zero_sum_reward.py
 
 echo "=== Training Complete ==="
-echo "Outputs saved to: $OUTPUT_DIR"
+echo "Outputs saved to: $OUTPUT_DIR"pip
 echo "Game logs saved to: results/self_play/"
