@@ -1,7 +1,11 @@
 """Preprocess MEDEC data for self-play training with verl.
 
-Converts JSONL data to verl-compatible format with all fields needed
-for both Injector modes (benign and error injection).
+Converts JSONL data to verl-compatible format.
+For each note pair, generates 2 examples:
+1. Benign mode (ground_truth="CORRECT") - only uses correct_note
+2. Error mode (ground_truth="INCORRECT") - uses full pair for error injection
+
+Prompts are loaded from JSON config files at preprocessing time.
 """
 
 import json
@@ -23,50 +27,90 @@ def load_jsonl(filepath: Path) -> list[dict]:
     return data
 
 
-def create_verl_example(
-    example: dict,
+def load_prompts(prompt_file: str) -> dict:
+    """Load prompts from JSON config file."""
+    with open(prompt_file, 'r') as f:
+        return json.load(f)
+
+
+def create_benign_example(
+    pair: dict,
+    injection_prompts: dict,
+    idx: int,
     data_source: str = "medec_selfplay",
 ) -> dict:
-    """Convert a MEDEC example to verl format.
+    """Create a benign modification example (ground_truth = CORRECT).
     
-    verl expects:
-    - data_source: str
-    - prompt: list[dict] (chat format)
-    - ability: str (optional)
-    - reward_model: dict with ground_truth
-    - extra_info: dict with additional data
-    
-    For self-play, we store all note data in extra_info and
-    construct prompts dynamically during rollout based on mode.
+    Injector receives only the correct_note and makes surface edits.
     """
-    # Initial prompt is minimal - the game tool will construct
-    # the actual prompt based on randomly selected mode
-    initial_prompt = [
-        {
-            "role": "system",
-            "content": "You are participating in a medical note game."
-        },
-        {
-            "role": "user", 
-            "content": "Awaiting game initialization..."
-        }
-    ]
+    system_prompt = injection_prompts["system_prompt_correct"]
+    user_template = injection_prompts["injector_correct_template"]
+    user_prompt = user_template.format(note=pair["correct_note"])
+    
+    note_id = pair.get("note_id", f"selfplay-{idx}")
     
     return {
         "data_source": data_source,
-        "prompt": initial_prompt,
+        "prompt": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
         "ability": "medical_error_detection",
         "reward_model": {
             "style": "rule",
-            "ground_truth": example.get("note_id", "")  # Simple string ID
+            "ground_truth": "CORRECT"  # FIXED: was using note_id
         },
         "extra_info": {
-            "note_id": example.get("note_id", ""),
-            "correct_note": example["correct_note"],
-            "incorrect_note": example["incorrect_note"],
-            "error_type": example.get("error_type", ""),
-            "error_sentence": example.get("error_sentence", ""),
-            "corrected_sentence": example.get("corrected_sentence", ""),
+            "note_id": f"{note_id}-benign",
+            "correct_note": pair["correct_note"],
+            "incorrect_note": "",  # Not needed for benign
+            "error_type": "",
+            "error_sentence": "",
+            "corrected_sentence": "",
+            "mode": "benign",
+        }
+    }
+
+
+def create_error_example(
+    pair: dict,
+    injection_prompts: dict,
+    idx: int,
+    data_source: str = "medec_selfplay",
+) -> dict:
+    """Create an error injection example (ground_truth = INCORRECT).
+    
+    Injector receives the correct_note and error_type to guide injection.
+    """
+    system_prompt = injection_prompts["system_prompt_incorrect"]
+    user_template = injection_prompts["injector_incorrect_template"]
+    error_type = pair.get("error_type", "clinical error")
+    user_prompt = user_template.format(
+        note=pair["correct_note"],
+        prompt_intent=error_type
+    )
+    
+    note_id = pair.get("note_id", f"selfplay-{idx}")
+    
+    return {
+        "data_source": data_source,
+        "prompt": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "ability": "medical_error_detection",
+        "reward_model": {
+            "style": "rule",
+            "ground_truth": "INCORRECT"  # FIXED: was using note_id
+        },
+        "extra_info": {
+            "note_id": f"{note_id}-error",
+            "correct_note": pair["correct_note"],
+            "incorrect_note": pair["incorrect_note"],
+            "error_type": pair.get("error_type", ""),
+            "error_sentence": pair.get("error_sentence", ""),
+            "corrected_sentence": pair.get("corrected_sentence", ""),
+            "mode": "error_injection",
         }
     }
 
@@ -74,17 +118,37 @@ def create_verl_example(
 def convert_to_parquet(
     input_path: Path,
     output_path: Path,
+    injection_prompts_path: str = "configs/prompts/error_injection_prompts_v2.json",
     data_source: str = "medec_selfplay",
 ) -> None:
-    """Convert JSONL to Parquet format for verl."""
+    """Convert JSONL to Parquet format for verl.
     
-    examples = load_jsonl(input_path)
-    print(f"Loaded {len(examples)} examples from {input_path}")
+    Each pair generates 2 examples (1 benign + 1 error).
+    """
     
-    verl_examples = [
-        create_verl_example(ex, data_source) 
-        for ex in examples
-    ]
+    pairs = load_jsonl(input_path)
+    print(f"Loaded {len(pairs)} pairs from {input_path}")
+    
+    # Load prompts from config
+    injection_prompts = load_prompts(injection_prompts_path)
+    print(f"Loaded prompts from {injection_prompts_path}")
+    
+    # Generate 2 examples per pair
+    verl_examples = []
+    for idx, pair in enumerate(pairs):
+        if not pair.get("correct_note") or not pair.get("incorrect_note"):
+            print(f"Warning: Skipping pair {idx} - missing required fields")
+            continue
+            
+        # Benign example (CORRECT)
+        benign_ex = create_benign_example(pair, injection_prompts, idx, data_source)
+        verl_examples.append(benign_ex)
+        
+        # Error example (INCORRECT)
+        error_ex = create_error_example(pair, injection_prompts, idx, data_source)
+        verl_examples.append(error_ex)
+    
+    print(f"Generated {len(verl_examples)} examples ({len(pairs)} benign + {len(pairs)} error)")
     
     # Convert to PyArrow table
     # verl expects specific schema with nested structs for dicts
@@ -92,17 +156,18 @@ def convert_to_parquet(
         ("data_source", pa.string()),
         ("prompt", pa.string()),  # JSON-encoded chat messages
         ("ability", pa.string()),
-        ("reward_model", pa.struct([  # Keep as struct for verl compatibility
+        ("reward_model", pa.struct([
             ("style", pa.string()),
-            ("ground_truth", pa.string()),  # Simple string value
+            ("ground_truth", pa.string()),  # "CORRECT" or "INCORRECT"
         ])),
-        ("extra_info", pa.struct([  # Keep as struct for verl compatibility
+        ("extra_info", pa.struct([
             ("note_id", pa.string()),
             ("correct_note", pa.string()),
             ("incorrect_note", pa.string()),
             ("error_type", pa.string()),
             ("error_sentence", pa.string()),
             ("corrected_sentence", pa.string()),
+            ("mode", pa.string()),  # "benign" or "error_injection"
         ])),
     ])
     
@@ -112,8 +177,8 @@ def convert_to_parquet(
             "data_source": ex["data_source"],
             "prompt": json.dumps(ex["prompt"]),
             "ability": ex["ability"],
-            "reward_model": ex["reward_model"],  # Keep as dict
-            "extra_info": ex["extra_info"],  # Keep as dict
+            "reward_model": ex["reward_model"],
+            "extra_info": ex["extra_info"],
         })
     
     table = pa.Table.from_pylist(rows, schema=schema)
@@ -121,11 +186,25 @@ def convert_to_parquet(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path)
     print(f"Saved {len(rows)} examples to {output_path}")
+    
+    # Print sample for verification
+    if verl_examples:
+        print("\n--- Sample BENIGN example ---")
+        sample = verl_examples[0]
+        print(f"ground_truth: {sample['reward_model']['ground_truth']}")
+        print(f"mode: {sample['extra_info']['mode']}")
+        print(f"prompt preview: {sample['prompt'][1]['content'][:200]}...")
+        
+        print("\n--- Sample ERROR example ---")
+        sample = verl_examples[1]
+        print(f"ground_truth: {sample['reward_model']['ground_truth']}")
+        print(f"mode: {sample['extra_info']['mode']}")
+        print(f"prompt preview: {sample['prompt'][1]['content'][:200]}...")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Preprocess MEDEC data for self-play training"
+        description="Preprocess MEDEC data for self-play training (generates 2 examples per pair)"
     )
     parser.add_argument(
         "--input",
@@ -140,6 +219,12 @@ def main():
         help="Output Parquet file path",
     )
     parser.add_argument(
+        "--injection-prompts",
+        type=str,
+        default="configs/prompts/error_injection_prompts_v2.json",
+        help="Path to injection prompts JSON",
+    )
+    parser.add_argument(
         "--data-source",
         type=str,
         default="medec_selfplay",
@@ -147,7 +232,12 @@ def main():
     )
     
     args = parser.parse_args()
-    convert_to_parquet(args.input, args.output, args.data_source)
+    convert_to_parquet(
+        args.input, 
+        args.output, 
+        args.injection_prompts,
+        args.data_source
+    )
 
 
 if __name__ == "__main__":

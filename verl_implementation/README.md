@@ -1,54 +1,87 @@
-# MedSeRL verl Implementation
+# MedSeRL Self-Play Training Pipeline
 
-This directory contains the implementation of **MedSeRL** (Medical Self-play Error detection via Reinforcement Learning) using the **verl** framework with **REINFORCE++** algorithm.
+Two-phase self-play game for medical error detection: **Injector → Assessor**
+
+## Overview
+
+The self-play system trains a model to both generate and detect medical errors through a competitive game:
+
+### Phase 1: Injector
+- **Benign mode**: Makes minimal surface edits (1-3 words) while preserving clinical meaning
+- **Error mode**: Injects subtle clinical errors (diagnosis, management, pharmacotherapy)
+- **Output**: Modified clinical note (with hidden `<think>` reasoning stripped before Phase 2)
+
+### Phase 2: Assessor
+- **Input**: Only the modified note (no original note or Injector's reasoning)
+- **Task**: Classify as `CORRECT` or `INCORRECT` with medical reasoning
+- **Output**: `final_answer: "CORRECT"` or `"INCORRECT"` + explanation
+
+### Rewards (Zero-Sum)
+- **Assessor correct**: Assessor +1.0, Injector -1.0
+- **Assessor wrong**: Assessor -1.0, Injector +1.0
+- **Format bonus**: +0.2 for following required output format
 
 ## 📁 Structure
 
 ```
 verl_implementation/
-├── IMPLEMENTATION_PLAN.md      # Detailed implementation plan
-├── README.md                   # This file
+├── README.md                            # This file
+├── config/
+│   └── interaction_config.yaml          # Interaction system config
 ├── data/
-│   └── preprocess_medec.py     # Convert MEDEC to verl format
+│   ├── preprocess_medec.py             # Original MEDEC preprocessor
+│   └── preprocess_selfplay.py          # Self-play data generator (NEW)
 ├── reward/
-│   └── medec_reward.py         # Custom reward function
+│   └── reward_function.py              # Reward computation
 └── scripts/
-    ├── setup_verl.sh           # Environment setup
-    ├── run_medserl_reinforce.sh # REINFORCE++ training
-    └── run_medserl_grpo.sh     # GRPO training (alternative)
+    ├── run_training.sh                  # Main training launch script (NEW)
+    ├── test_interaction.py              # Unit tests for game flow (NEW)
+    └── verify_data.py                   # Validate parquet files (NEW)
 ```
 
 ## 🚀 Quick Start
 
-### 1. Setup Environment
+### 1. Generate Self-Play Data
+
+From 405 note pairs → 810 training examples (405 benign + 405 error)
 
 ```bash
-# Install verl with vLLM backend
-bash scripts/setup_verl.sh --backend vllm
+python verl_implementation/data/preprocess_selfplay.py \
+    --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
+    --output_dir data_processed/selfplay
+
+# Output:
+#   data_processed/selfplay/train.parquet (729 examples)
+#   data_processed/selfplay/test.parquet (81 examples)
 ```
 
-### 2. Preprocess MEDEC Data
+### 2. Verify Data
 
 ```bash
-# Convert MEDEC data to verl parquet format
-python data/preprocess_medec.py \
-    --input_dir ../data_raw/MEDEC \
-    --output_dir ~/data/medec
+python verl_implementation/scripts/verify_data.py
 ```
 
-### 3. Run Training
+Checks: parquet structure, required fields, label balance, interaction kwargs
+
+### 3. Test Interaction System
 
 ```bash
-# Train with REINFORCE++
-bash scripts/run_medserl_reinforce.sh \
-    --model Qwen/Qwen2.5-3B-Instruct \
-    --gpus 1
-
-# Or train with GRPO (often more stable)
-bash scripts/run_medserl_grpo.sh \
-    --model Qwen/Qwen2.5-3B-Instruct \
-    --gpus 1
+python verl_implementation/scripts/test_interaction.py
 ```
+
+Validates: two-phase game flow, CoT stripping, reward calculation, format bonus
+
+### 4. Start Training
+
+```bash
+bash verl_implementation/scripts/run_training.sh
+```
+
+Training config:
+- **Model**: `google/medgemma-4b-it`
+- **Backend**: SGLang with multi-turn rollout
+- **Interaction**: 2-phase (Injector → Assessor)
+- **Batch size**: 512, **Epochs**: 50, **LR**: 5e-7
 
 ## 🎯 Task Description
 

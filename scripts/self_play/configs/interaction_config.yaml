@@ -1,0 +1,74 @@
+# MedSeRL Multi-Turn Interaction Configuration
+# Two-phase game: Injector modifies note → Assessor classifies
+
+# Interaction handler settings
+interaction_class: scripts.self_play.interactions.medical_game_interaction.MedicalGameInteraction
+
+# Game configuration
+game_config:
+  # Prompts for Assessor (Phase 2)
+  assessor_prompts_path: configs/prompts/error_detection_prompts.json
+  
+  # Max turns per episode
+  max_turns: 2  # Turn 1: Injector, Turn 2: Assessor
+  
+  # Format enforcement
+  require_structured_output: true
+  
+  # Assessor configuration
+  assessor:
+    # What Assessor sees: only the modified note (no CoT)
+    show_cot: false
+    show_original: false
+    show_only_modified: true
+    
+    # Response format requirement
+    response_format: |
+      <thinking>Your reasoning process here</thinking>
+      <answer>CORRECT or INCORRECT</answer>
+
+# Multi-turn rollout settings (verl-specific)
+multi_turn:
+  # Enable the interaction system
+  enabled: true
+  
+  # Stop conditions
+  stop_conditions:
+    - type: regex
+      pattern: "<answer>(CORRECT|INCORRECT)</answer>"
+    - type: max_turns
+      value: 2
+  
+  # Turn transition logic
+  turn_transition: "tool_based"  # or "fixed_sequence"
+
+# Tool definitions (if using tool_based transitions)
+tools:
+  - name: submit_modified_note
+    description: "Submit the modified clinical note for assessment"
+    parameters:
+      modified_note:
+        type: string
+        required: true
+      reasoning:
+        type: string
+        required: false
+    
+  - name: classify_note
+    description: "Classify whether the note contains errors"
+    parameters:
+      classification:
+        type: string
+        enum: ["CORRECT", "INCORRECT"]
+        required: true
+      reasoning:
+        type: string
+        required: false
+
+# Logging
+logging:
+  enabled: true
+  log_dir: results/self_play/interactions
+  log_prompts: true
+  log_responses: true
+  log_rewards: true
