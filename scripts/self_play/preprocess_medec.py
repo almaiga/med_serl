@@ -6,15 +6,15 @@ For each note pair, generates 2 examples:
 2. Error mode (ground_truth="INCORRECT") - uses full pair for error injection
 
 Prompts are loaded from JSON config files at preprocessing time.
+
+CRITICAL: verl's RLHFDataset expects 'prompt' as a native list of message dicts,
+NOT a JSON-encoded string. We use HuggingFace datasets for proper serialization.
 """
 
 import json
 import argparse
 from pathlib import Path
 from typing import Any
-
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 
 def load_jsonl(filepath: Path) -> list[dict]:
@@ -124,6 +124,9 @@ def convert_to_parquet(
     """Convert JSONL to Parquet format for verl.
     
     Each pair generates 2 examples (1 benign + 1 error).
+    
+    IMPORTANT: verl expects 'prompt' as a native list of dicts, NOT a JSON string.
+    See: https://github.com/volcengine/verl/blob/main/verl/utils/dataset/rl_dataset.py
     """
     
     pairs = load_jsonl(input_path)
@@ -150,41 +153,26 @@ def convert_to_parquet(
     
     print(f"Generated {len(verl_examples)} examples ({len(pairs)} benign + {len(pairs)} error)")
     
-    # Convert to PyArrow table
-    # verl expects specific schema with nested structs for dicts
-    schema = pa.schema([
-        ("data_source", pa.string()),
-        ("prompt", pa.string()),  # JSON-encoded chat messages
-        ("ability", pa.string()),
-        ("reward_model", pa.struct([
-            ("style", pa.string()),
-            ("ground_truth", pa.string()),  # "CORRECT" or "INCORRECT"
-        ])),
-        ("extra_info", pa.struct([
-            ("note_id", pa.string()),
-            ("correct_note", pa.string()),
-            ("incorrect_note", pa.string()),
-            ("error_type", pa.string()),
-            ("error_sentence", pa.string()),
-            ("corrected_sentence", pa.string()),
-            ("mode", pa.string()),  # "benign" or "error_injection"
-        ])),
-    ])
+    # Use HuggingFace datasets for proper serialization
+    # verl uses datasets.load_dataset("parquet", ...) which handles list columns properly
+    from datasets import Dataset
     
+    # Flatten the data structure for HuggingFace datasets
     rows = []
     for ex in verl_examples:
         rows.append({
             "data_source": ex["data_source"],
-            "prompt": json.dumps(ex["prompt"]),
+            "prompt": ex["prompt"],  # Keep as native list, NOT json.dumps!
             "ability": ex["ability"],
-            "reward_model": ex["reward_model"],
-            "extra_info": ex["extra_info"],
+            "reward_model": ex["reward_model"],  # Keep as native dict
+            "extra_info": ex["extra_info"],  # Keep as native dict
         })
     
-    table = pa.Table.from_pylist(rows, schema=schema)
+    # Create HuggingFace dataset and save as parquet
+    hf_dataset = Dataset.from_list(rows)
     
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, output_path)
+    hf_dataset.to_parquet(str(output_path))
     print(f"Saved {len(rows)} examples to {output_path}")
     
     # Print sample for verification
@@ -193,13 +181,23 @@ def convert_to_parquet(
         sample = verl_examples[0]
         print(f"ground_truth: {sample['reward_model']['ground_truth']}")
         print(f"mode: {sample['extra_info']['mode']}")
-        print(f"prompt preview: {sample['prompt'][1]['content'][:200]}...")
+        user_content = sample['prompt'][1]['content'] if len(sample['prompt']) > 1 else sample['prompt'][0]['content']
+        print(f"prompt preview (user): {user_content[:300]}...")
         
         print("\n--- Sample ERROR example ---")
         sample = verl_examples[1]
         print(f"ground_truth: {sample['reward_model']['ground_truth']}")
         print(f"mode: {sample['extra_info']['mode']}")
-        print(f"prompt preview: {sample['prompt'][1]['content'][:200]}...")
+        user_content = sample['prompt'][1]['content'] if len(sample['prompt']) > 1 else sample['prompt'][0]['content']
+        print(f"prompt preview (user): {user_content[:300]}...")
+    
+    # Verify the saved file
+    print("\n--- Verifying saved parquet ---")
+    loaded = Dataset.from_parquet(str(output_path))
+    print(f"Loaded {len(loaded)} examples")
+    first_row = loaded[0]
+    print(f"prompt type: {type(first_row['prompt'])}")
+    print(f"prompt[0]: {first_row['prompt'][0] if isinstance(first_row['prompt'], list) else 'NOT A LIST!'}")
 
 
 def main():
