@@ -190,7 +190,6 @@ def compute_similarity(text1: str, text2: str) -> float:
 
 
 def extract_generated_note(response: str) -> Optional[str]:
-def extract_generated_note(response: str) -> Optional[str]:
     """Extract the generated_note section from Injector's response.
     
     Expected format:
