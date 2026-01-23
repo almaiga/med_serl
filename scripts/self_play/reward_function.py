@@ -4,6 +4,17 @@ Following verl documentation format:
 https://verl.readthedocs.io/en/latest/preparation/reward_function.html
 """
 
+import json
+import os
+from pathlib import Path
+from datetime import datetime
+
+
+# Global log file path
+LOG_DIR = Path(__file__).parent.parent.parent / "results" / "self_play" / "interactions"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / f"interactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+
 
 def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     """Compute reward score for medical error detection self-play.
@@ -22,4 +33,20 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     """
     # For now, return neutral reward to allow training to proceed
     # TODO: Implement proper game-based reward evaluation
-    return 0.5
+    reward = 0.5
+    
+    # Log the interaction to file
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "data_source": data_source,
+        "ground_truth": ground_truth,
+        "model_response": solution_str,
+        "reward": reward,
+        "extra_info": extra_info
+    }
+    
+    # Append to log file
+    with open(LOG_FILE, 'a') as f:
+        f.write(json.dumps(log_entry) + '\n')
+    
+    return reward
