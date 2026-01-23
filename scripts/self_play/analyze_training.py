@@ -74,6 +74,13 @@ def compute_statistics(interactions: list) -> dict:
             "with_think_tags": 0,
             "missing_closing_think": 0,
         },
+        # Note similarity metrics
+        "similarity": {
+            "benign_total": 0.0,
+            "benign_count": 0,
+            "error_total": 0.0,
+            "error_count": 0,
+        },
     }
     
     for ix in interactions:
@@ -97,6 +104,16 @@ def compute_statistics(interactions: list) -> dict:
             stats["token_metrics"]["with_think_tags"] += 1
         if ix.get("missing_closing_think", False):
             stats["token_metrics"]["missing_closing_think"] += 1
+        
+        # Similarity metrics (if available)
+        similarity = ix.get("note_similarity")
+        if similarity is not None and ix.get("has_generated_note", False):
+            if mode == "benign":
+                stats["similarity"]["benign_total"] += similarity
+                stats["similarity"]["benign_count"] += 1
+            else:
+                stats["similarity"]["error_total"] += similarity
+                stats["similarity"]["error_count"] += 1
         
         # Overall outcomes
         stats["by_outcome"][outcome] += 1
@@ -156,6 +173,12 @@ def compute_statistics(interactions: list) -> dict:
         "truncated_count": truncated,
         "with_think_tags": token_metrics["with_think_tags"],
         "missing_closing_think": token_metrics["missing_closing_think"],
+        
+        # Similarity metrics
+        "avg_similarity_benign": stats["similarity"]["benign_total"] / max(stats["similarity"]["benign_count"], 1),
+        "similarity_benign_count": stats["similarity"]["benign_count"],
+        "avg_similarity_error": stats["similarity"]["error_total"] / max(stats["similarity"]["error_count"], 1),
+        "similarity_error_count": stats["similarity"]["error_count"],
     }
     
     # Per-mode metrics
@@ -223,6 +246,16 @@ def print_report(stats: dict):
     print(f"  Truncation Rate:       {metrics.get('truncation_rate', 0):.2%} ({metrics.get('truncated_count', 0)} truncated)")
     print(f"  With <think> tags:     {metrics.get('with_think_tags', 0)}")
     print(f"  Missing </think>:      {metrics.get('missing_closing_think', 0)}")
+    
+    # Note similarity metrics
+    print(f"\n📝 NOTE SIMILARITY (Original vs Generated)")
+    print("-"*50)
+    benign_sim_count = metrics.get('similarity_benign_count', 0)
+    error_sim_count = metrics.get('similarity_error_count', 0)
+    if benign_sim_count > 0:
+        print(f"  Benign mode:           {metrics.get('avg_similarity_benign', 0):.1%} similarity ({benign_sim_count} samples)")
+    if error_sim_count > 0:
+        print(f"  Error mode:            {metrics.get('avg_similarity_error', 0):.1%} similarity ({error_sim_count} samples)")
     
     # Error type analysis
     error_types = stats.get("error_types", {})

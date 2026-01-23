@@ -126,6 +126,12 @@ def get_summary_stats() -> Dict[str, Any]:
             "truncated_responses": truncated,
             "responses_with_think_tags": _stats["responses_with_think_tags"],
             "responses_missing_closing_think": _stats["responses_missing_closing_think"],
+            
+            # Note similarity metrics
+            "avg_similarity_benign": _stats["total_similarity_benign"] / max(_stats["benign_similarity_count"], 1),
+            "similarity_benign_count": _stats["benign_similarity_count"],
+            "avg_similarity_error": _stats["total_similarity_error"] / max(_stats["error_similarity_count"], 1),
+            "similarity_error_count": _stats["error_similarity_count"],
         }
 
 
@@ -171,7 +177,7 @@ def compute_similarity(text1: str, text2: str) -> float:
         text2: Second text (e.g., generated/modified note)
         
     Returns:
-        float: Similarity ratio between 0.0 (completely different) and 1.0 (identical)
+        float: Similarity ratio (0.0=completely different, 1.0=identical)
     """
     if not text1 or not text2:
         return 0.0
@@ -183,26 +189,7 @@ def compute_similarity(text1: str, text2: str) -> float:
     return SequenceMatcher(None, text1_norm, text2_norm).ratio()
 
 
-def compute_similarity(text1: str, text2: str) -> float:
-    """Compute similarity ratio between two texts using SequenceMatcher.
-    
-    Args:
-        text1: First text (e.g., original note)
-        text2: Second text (e.g., generated/modified note)
-        
-    Returns:
-        float: Similarity ratio between 0.0 (completely different) and 1.0 (identical)
-    """
-    if not text1 or not text2:
-        return 0.0
-    
-    # Normalize whitespace for fair comparison
-    text1_norm = ' '.join(text1.split())
-    text2_norm = ' '.join(text2.split())
-    
-    return SequenceMatcher(None, text1_norm, text2_norm).ratio()
-
-
+def extract_generated_note(response: str) -> Optional[str]:
 def extract_generated_note(response: str) -> Optional[str]:
     """Extract the generated_note section from Injector's response.
     
@@ -521,6 +508,14 @@ def print_summary():
     print(f"  Truncation Rate: {summary.get('truncation_rate', 0):.2%} ({summary.get('truncated_responses', 0)} truncated)")
     print(f"  Responses with <think>: {summary.get('responses_with_think_tags', 0)}")
     print(f"  Missing </think>: {summary.get('responses_missing_closing_think', 0)}")
+    print("-"*70)
+    print("NOTE SIMILARITY (Original vs Generated):")
+    benign_sim_count = summary.get('similarity_benign_count', 0)
+    error_sim_count = summary.get('similarity_error_count', 0)
+    if benign_sim_count > 0:
+        print(f"  Benign mode: {summary.get('avg_similarity_benign', 0):.1%} similarity ({benign_sim_count} samples)")
+    if error_sim_count > 0:
+        print(f"  Error mode: {summary.get('avg_similarity_error', 0):.1%} similarity ({error_sim_count} samples)")
     print("="*70 + "\n")
     
     # Save final summary
