@@ -35,14 +35,24 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     # TODO: Implement proper game-based reward evaluation
     reward = 0.5
     
+    # Convert extra_info to JSON-serializable types (handles numpy int64, etc.)
+    def make_serializable(obj):
+        if hasattr(obj, 'item'):  # numpy types
+            return obj.item()
+        elif isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(item) for item in obj]
+        return obj
+    
     # Log the interaction to file
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "data_source": data_source,
         "ground_truth": ground_truth,
         "model_response": solution_str,
-        "reward": reward,
-        "extra_info": extra_info
+        "reward": float(reward),
+        "extra_info": make_serializable(extra_info) if extra_info else None
     }
     
     # Append to log file
