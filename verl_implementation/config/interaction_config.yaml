@@ -1,0 +1,14 @@
+# Medical Game Interaction Configuration for verl
+# This configures the two-phase self-play game (Injector → Assessor)
+
+interaction:
+  - name: "medical_game"
+    class_name: "scripts.self_play.interactions.medical_game_interaction.MedicalGameInteraction"
+    config:
+      # Path to detection prompts (used for Assessor phase)
+      detection_prompts_path: "configs/prompts/error_detection_prompts.json"
+      
+      # Optional: Add any other configuration parameters here
+      # reward_win: 1.0
+      # reward_lose: -1.0
+      # format_bonus: 0.2
