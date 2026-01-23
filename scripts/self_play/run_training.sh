@@ -33,7 +33,8 @@ echo "=== Step 1: Preprocessing MEDEC data ==="
 python3 scripts/self_play/preprocess_medec.py \
     --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
     --output data_processed/self_play/train.parquet \
-    --injection-prompts configs/prompts/error_injection_prompts_v2.json
+    --injection-prompts configs/prompts/error_injection_prompts_v2.json \
+    --max-pairs 50
 
 # Also preprocess validation data if exists
 VAL_FILE="data_processed/self_play/val.parquet"
@@ -41,7 +42,8 @@ if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
     python3 scripts/self_play/preprocess_medec.py \
         --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
         --output "$VAL_FILE" \
-        --injection-prompts configs/prompts/error_injection_prompts_v2.json
+        --injection-prompts configs/prompts/error_injection_prompts_v2.json \
+        --max-pairs 50
 else
     echo "Warning: No separate validation file, using training file for validation"
     VAL_FILE="data_processed/self_play/train.parquet"

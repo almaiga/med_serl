@@ -120,10 +120,14 @@ def convert_to_parquet(
     output_path: Path,
     injection_prompts_path: str = "configs/prompts/error_injection_prompts_v2.json",
     data_source: str = "medec_selfplay",
+    max_pairs: int = None,
 ) -> None:
     """Convert JSONL to Parquet format for verl.
     
     Each pair generates 2 examples (1 benign + 1 error).
+    
+    Args:
+        max_pairs: If set, limit to this many pairs (generates 2x examples).
     
     IMPORTANT: verl expects 'prompt' as a native list of dicts, NOT a JSON string.
     See: https://github.com/volcengine/verl/blob/main/verl/utils/dataset/rl_dataset.py
@@ -131,6 +135,11 @@ def convert_to_parquet(
     
     pairs = load_jsonl(input_path)
     print(f"Loaded {len(pairs)} pairs from {input_path}")
+    
+    # Limit pairs if requested
+    if max_pairs is not None and max_pairs < len(pairs):
+        pairs = pairs[:max_pairs]
+        print(f"Limited to {len(pairs)} pairs (will generate {len(pairs) * 2} examples)")
     
     # Load prompts from config
     injection_prompts = load_prompts(injection_prompts_path)
@@ -228,13 +237,20 @@ def main():
         default="medec_selfplay",
         help="Data source identifier",
     )
+    parser.add_argument(
+        "--max-pairs",
+        type=int,
+        default=None,
+        help="Max number of pairs to process (each generates 2 examples)",
+    )
     
     args = parser.parse_args()
     convert_to_parquet(
         args.input, 
         args.output, 
         args.injection_prompts,
-        args.data_source
+        args.data_source,
+        args.max_pairs,
     )
 
 
