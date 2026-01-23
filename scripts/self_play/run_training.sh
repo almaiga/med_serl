@@ -61,7 +61,7 @@ python3 -m verl.trainer.main_ppo \
     data.val_files="$PROJECT_ROOT/$VAL_FILE" \
     data.train_batch_size=64 \
     data.max_prompt_length=1024 \
-    data.max_response_length=2048 \
+    data.max_response_length=4096 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.shuffle=True \

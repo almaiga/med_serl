@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from collections import defaultdict
 import threading
+from difflib import SequenceMatcher
 
 
 # Global log file path - creates new file per training run
@@ -58,6 +59,19 @@ _stats = {
     # For computing averages
     "benign_count": 0,
     "error_count": 0,
+    # Token metrics
+    "total_response_chars": 0,
+    "total_response_tokens_approx": 0,  # Rough estimate: chars / 4
+    "min_response_chars": float('inf'),
+    "max_response_chars": 0,
+    "truncated_responses": 0,  # Responses that appear cut off
+    "responses_with_think_tags": 0,
+    "responses_missing_closing_think": 0,
+    # Note similarity metrics (Injector modifications)
+    "total_similarity_benign": 0.0,
+    "benign_similarity_count": 0,
+    "total_similarity_error": 0.0,
+    "error_similarity_count": 0,
 }
 
 
@@ -74,6 +88,12 @@ def get_summary_stats() -> Dict[str, Any]:
         
         benign_total = _stats["benign_count"]
         error_total = _stats["error_count"]
+        
+        # Token metrics
+        total_chars = _stats["total_response_chars"]
+        min_chars = _stats["min_response_chars"] if _stats["min_response_chars"] != float('inf') else 0
+        max_chars = _stats["max_response_chars"]
+        truncated = _stats["truncated_responses"]
         
         return {
             "total_interactions": total,
@@ -96,6 +116,16 @@ def get_summary_stats() -> Dict[str, Any]:
             "error_count": error_total,
             "correct_classifications": correct,
             "wrong_classifications": wrong,
+            
+            # Token/Generation metrics
+            "avg_response_chars": total_chars / total if total > 0 else 0,
+            "avg_response_tokens_approx": (total_chars / 4) / total if total > 0 else 0,  # ~4 chars per token
+            "min_response_chars": min_chars,
+            "max_response_chars": max_chars,
+            "truncation_rate": truncated / total if total > 0 else 0,
+            "truncated_responses": truncated,
+            "responses_with_think_tags": _stats["responses_with_think_tags"],
+            "responses_missing_closing_think": _stats["responses_missing_closing_think"],
         }
 
 
@@ -131,6 +161,46 @@ def parse_final_answer(response: str) -> Optional[str]:
         return "CORRECT"
     
     return None
+
+
+def compute_similarity(text1: str, text2: str) -> float:
+    """Compute similarity ratio between two texts using SequenceMatcher.
+    
+    Args:
+        text1: First text (e.g., original note)
+        text2: Second text (e.g., generated/modified note)
+        
+    Returns:
+        float: Similarity ratio between 0.0 (completely different) and 1.0 (identical)
+    """
+    if not text1 or not text2:
+        return 0.0
+    
+    # Normalize whitespace for fair comparison
+    text1_norm = ' '.join(text1.split())
+    text2_norm = ' '.join(text2.split())
+    
+    return SequenceMatcher(None, text1_norm, text2_norm).ratio()
+
+
+def compute_similarity(text1: str, text2: str) -> float:
+    """Compute similarity ratio between two texts using SequenceMatcher.
+    
+    Args:
+        text1: First text (e.g., original note)
+        text2: Second text (e.g., generated/modified note)
+        
+    Returns:
+        float: Similarity ratio between 0.0 (completely different) and 1.0 (identical)
+    """
+    if not text1 or not text2:
+        return 0.0
+    
+    # Normalize whitespace for fair comparison
+    text1_norm = ' '.join(text1.split())
+    text2_norm = ' '.join(text2.split())
+    
+    return SequenceMatcher(None, text1_norm, text2_norm).ratio()
 
 
 def extract_generated_note(response: str) -> Optional[str]:
@@ -200,6 +270,58 @@ def make_serializable(obj: Any) -> Any:
     return obj
 
 
+def detect_truncation(response: str) -> dict:
+    """Detect if response was truncated due to token limits.
+    
+    Returns dict with:
+        - is_truncated: bool
+        - has_think_tag: bool
+        - missing_closing_think: bool
+        - response_chars: int
+        - response_tokens_approx: int
+    """
+    if not response:
+        return {
+            "is_truncated": False,
+            "has_think_tag": False,
+            "missing_closing_think": False,
+            "response_chars": 0,
+            "response_tokens_approx": 0,
+        }
+    
+    response_chars = len(response)
+    response_tokens_approx = response_chars // 4  # Rough estimate
+    
+    has_think_tag = "<think>" in response.lower()
+    has_closing_think = "</think>" in response.lower()
+    missing_closing_think = has_think_tag and not has_closing_think
+    
+    # Truncation indicators:
+    # 1. Has opening <think> but no closing </think>
+    # 2. Ends mid-word (no punctuation or whitespace at end)
+    # 3. No final_answer after opening <think>
+    # 4. Ends with incomplete sentence
+    
+    ends_cleanly = response.rstrip().endswith(('.', '!', '?', '"', "'", ')', ']', '}', '>'))
+    has_final_answer = bool(re.search(r'final_answer:', response, re.IGNORECASE))
+    
+    is_truncated = (
+        missing_closing_think or
+        (has_think_tag and not has_final_answer) or
+        (not ends_cleanly and response_chars > 100)  # Long response that doesn't end cleanly
+    )
+    
+    return {
+        "is_truncated": is_truncated,
+        "has_think_tag": has_think_tag,
+        "missing_closing_think": missing_closing_think,
+        "response_chars": response_chars,
+        "response_tokens_approx": response_tokens_approx,
+        "has_final_answer": has_final_answer,
+        "ends_cleanly": ends_cleanly,
+    }
+
+
 def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     """Compute reward score for medical error detection self-play.
     
@@ -231,11 +353,18 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     extra_info = make_serializable(extra_info) if extra_info else {}
     mode = extra_info.get("mode", "unknown")
     
+    # Detect truncation and get token metrics
+    truncation_info = detect_truncation(solution_str)
+    
     # Parse model's classification
     model_answer = parse_final_answer(solution_str)
     
     # Extract generated note (for logging/analysis)
     generated_note = extract_generated_note(solution_str)
+    
+    # Calculate similarity between original and generated note
+    original_note = extra_info.get("correct_note", "")
+    similarity = compute_similarity(original_note, generated_note or "")
     
     # Check format compliance
     has_valid_format = check_format_compliance(solution_str)
@@ -260,6 +389,30 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     with _stats_lock:
         _stats["total_interactions"] += 1
         _stats["total_reward"] += reward
+        
+        # Token/truncation metrics
+        resp_chars = truncation_info["response_chars"]
+        _stats["total_response_chars"] += resp_chars
+        _stats["total_response_tokens_approx"] += truncation_info["response_tokens_approx"]
+        if resp_chars < _stats["min_response_chars"]:
+            _stats["min_response_chars"] = resp_chars
+        if resp_chars > _stats["max_response_chars"]:
+            _stats["max_response_chars"] = resp_chars
+        if truncation_info["is_truncated"]:
+            _stats["truncated_responses"] += 1
+        if truncation_info["has_think_tag"]:
+            _stats["responses_with_think_tags"] += 1
+        if truncation_info["missing_closing_think"]:
+            _stats["responses_missing_closing_think"] += 1
+        
+        # Track similarity metrics by mode
+        if generated_note and original_note:
+            if mode == "benign":
+                _stats["total_similarity_benign"] += similarity
+                _stats["benign_similarity_count"] += 1
+            else:
+                _stats["total_similarity_error"] += similarity
+                _stats["error_similarity_count"] += 1
         
         if outcome == "correct":
             _stats["correct_classifications"] += 1
@@ -304,6 +457,17 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         "mode": mode,
         "note_id": extra_info.get("note_id", ""),
         
+        # Similarity metrics (Injector modifications)
+        "note_similarity": float(similarity),
+        "has_generated_note": bool(generated_note),
+        
+        # Token/Generation metrics
+        "response_chars": truncation_info["response_chars"],
+        "response_tokens_approx": truncation_info["response_tokens_approx"],
+        "is_truncated": truncation_info["is_truncated"],
+        "has_think_tag": truncation_info["has_think_tag"],
+        "missing_closing_think": truncation_info["missing_closing_think"],
+        
         # CRITICAL FOR ANALYSIS: The actual clinical notes
         "original_correct_note": extra_info.get("correct_note", "")[:1000],
         "original_incorrect_note": extra_info.get("incorrect_note", "")[:1000],
@@ -313,7 +477,7 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         
         # Model outputs
         "generated_note": (generated_note or "")[:1000],
-        "model_response_full": solution_str[:2000],
+        "model_response_full": solution_str[:3000],  # Increased to see more truncation
     }
     
     # Append to log file
@@ -334,22 +498,30 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
 def print_summary():
     """Print summary statistics to stdout."""
     summary = get_summary_stats()
-    print("\n" + "="*60)
+    print("\n" + "="*70)
     print("SELF-PLAY TRAINING SUMMARY")
-    print("="*60)
+    print("="*70)
     print(f"Total Interactions: {summary.get('total_interactions', 0)}")
     print(f"Overall Accuracy: {summary.get('accuracy', 0):.2%}")
     print(f"Assessor Win Rate: {summary.get('win_rate_assessor', 0):.2%}")
     print(f"Injector Win Rate: {summary.get('win_rate_injector', 0):.2%}")
     print(f"Invalid Format Rate: {summary.get('invalid_format_rate', 0):.2%}")
-    print("-"*60)
+    print("-"*70)
     print(f"Avg Reward (Overall): {summary.get('avg_reward', 0):.3f}")
     print(f"Avg Reward (Benign): {summary.get('avg_reward_benign', 0):.3f}")
     print(f"Avg Reward (Error): {summary.get('avg_reward_error', 0):.3f}")
-    print("-"*60)
+    print("-"*70)
     print(f"Benign Accuracy: {summary.get('benign_accuracy', 0):.2%} ({summary.get('benign_count', 0)} samples)")
     print(f"Error Accuracy: {summary.get('error_accuracy', 0):.2%} ({summary.get('error_count', 0)} samples)")
-    print("="*60 + "\n")
+    print("-"*70)
+    print("TOKEN/GENERATION METRICS:")
+    print(f"  Avg Response Length: {summary.get('avg_response_chars', 0):.0f} chars (~{summary.get('avg_response_tokens_approx', 0):.0f} tokens)")
+    print(f"  Min Response: {summary.get('min_response_chars', 0)} chars")
+    print(f"  Max Response: {summary.get('max_response_chars', 0)} chars")
+    print(f"  Truncation Rate: {summary.get('truncation_rate', 0):.2%} ({summary.get('truncated_responses', 0)} truncated)")
+    print(f"  Responses with <think>: {summary.get('responses_with_think_tags', 0)}")
+    print(f"  Missing </think>: {summary.get('responses_missing_closing_think', 0)}")
+    print("="*70 + "\n")
     
     # Save final summary
     save_summary()

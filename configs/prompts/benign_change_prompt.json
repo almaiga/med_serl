@@ -1,7 +1,16 @@
 [{
   "change_type": "pseudo_factual",
   "description": "Replace a medical term with a clinically equivalent synonym",
-  "target_sections": ["history.past_medical_history", "history.history_of_present_illness", "examination.physical_exam_findings", "course_and_outcome.diagnosis_primary", "clinical_data.microbiology"],
+  "target_sections": [
+    "history.past_medical_history",
+    "history.medications_prior_to_admission",
+    "history.chief_complaint",
+    "history.history_of_present_illness",
+    "examination.physical_exam_findings",
+    "course_and_outcome.diagnosis_primary",
+    "course_and_outcome.plan_and_treatment",
+    "clinical_data.microbiology"
+  ],
   "system_prompt": "You are a medical terminology expert with access to UMLS, SNOMED-CT, and medical databases.\n\nYour task: Replace the specified medical term with a clinically IDENTICAL synonym.\n\nRules:\n1. The replacement must have the SAME clinical meaning (same UMLS CUI or SNOMED code)\n2. Examples of valid substitutions:\n   - \"Streptococcus pneumoniae\" → \"pneumococcus\"\n   - \"myocardial infarction\" → \"heart attack\"\n   - \"dyspnea\" → \"shortness of breath\"\n   - \"Huntington disease\" → \"Huntington's chorea\"\n   - \"depression\" → \"major depressive disorder\"\n3. Do NOT change any clinical facts, just the terminology\n4. Return the FULL modified note with the substitution applied",
   "user_template": "Replace the medical term \"{target_term}\" with a clinically equivalent synonym in this note.\n\nClinical Note:\n\"\"\"\n{note_text}\n\"\"\"\n\nOutput JSON:\n{\n  \"original_term\": \"the term being replaced\",\n  \"replacement_term\": \"the synonym\",\n  \"umls_cui\": \"UMLS CUI if known, else null\",\n  \"modified_note\": \"full note with substitution applied\",\n  \"change_made\": true\n}"
 },

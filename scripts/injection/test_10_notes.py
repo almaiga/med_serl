@@ -84,21 +84,55 @@ import random
 assignments = generator.assign_change_types(notes)
 random.shuffle(assignments)
 
-results = []
 
-print("Generating benign changes...\n")
+# Only keep hard filter (verified) results as successful for this test
+results = []
+print("Generating benign changes (hard filters only - NO LLM)...\n")
 for item in tqdm(assignments):
     note_obj = item["note"]
     change_type = item["change_type"]
     note_text = note_obj.get("correct_note", "")
-    
     extraction = parse_extraction(note_obj.get("extraction", {}))
     
-    # Enable fallback for each note
-    result = generator.generate_change(note_text, change_type, extraction, allow_fallback=True)
-    result["note_id"] = note_obj.get("note_id")
+    # Get the error_type from the note object (NOT from extraction!)
+    note_type = note_obj.get("error_type", "")
     
-    results.append(result)
+    # First, check if a hard filter exists for this change type
+    target_term = generator.find_target_term(note_text, extraction, change_type, note_type=note_type)
+    
+    # Debug: print what term was extracted
+    print(f"[DEBUG] Note {note_obj.get('note_id')}: error_type={note_type}, change_type={change_type}, target_term={target_term}")
+    
+    if not target_term:
+        # No target term found - skip
+        results.append({
+            "change_type": change_type,
+            "note_id": note_obj.get("note_id"),
+            "change_made": False,
+            "verified": False,
+            "error": f"No target term found for change type '{change_type}'"
+        })
+        continue
+    
+    verified = generator.get_verified_replacement(target_term, change_type)
+    
+    # Debug: print what the API returned
+    print(f"[DEBUG] UMLS lookup for '{target_term}': verified={verified}")
+    
+    if verified and verified.get("verified"):
+        # Hard filter available - proceed with generation
+        result = generator.generate_change(note_text, change_type, extraction, allow_fallback=False)
+        result["note_id"] = note_obj.get("note_id")
+        results.append(result)
+    else:
+        # No hard filter - skip LLM, mark as failed
+        results.append({
+            "change_type": change_type,
+            "note_id": note_obj.get("note_id"),
+            "change_made": False,
+            "verified": False,
+            "error": f"No hard filter available for '{target_term}' with change type '{change_type}'"
+        })
 
 # Now print all results
 print("\n" + "="*80)

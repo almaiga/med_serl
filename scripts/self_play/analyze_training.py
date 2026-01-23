@@ -65,6 +65,15 @@ def compute_statistics(interactions: list) -> dict:
             "invalid": 0,
         },
         "error_types": defaultdict(lambda: {"correct": 0, "wrong": 0}),
+        # Token/generation metrics
+        "token_metrics": {
+            "total_chars": 0,
+            "min_chars": float('inf'),
+            "max_chars": 0,
+            "truncated": 0,
+            "with_think_tags": 0,
+            "missing_closing_think": 0,
+        },
     }
     
     for ix in interactions:
@@ -73,6 +82,21 @@ def compute_statistics(interactions: list) -> dict:
         reward = ix.get("reward", 0.0)
         has_format = ix.get("has_valid_format", False)
         error_type = ix.get("error_type", "") or "none"
+        
+        # Token metrics (if available)
+        resp_chars = ix.get("response_chars", 0)
+        if resp_chars:
+            stats["token_metrics"]["total_chars"] += resp_chars
+            if resp_chars < stats["token_metrics"]["min_chars"]:
+                stats["token_metrics"]["min_chars"] = resp_chars
+            if resp_chars > stats["token_metrics"]["max_chars"]:
+                stats["token_metrics"]["max_chars"] = resp_chars
+        if ix.get("is_truncated", False):
+            stats["token_metrics"]["truncated"] += 1
+        if ix.get("has_think_tag", False):
+            stats["token_metrics"]["with_think_tags"] += 1
+        if ix.get("missing_closing_think", False):
+            stats["token_metrics"]["missing_closing_think"] += 1
         
         # Overall outcomes
         stats["by_outcome"][outcome] += 1
@@ -105,6 +129,13 @@ def compute_statistics(interactions: list) -> dict:
     wrong = stats["by_outcome"].get("wrong", 0)
     invalid = stats["by_outcome"].get("invalid_format", 0)
     
+    # Token metrics
+    token_metrics = stats["token_metrics"]
+    total_chars = token_metrics["total_chars"]
+    min_chars = token_metrics["min_chars"] if token_metrics["min_chars"] != float('inf') else 0
+    max_chars = token_metrics["max_chars"]
+    truncated = token_metrics["truncated"]
+    
     stats["metrics"] = {
         # Overall
         "accuracy": correct / total if total > 0 else 0,
@@ -115,6 +146,16 @@ def compute_statistics(interactions: list) -> dict:
         
         # Average rewards
         "avg_reward": stats["rewards"]["total"] / total if total > 0 else 0,
+        
+        # Token metrics
+        "avg_response_chars": total_chars / total if total > 0 else 0,
+        "avg_response_tokens_approx": (total_chars / 4) / total if total > 0 else 0,
+        "min_response_chars": min_chars,
+        "max_response_chars": max_chars,
+        "truncation_rate": truncated / total if total > 0 else 0,
+        "truncated_count": truncated,
+        "with_think_tags": token_metrics["with_think_tags"],
+        "missing_closing_think": token_metrics["missing_closing_think"],
     }
     
     # Per-mode metrics
@@ -172,6 +213,16 @@ def print_report(stats: dict):
         pct = count / stats["total"] * 100
         bar = "█" * int(pct / 2)
         print(f"  {outcome:15} {count:5} ({pct:5.1f}%) {bar}")
+    
+    # Token/Generation metrics
+    print(f"\n📏 TOKEN/GENERATION METRICS")
+    print("-"*50)
+    print(f"  Avg Response:          {metrics.get('avg_response_chars', 0):.0f} chars (~{metrics.get('avg_response_tokens_approx', 0):.0f} tokens)")
+    print(f"  Min Response:          {metrics.get('min_response_chars', 0)} chars")
+    print(f"  Max Response:          {metrics.get('max_response_chars', 0)} chars")
+    print(f"  Truncation Rate:       {metrics.get('truncation_rate', 0):.2%} ({metrics.get('truncated_count', 0)} truncated)")
+    print(f"  With <think> tags:     {metrics.get('with_think_tags', 0)}")
+    print(f"  Missing </think>:      {metrics.get('missing_closing_think', 0)}")
     
     # Error type analysis
     error_types = stats.get("error_types", {})

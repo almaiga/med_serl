@@ -11,7 +11,7 @@ data:
   val_batch_size: 32
   prompt_key: prompt
   max_prompt_length: 2048
-  max_response_length: 2048
+  max_response_length: 4096
   train_max_samples: -1
   val_max_samples: -1
   return_raw_input_ids: false

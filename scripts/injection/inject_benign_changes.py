@@ -186,20 +186,24 @@ class BenignChangeGenerator:
             "course_and_outcome.diagnosis_primary",
             "history.past_medical_history",
             "history.chief_complaint",
-            "history.history_of_present_illness"
+            "history.history_of_present_illness",
+            "examination.physical_exam_findings"
         ],
         "pharmacotherapy": [
-            "course_and_outcome.plan_and_treatment",
             "history.medications_prior_to_admission",
+            "course_and_outcome.plan_and_treatment",
             "course_and_outcome.procedures_performed"
         ],
         "treatment": [
+            "history.medications_prior_to_admission",
             "course_and_outcome.plan_and_treatment",
             "course_and_outcome.procedures_performed"
         ],
         "management": [
+            "history.medications_prior_to_admission",
             "course_and_outcome.plan_and_treatment",
-            "course_and_outcome.procedures_performed"
+            "course_and_outcome.procedures_performed",
+            "history.past_medical_history"
         ],
         "causalorganism": [
             "clinical_data.microbiology"
@@ -215,7 +219,7 @@ class BenignChangeGenerator:
         """Get a verified replacement from FREE medical APIs."""
         
         if change_type == "pseudo_factual":
-            result = get_verified_synonym(term)
+            result = get_verified_synonym(term, verbose=True)  # Enable verbose for debugging
             if result.get("verified") and result.get("synonyms"):
                 return {
                     "original": term,
