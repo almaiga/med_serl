@@ -219,7 +219,7 @@ def extract_generated_note(response: str) -> Optional[str]:
 def check_format_compliance(response: str) -> bool:
     """Check if response follows required format.
     
-    For Injector: generated_note: + final_answer:
+    For Injector: generated_note: + final_answer: + changes_made:
     For Assessor: final_answer: + Explanation:
     """
     if not response:
@@ -330,6 +330,9 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         
     Returns:
         float: Reward score (RD for Assessor perspective)
+    
+    NOTE: In multi-turn mode, MedicalGameInteraction handles the rewards.
+    This function is used for single-turn training or fallback.
     """
     global _stats
     

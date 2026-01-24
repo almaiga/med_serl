@@ -1,43 +1,73 @@
 #!/bin/bash
-# MedSeRL Self-Play Training Script
-# Two-phase game: Injector modifies note → Assessor classifies
+# MedSeRL True Self-Play Training Script
+# Two-phase game with multi-turn enabled:
+# Turn 1: Injector modifies note → Turn 2: Assessor classifies
+#
+# This script properly activates the conda environment and sets PYTHONPATH
+# so that verl can import MedicalGameInteraction from scripts.self_play.interactions
 
 set -e
 
 # Configuration
-OUTPUT_DIR="outputs/self_play"
-EXPERIMENT_NAME="medserl_selfplay_v2"
-
-# Model (adjust as needed)
+OUTPUT_DIR="outputs/self_play_multiturn"
+EXPERIMENT_NAME="medserl_selfplay_multiturn"
 MODEL_PATH="Qwen/Qwen3-4B"
 
-# Get absolute path to project root
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Detect environment (runpod vs local)
+if [ -d "/workspace/med_serl" ]; then
+    PROJECT_ROOT="/workspace/med_serl"
+    CONDA_BASE="/workspace/miniconda3"
+else
+    PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    CONDA_BASE="${HOME}/miniconda3"
+fi
+
 CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
+DATA_DIR="$PROJECT_ROOT/data_processed/self_play"
 
-# Create output directory
-mkdir -p $OUTPUT_DIR
-mkdir -p results/self_play
-
+# Activate conda environment
 echo "=================================================="
-echo "MedSeRL Self-Play Training"
+echo "MedSeRL True Self-Play Training (Multi-Turn)"
 echo "=================================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
 echo "=================================================="
 
-# Step 1: Preprocess data (generates 2 examples per pair)
+# Source conda
+if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
+    source "$CONDA_BASE/etc/profile.d/conda.sh"
+    conda activate med_serl
+    echo "✓ Conda environment 'med_serl' activated"
+elif [ -f "$PROJECT_ROOT/med_serl/bin/activate" ]; then
+    source "$PROJECT_ROOT/med_serl/bin/activate"
+    echo "✓ Virtual environment activated"
+fi
+
+# Set PYTHONPATH so verl can import MedicalGameInteraction
+export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
+
+# Change to project directory
+cd "$PROJECT_ROOT"
+
+# Create output directories
+mkdir -p "$OUTPUT_DIR"
+mkdir -p results/self_play/interactions
+
+# Step 1: Regenerate training data with updated prompts (no answer leakage)
 echo ""
-echo "=== Step 1: Preprocessing MEDEC data ==="
+echo "=== Step 1: Preprocessing MEDEC data with updated prompts ==="
+echo "Prompts no longer include final_answer (Injector outputs only generated_note)"
+
 python3 scripts/self_play/preprocess_medec.py \
     --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
-    --output data_processed/self_play/train.parquet \
+    --output "$DATA_DIR/train.parquet" \
     --injection-prompts configs/prompts/error_injection_prompts_v2.json \
     --max-pairs 50
 
-# Also preprocess validation data if exists
-VAL_FILE="data_processed/self_play/val.parquet"
+# Validation data
+VAL_FILE="$DATA_DIR/val.parquet"
 if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
     python3 scripts/self_play/preprocess_medec.py \
         --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
@@ -45,24 +75,42 @@ if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
         --injection-prompts configs/prompts/error_injection_prompts_v2.json \
         --max-pairs 50
 else
-    echo "Warning: No separate validation file, using training file for validation"
-    VAL_FILE="data_processed/self_play/train.parquet"
+    echo "Warning: No separate validation file, using training file"
+    VAL_FILE="$DATA_DIR/train.parquet"
 fi
 
+# Verify data
 echo ""
-echo "=== Step 2: Starting Self-Play Training ==="
-echo "Using verl for medical error detection RL training"
-echo "Two-stage self-play: Injector → Assessor (multi-turn enabled)"
+echo "=== Verifying training data format ==="
+python3 -c "
+import pyarrow.parquet as pq
+table = pq.read_table('$DATA_DIR/train.parquet')
+df = table.to_pandas()
+print(f'Total examples: {len(df)}')
+# Check prompts don't contain final_answer in instructions
+for i in range(min(2, len(df))):
+    prompt = df.iloc[i]['prompt']
+    if isinstance(prompt, list):
+        content = ' '.join(m.get('content','') for m in prompt)
+    else:
+        content = str(prompt)
+    has_final_in_template = 'final_answer:' in content and 'OUTPUT' in content.upper()
+    mode = df.iloc[i]['extra_info'].get('mode', '')
+    print(f'  [{mode}] Template contains final_answer: {has_final_in_template}')
+print('✓ Data preprocessing complete')
+"
 
-# Step 2: Launch training with verl
-# Two-turn training with multi-turn enabled:
-# Turn 1: Model acts as Injector - modifies the note
-# Turn 2: Model acts as Assessor - classifies the modified note
-# MedicalGameInteraction orchestrates the turns and computes zero-sum rewards
+# Step 2: Launch multi-turn training with verl
+echo ""
+echo "=== Step 2: Starting Multi-Turn Self-Play Training ==="
+echo "Turn 1: Model as Injector (generates modified note)"
+echo "Turn 2: Model as Assessor (classifies the note)"
+echo "MedicalGameInteraction orchestrates the game"
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
-    data.train_files="$PROJECT_ROOT/data_processed/self_play/train.parquet" \
-    data.val_files="$PROJECT_ROOT/$VAL_FILE" \
+    data.train_files="$DATA_DIR/train.parquet" \
+    data.val_files="$VAL_FILE" \
     data.train_batch_size=16 \
     data.max_prompt_length=1024 \
     data.max_response_length=2048 \
@@ -123,9 +171,9 @@ echo "Training Complete!"
 echo "=================================================="
 echo "Outputs: $OUTPUT_DIR"
 echo "Logs: results/self_play/interactions/"
-echo ""
 
-# Step 3: Analyze training results
+# Step 3: Analyze results
+echo ""
 echo "=== Step 3: Analyzing Training Results ==="
 if [ -d "results/self_play/interactions" ]; then
     python3 scripts/self_play/analyze_training.py \

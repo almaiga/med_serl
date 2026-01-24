@@ -195,23 +195,37 @@ class MedicalGameInteraction(BaseInteraction):
         }
     
     def _extract_generated_note(self, injector_output: str) -> str:
-        """Extract generated_note from Injector output, stripping <think> tags.
+        """Extract ONLY the generated_note from Injector output.
         
-        Expected format:
+        CRITICAL: Strips ALL of the following so Assessor cannot see:
+        - <think>...</think> tags (CoT reasoning)
+        - final_answer: "CORRECT" or "INCORRECT" (Injector's declaration)
+        - changes_made: {...} (metadata about what was changed)
+        
+        The Assessor should see ONLY the modified clinical note text,
+        with no hints about whether it contains errors.
+        
+        Expected Injector format:
         <think>...</think>
         
         generated_note:
         [the modified note]
         
         final_answer: "CORRECT" or "INCORRECT"
-        ...
+        
+        changes_made:
+        {...}
         """
         # Remove <think> tags and their content
         output = re.sub(r'<think>.*?</think>', '', injector_output, flags=re.DOTALL)
         
-        # Extract text after "generated_note:"
-        match = re.search(r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|$)', 
-                         output, re.DOTALL | re.IGNORECASE)
+        # Extract ONLY the text between "generated_note:" and "final_answer:" or "changes_made:"
+        # This ensures the Assessor doesn't see the Injector's answer
+        match = re.search(
+            r'generated_note:\s*\n(.*?)(?=\n\s*(?:final_answer:|changes_made:)|$)', 
+            output, 
+            re.DOTALL | re.IGNORECASE
+        )
         
         if match:
             return match.group(1).strip()
