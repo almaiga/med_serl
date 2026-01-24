@@ -58,16 +58,25 @@ def create_benign_example(
         "ability": "medical_error_detection",
         "reward_model": {
             "style": "rule",
-            "ground_truth": "CORRECT"  # FIXED: was using note_id
+            "ground_truth": "CORRECT"
         },
         "extra_info": {
             "note_id": f"{note_id}-benign",
             "correct_note": pair["correct_note"],
-            "incorrect_note": "",  # Not needed for benign
+            "incorrect_note": "",
             "error_type": "",
             "error_sentence": "",
             "corrected_sentence": "",
             "mode": "benign",
+        },
+        # CRITICAL for verl multi-turn: interaction_kwargs tells verl which interaction to use
+        # See: https://verl.readthedocs.io/en/latest/sglang_multiturn/interaction_system.html
+        "interaction_kwargs": {
+            "name": "medical_game",  # Must match interaction name in config
+            "ground_truth": "CORRECT",
+            "mode": "benign",
+            "note_id": f"{note_id}-benign",
+            "correct_note": pair["correct_note"],
         }
     }
 
@@ -101,7 +110,7 @@ def create_error_example(
         "ability": "medical_error_detection",
         "reward_model": {
             "style": "rule",
-            "ground_truth": "INCORRECT"  # FIXED: was using note_id
+            "ground_truth": "INCORRECT"
         },
         "extra_info": {
             "note_id": f"{note_id}-error",
@@ -111,6 +120,15 @@ def create_error_example(
             "error_sentence": pair.get("error_sentence", ""),
             "corrected_sentence": pair.get("corrected_sentence", ""),
             "mode": "error_injection",
+        },
+        # CRITICAL for verl multi-turn: interaction_kwargs tells verl which interaction to use
+        "interaction_kwargs": {
+            "name": "medical_game",  # Must match interaction name in config
+            "ground_truth": "INCORRECT",
+            "mode": "error_injection",
+            "note_id": f"{note_id}-error",
+            "correct_note": pair["correct_note"],
+            "error_type": error_type,
         }
     }
 
@@ -175,6 +193,7 @@ def convert_to_parquet(
             "ability": ex["ability"],
             "reward_model": ex["reward_model"],  # Keep as native dict
             "extra_info": ex["extra_info"],  # Keep as native dict
+            "interaction_kwargs": ex["interaction_kwargs"],  # CRITICAL for multi-turn
         })
     
     # Create HuggingFace dataset and save as parquet

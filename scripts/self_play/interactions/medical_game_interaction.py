@@ -57,15 +57,25 @@ class MedicalGameInteraction(BaseInteraction):
         ground_truth: Optional[str] = None,
         mode: Optional[str] = None,
         note_data: Optional[dict] = None,
+        correct_note: Optional[str] = None,
+        note_id: Optional[str] = None,
+        error_type: Optional[str] = None,
         **kwargs
     ) -> str:
         """Initialize interaction session.
+        
+        Called by verl with interaction_kwargs from the dataset.
+        See: https://verl.readthedocs.io/en/latest/sglang_multiturn/interaction_system.html
         
         Args:
             instance_id: Unique session ID (auto-generated if None)
             ground_truth: "CORRECT" or "INCORRECT" 
             mode: "benign" or "error_injection"
-            note_data: Dict containing note information
+            note_data: Dict containing note information (legacy)
+            correct_note: The original correct note text
+            note_id: Unique identifier for this note
+            error_type: Type of error (for error_injection mode)
+            **kwargs: Additional kwargs passed from interaction_kwargs
             
         Returns:
             instance_id for this session
@@ -73,10 +83,18 @@ class MedicalGameInteraction(BaseInteraction):
         if instance_id is None:
             instance_id = str(uuid4())
         
+        # Build note_data from kwargs if not provided directly
+        if note_data is None:
+            note_data = {
+                "correct_note": correct_note or "",
+                "note_id": note_id or "",
+                "error_type": error_type or "",
+            }
+        
         self._instance_dict[instance_id] = {
-            "ground_truth": ground_truth,
-            "mode": mode,
-            "note_data": note_data or {},
+            "ground_truth": ground_truth or kwargs.get("ground_truth"),
+            "mode": mode or kwargs.get("mode"),
+            "note_data": note_data,
             "injector_output": None,
             "generated_note": None,
             "assessor_output": None,
@@ -200,32 +218,27 @@ class MedicalGameInteraction(BaseInteraction):
         CRITICAL FOR HIDDEN COT (SeRL paper design):
         Strips ALL of the following so Assessor cannot see:
         - <think>...</think> tags (CoT reasoning)
-        - final_answer: "CORRECT" or "INCORRECT" (Injector's declaration)
+        - final_answer: "CORRECT" or "INCORRECT" (if present)
         - changes_made: {...} (metadata about what was changed)
         
         The Assessor should see ONLY the modified clinical note text,
         with no hints about whether it contains errors.
         
-        Expected Injector format:
-        <think>...</think>
-        
-        generated_note:
-        [the modified note]
-        
-        final_answer: "CORRECT" or "INCORRECT"
-        
-        changes_made:
-        {...}
+        Supports both:
+        - v2 format: generated_note: ... final_answer: ... changes_made: ...
+        - v3 format: <think>...</think> generated_note: ... (no final_answer)
         """
         # Step 1: Remove <think> tags and their content (Hidden CoT)
         output = re.sub(r'<think>.*?</think>', '', injector_output, flags=re.DOTALL)
         
-        # Step 2: Extract ONLY the text between "generated_note:" and the next section marker
+        # Step 2: Extract ONLY the text after "generated_note:" 
         # Try multiple patterns to handle variations in formatting
         patterns = [
-            # Pattern 1: generated_note: followed by content until final_answer: or changes_made:
+            # Pattern 1: v3 format - generated_note: until end (no final_answer)
+            r'generated_note:\s*\n(.*?)$',
+            # Pattern 2: v2 format - stop at final_answer or changes_made
             r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)',
-            # Pattern 2: More lenient - just find generated_note: and stop at final_answer or changes_made
+            # Pattern 3: More lenient - any text after generated_note:
             r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|$)',
         ]
         
@@ -234,7 +247,7 @@ class MedicalGameInteraction(BaseInteraction):
             match = re.search(pattern, output, re.DOTALL | re.IGNORECASE)
             if match:
                 extracted_note = match.group(1).strip()
-                if extracted_note:  # Non-empty match
+                if extracted_note and len(extracted_note) > 20:  # Non-empty, reasonable length
                     break
         
         if extracted_note:
@@ -242,8 +255,15 @@ class MedicalGameInteraction(BaseInteraction):
             sanitized = self._sanitize_note_for_assessor(extracted_note)
             return sanitized
         
+        # Fallback: If no generated_note: marker, use all text after stripping think tags
+        # This handles edge cases where model doesn't follow format exactly
+        clean_output = output.strip()
+        if clean_output and len(clean_output) > 50:  # Has substantial content
+            sanitized = self._sanitize_note_for_assessor(clean_output)
+            if sanitized and len(sanitized) > 50:
+                return sanitized
+        
         # No valid extraction - return empty string (will trigger format penalty)
-        # Do NOT use a fallback that might leak content
         return ""
     
     def _sanitize_note_for_assessor(self, note: str) -> str:

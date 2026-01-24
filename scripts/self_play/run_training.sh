@@ -32,11 +32,12 @@ echo "=================================================="
 # Step 1: Preprocess data (generates 2 examples per pair)
 echo ""
 echo "=== Step 1: Preprocessing MEDEC data ==="
+# Use v3 prompts that don't leak the answer to the model
 python3 scripts/self_play/preprocess_medec.py \
     --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
     --output data_processed/self_play/train.parquet \
-    --injection-prompts configs/prompts/error_injection_prompts_v2.json \
-    --max-pairs 50
+    --injection-prompts configs/prompts/error_injection_prompts_v3.json \
+    --max-pairs 10
 
 # Also preprocess validation data if exists
 VAL_FILE="data_processed/self_play/val.parquet"
@@ -44,7 +45,7 @@ if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
     python3 scripts/self_play/preprocess_medec.py \
         --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
         --output "$VAL_FILE" \
-        --injection-prompts configs/prompts/error_injection_prompts_v2.json \
+        --injection-prompts configs/prompts/error_injection_prompts_v3.json \
         --max-pairs 50
 else
     echo "Warning: No separate validation file, using training file for validation"
@@ -54,13 +55,16 @@ fi
 echo ""
 echo "=== Step 2: Starting Self-Play Training ==="
 echo "Using verl for medical error detection RL training"
-echo "Two-stage self-play: Injector → Assessor (multi-turn enabled)"
+echo "Two-stage self-play: Injector → Assessor (multi-turn with sglang)"
 
 # Step 2: Launch training with verl
 # Two-turn training with multi-turn enabled:
 # Turn 1: Model acts as Injector - modifies the note
 # Turn 2: Model acts as Assessor - classifies the modified note
 # MedicalGameInteraction orchestrates the turns and computes zero-sum rewards
+#
+# CRITICAL: Multi-turn requires sglang rollout, NOT vllm!
+# See: https://verl.readthedocs.io/en/latest/sglang_multiturn/multiturn.html
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="$PROJECT_ROOT/data_processed/self_play/train.parquet" \
@@ -71,6 +75,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.shuffle=True \
+    data.return_raw_chat=True \
     actor_rollout_ref.model.path=$MODEL_PATH \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.model.use_remove_padding=False \
@@ -84,13 +89,12 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
-    actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.multi_turn.enable=True \
     actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \

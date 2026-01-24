@@ -1,67 +1,24 @@
-# MedSeRL Multi-Turn Interaction Configuration
-# Two-phase game: Injector modifies note → Assessor classifies
-# 
-# This file configures verl's multi-turn rollout system.
-# Format follows verl's interaction config specification.
+# MedSeRL Two-Turn Self-Play Interaction Configuration
+# Following verl's Interaction System for Multi-turn RL Training
+# See: https://verl.readthedocs.io/en/latest/sglang_multiturn/interaction_system.html
+#
+# Game Design (from SeRL paper arXiv:2506.07468):
+# - Turn 1 (Injector): Model modifies clinical note (benign OR error injection)
+# - Turn 2 (Assessor): Model classifies note as CORRECT or INCORRECT
+# - Zero-sum rewards: If Assessor wins, Injector loses and vice versa
+# - Hidden CoT: Injector's <think> and final_answer are stripped before Assessor sees note
 
-# Interaction handler - verl expects this format
 interaction:
   - name: "medical_game"
     class_name: "scripts.self_play.interactions.medical_game_interaction.MedicalGameInteraction"
     config:
-      # Prompts for Assessor (Phase 2)
+      # Prompts for Assessor (Turn 2)
       detection_prompts_path: "configs/prompts/error_detection_prompts.json"
       
       # Max turns per episode
-      max_turns: 2  # Turn 1: Injector, Turn 2: Assessor
+      max_turns: 2
       
-      # Reward values (zero-sum game)
+      # Zero-sum reward values
       reward_win: 1.0
       reward_lose: -1.0
       format_bonus: 0.2
-
-# Multi-turn rollout settings (verl-specific)
-multi_turn:
-  # Enable the interaction system
-  enabled: true
-  
-  # Stop conditions
-  stop_conditions:
-    - type: regex
-      pattern: "<answer>(CORRECT|INCORRECT)</answer>"
-    - type: max_turns
-      value: 2
-  
-  # Turn transition logic
-  turn_transition: "tool_based"  # or "fixed_sequence"
-
-# Tool definitions (if using tool_based transitions)
-tools:
-  - name: submit_modified_note
-    description: "Submit the modified clinical note for assessment"
-    parameters:
-      modified_note:
-        type: string
-        required: true
-      reasoning:
-        type: string
-        required: false
-    
-  - name: classify_note
-    description: "Classify whether the note contains errors"
-    parameters:
-      classification:
-        type: string
-        enum: ["CORRECT", "INCORRECT"]
-        required: true
-      reasoning:
-        type: string
-        required: false
-
-# Logging
-logging:
-  enabled: true
-  log_dir: results/self_play/interactions
-  log_prompts: true
-  log_responses: true
-  log_rewards: true
