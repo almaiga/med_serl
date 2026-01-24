@@ -197,7 +197,8 @@ class MedicalGameInteraction(BaseInteraction):
     def _extract_generated_note(self, injector_output: str) -> str:
         """Extract ONLY the generated_note from Injector output.
         
-        CRITICAL: Strips ALL of the following so Assessor cannot see:
+        CRITICAL FOR HIDDEN COT (SeRL paper design):
+        Strips ALL of the following so Assessor cannot see:
         - <think>...</think> tags (CoT reasoning)
         - final_answer: "CORRECT" or "INCORRECT" (Injector's declaration)
         - changes_made: {...} (metadata about what was changed)
@@ -216,32 +217,70 @@ class MedicalGameInteraction(BaseInteraction):
         changes_made:
         {...}
         """
-        # Remove <think> tags and their content
+        # Step 1: Remove <think> tags and their content (Hidden CoT)
         output = re.sub(r'<think>.*?</think>', '', injector_output, flags=re.DOTALL)
         
-        # Extract ONLY the text between "generated_note:" and "final_answer:" or "changes_made:"
-        # This ensures the Assessor doesn't see the Injector's answer
-        match = re.search(
-            r'generated_note:\s*\n(.*?)(?=\n\s*(?:final_answer:|changes_made:)|$)', 
-            output, 
-            re.DOTALL | re.IGNORECASE
-        )
-        
-        if match:
-            return match.group(1).strip()
-        
-        # Fallback: try to find any substantial text content
-        lines = output.strip().split('\n')
-        # Skip lines that look like labels
-        content_lines = [
-            line for line in lines 
-            if line.strip() 
-            and not line.strip().startswith('generated_note:')
-            and not line.strip().startswith('final_answer:')
-            and not line.strip().startswith('changes_made:')
+        # Step 2: Extract ONLY the text between "generated_note:" and the next section marker
+        # Try multiple patterns to handle variations in formatting
+        patterns = [
+            # Pattern 1: generated_note: followed by content until final_answer: or changes_made:
+            r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)',
+            # Pattern 2: More lenient - just find generated_note: and stop at final_answer or changes_made
+            r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|$)',
         ]
         
-        return '\n'.join(content_lines).strip() if content_lines else ""
+        extracted_note = None
+        for pattern in patterns:
+            match = re.search(pattern, output, re.DOTALL | re.IGNORECASE)
+            if match:
+                extracted_note = match.group(1).strip()
+                if extracted_note:  # Non-empty match
+                    break
+        
+        if extracted_note:
+            # Step 3: CRITICAL - Sanitize to remove any leaked information
+            sanitized = self._sanitize_note_for_assessor(extracted_note)
+            return sanitized
+        
+        # No valid extraction - return empty string (will trigger format penalty)
+        # Do NOT use a fallback that might leak content
+        return ""
+    
+    def _sanitize_note_for_assessor(self, note: str) -> str:
+        """Remove any remaining leaked information from extracted note.
+        
+        This is a safety check to ensure no answer hints reach the Assessor.
+        """
+        if not note:
+            return ""
+        
+        sanitized = note
+        
+        # Remove any remaining section markers that might have leaked
+        sanitized = re.sub(r'final_answer:\s*["\']?(?:CORRECT|INCORRECT)["\']?', '', sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r'changes_made:\s*\{.*?\}', '', sanitized, flags=re.DOTALL | re.IGNORECASE)
+        sanitized = re.sub(r'changes_made:\s*$', '', sanitized, flags=re.IGNORECASE)
+        
+        # Remove any stray answer keywords at the end (common leak pattern)
+        sanitized = re.sub(r'\n\s*"?(CORRECT|INCORRECT)"?\s*$', '', sanitized, flags=re.IGNORECASE)
+        
+        # Validate: Check for forbidden keywords that would leak the answer
+        # If found after sanitization, something went wrong
+        forbidden_patterns = [
+            r'\bfinal_answer\b',
+            r'\bchanges_made\b',
+            r'\berror_type\b.*:',
+            r'\bwords_changed\b',
+            r'\boriginal_sentence\b',
+            r'\bmodified_sentence\b',
+        ]
+        
+        for pattern in forbidden_patterns:
+            if re.search(pattern, sanitized, re.IGNORECASE):
+                # Log warning but continue - strip the problematic content
+                sanitized = re.sub(pattern + r'.*', '', sanitized, flags=re.IGNORECASE | re.DOTALL)
+        
+        return sanitized.strip()
     
     def _construct_assessor_prompt(self, generated_note: str) -> str:
         """Construct the Assessor's classification prompt.

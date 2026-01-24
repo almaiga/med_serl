@@ -74,12 +74,19 @@ def parse_injector_output(response: str) -> InjectorOutput:
     """
     thinking, rest = extract_thinking(response)
     
-    # Extract generated_note
+    # Extract generated_note - try multiple patterns for robustness
     generated_note = None
-    note_pattern = r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)'
-    note_match = re.search(note_pattern, rest, re.DOTALL | re.IGNORECASE)
-    if note_match:
-        generated_note = note_match.group(1).strip()
+    note_patterns = [
+        r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)',
+        r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|$)',
+    ]
+    
+    for pattern in note_patterns:
+        note_match = re.search(pattern, rest, re.DOTALL | re.IGNORECASE)
+        if note_match:
+            generated_note = note_match.group(1).strip()
+            if generated_note:
+                break
     
     # Extract final_answer
     final_answer = None
@@ -114,6 +121,34 @@ def parse_injector_output(response: str) -> InjectorOutput:
         changes_made=changes_made,
         parse_success=parse_success,
     )
+
+
+def extract_note_for_assessor(injector_response: str) -> str:
+    """Extract ONLY the generated note for Assessor - hiding all other information.
+    
+    This is the key function for the Hidden CoT design (SeRL paper).
+    The Assessor should see ONLY the clinical note text, with:
+    - NO <think>...</think> reasoning
+    - NO final_answer declaration
+    - NO changes_made metadata
+    
+    Returns:
+        The sanitized clinical note text only
+    """
+    parsed = parse_injector_output(injector_response)
+    
+    if not parsed.generated_note:
+        return ""
+    
+    note = parsed.generated_note
+    
+    # Sanitize: remove any leaked information that might hint at the answer
+    # Remove any stray final_answer or CORRECT/INCORRECT keywords
+    note = re.sub(r'final_answer:\s*["\']?(?:CORRECT|INCORRECT)["\']?', '', note, flags=re.IGNORECASE)
+    note = re.sub(r'changes_made:\s*\{.*?\}', '', note, flags=re.DOTALL | re.IGNORECASE)
+    note = re.sub(r'\n\s*"?(CORRECT|INCORRECT)"?\s*$', '', note, flags=re.IGNORECASE)
+    
+    return note.strip()
 
 
 def parse_assessor_output(response: str) -> AssessorOutput:

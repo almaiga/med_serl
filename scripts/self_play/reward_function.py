@@ -192,6 +192,11 @@ def compute_similarity(text1: str, text2: str) -> float:
 def extract_generated_note(response: str) -> Optional[str]:
     """Extract the generated_note section from Injector's response.
     
+    CRITICAL: This extracts only the note content, stripping:
+    - <think>...</think> (Hidden CoT)
+    - final_answer: "CORRECT/INCORRECT"
+    - changes_made: {...}
+    
     Expected format:
     generated_note:
     [the modified note]
@@ -201,19 +206,33 @@ def extract_generated_note(response: str) -> Optional[str]:
     if not response:
         return None
     
-    # Remove <think> tags first
+    # Step 1: Remove <think> tags (Hidden CoT - not visible to Assessor)
     clean = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
     
-    # Try to find generated_note section
-    match = re.search(
-        r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|$)', 
-        clean, 
-        re.DOTALL | re.IGNORECASE
-    )
-    if match:
-        return match.group(1).strip()
+    # Step 2: Try multiple patterns to extract generated_note
+    patterns = [
+        r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)',
+        r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|$)',
+    ]
     
-    return None
+    extracted = None
+    for pattern in patterns:
+        match = re.search(pattern, clean, re.DOTALL | re.IGNORECASE)
+        if match:
+            extracted = match.group(1).strip()
+            if extracted:
+                break
+    
+    if not extracted:
+        return None
+    
+    # Step 3: Sanitize - remove any leaked answer hints
+    # (safety check in case regex captured too much)
+    extracted = re.sub(r'final_answer:\s*["\']?(?:CORRECT|INCORRECT)["\']?', '', extracted, flags=re.IGNORECASE)
+    extracted = re.sub(r'changes_made:\s*\{.*?\}', '', extracted, flags=re.DOTALL | re.IGNORECASE)
+    extracted = re.sub(r'\n\s*"?(CORRECT|INCORRECT)"?\s*$', '', extracted, flags=re.IGNORECASE)
+    
+    return extracted.strip() if extracted else None
 
 
 def check_format_compliance(response: str) -> bool:

@@ -140,29 +140,38 @@ class MedicalGameTool(BaseTool):
     ) -> tuple[str, str, bool]:
         """Process Injector's response, return Assessor prompt or game end.
         
+        CRITICAL: Only the generated_note text is passed to Assessor.
+        All CoT reasoning, final_answer, and changes_made are stripped.
+        
         Returns:
             (system_prompt, user_prompt, is_terminal)
         """
         state = self.game_states[session_id]
         state.injector_output = response
         
-        # Parse and extract public response (strip hidden CoT)
+        # Parse the full output (for logging/analysis)
         parsed = parse_injector_output(response)
         state.injector_parsed = parsed
         
-        # Get the generated note (public only - no thinking shown to Assessor)
-        public_response = extract_public_response(response)
+        # Extract ONLY the generated note - use the new sanitized extraction
+        # This strips: <think>, final_answer, changes_made
+        from scripts.self_play.cot_parser import extract_note_for_assessor
+        sanitized_note = extract_note_for_assessor(response)
         
-        if parsed.generated_note:
+        if sanitized_note:
+            state.generated_note = sanitized_note
+        elif parsed.generated_note:
+            # Fallback to parsed note (already stripped of CoT)
             state.generated_note = parsed.generated_note
         else:
-            # Fallback: try to use whatever we can extract
-            state.generated_note = public_response
+            # No valid note extracted - will be penalized
+            state.generated_note = ""
         
         # Move to turn 2 (Assessor)
         state.turn = 2
         
         # Get Assessor prompts from config files
+        # The assessor sees ONLY the sanitized note - no hints about CORRECT/INCORRECT
         system_prompt = self.prompt_loader.get_assessor_system_prompt()
         user_prompt = self.prompt_loader.get_assessor_user_prompt(state.generated_note)
         
