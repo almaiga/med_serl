@@ -5,11 +5,13 @@
 set -e
 
 # Configuration
-OUTPUT_DIR="outputs/self_play"
-EXPERIMENT_NAME="medserl_selfplay_v2"
-
-# Model (adjust as needed)
 MODEL_PATH="Qwen/Qwen3-4B"
+MODEL_SHORT=$(basename $MODEL_PATH)  # e.g., "Qwen3-4B"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+EXPERIMENT_NAME="medserl_selfplay_${MODEL_SHORT}_${TIMESTAMP}"
+
+# Output directory with model and date for tracking
+OUTPUT_DIR="outputs/self_play/${MODEL_SHORT}_${TIMESTAMP}"
 
 # Get absolute path to project root
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -106,14 +108,14 @@ python3 -m verl.trainer.main_ppo \
     reward_model.enable=False \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
     custom_reward_function.name=compute_score \
-    trainer.logger=console \
     trainer.project_name='medserl-selfplay' \
     trainer.experiment_name=$EXPERIMENT_NAME \
     trainer.default_local_dir=$OUTPUT_DIR \
+    trainer.logger=console \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.total_epochs=3 \
-    trainer.save_freq=50 \
+    trainer.save_freq=9999 \
     trainer.test_freq=10 \
     trainer.val_before_train=True
 
