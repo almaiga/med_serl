@@ -100,10 +100,10 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
-    actor_rollout_ref.rollout.multi_turn=True \
-    actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
+    +actor_rollout_ref.rollout.multi_turn.enable=True \
+    +actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
+    +actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
+    +actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     algorithm.gamma=1.0 \
     algorithm.lam=0.95 \
