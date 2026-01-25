@@ -1,1 +1,0 @@
-ps aux | grep 'multiprocessing' | grep python3.11 | awk '{print $2}' | xargs kill -9
