@@ -98,7 +98,7 @@ class MedicalGameInteraction(BaseInteraction):
             "injector_output": None,
             "generated_note": None,
             "assessor_output": None,
-            "turn": 1,  # Track which turn we're on
+            "turn": 0,  # Track which turn we're on (incremented in generate_response)
         }
         
         return instance_id
@@ -115,6 +115,7 @@ class MedicalGameInteraction(BaseInteraction):
             (should_terminate, response_content, score, metadata)
         """
         instance = self._instance_dict[instance_id]
+        instance["turn"] += 1  # Increment turn counter
         
         if instance["turn"] == 1:
             # Phase 1: Process Injector output

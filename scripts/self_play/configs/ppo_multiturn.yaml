@@ -13,17 +13,18 @@ defaults:
   - _self_
 
 data:
-  max_prompt_length: 1024
-  max_response_length: 2048
+  max_prompt_length: 2048
+  max_response_length: 4096  # Increased for 2-turn responses (Injector + Assessor)
   train_batch_size: 16
   return_raw_chat: True
 
 actor_rollout_ref:
   hybrid_engine: True
   rollout:
-    name: vllm
+    name: sglang  # CRITICAL: sglang required for multi-turn interactions
     multi_turn:
       enable: True
       max_user_turns: 2
       max_assistant_turns: 2
+      # interaction_config_path set via CLI override
 
