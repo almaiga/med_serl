@@ -64,7 +64,10 @@ echo "PYTHONPATH set to: $PYTHONPATH"
 
 # Disable SGLang TP memory imbalance check (required for verl multi-turn)
 # See: https://verl.readthedocs.io/en/latest/workers/sglang_worker.html
-export SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK=True
+export SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK=True
+
+# Force SDPA attention instead of flash_attn (no flash_attn installed)
+export TRANSFORMERS_ATTN_IMPLEMENTATION=sdpa
 
 # Step 2: Launch training with verl
 # Two-turn training with multi-turn enabled:
