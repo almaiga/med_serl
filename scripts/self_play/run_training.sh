@@ -62,6 +62,10 @@ echo ""
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 echo "PYTHONPATH set to: $PYTHONPATH"
 
+# Disable SGLang TP memory imbalance check (required for verl multi-turn)
+# See: https://verl.readthedocs.io/en/latest/workers/sglang_worker.html
+export SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK=True
+
 # Step 2: Launch training with verl
 # Two-turn training with multi-turn enabled:
 # Turn 1: Model acts as Injector - modifies the note
