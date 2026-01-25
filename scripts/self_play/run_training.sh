@@ -73,17 +73,48 @@ echo "PYTHONPATH set to: $PYTHONPATH"
 #
 # Using --config-path and --config-name to load base YAML config first,
 # which defines the multi_turn nested structure that Hydra needs.
-# Then we override specific values via CLI.
+# Then we override specific values via CLI (following verl's examples).
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_multiturn" \
+    algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="$PROJECT_ROOT/data_processed/self_play/train.parquet" \
     data.val_files="$PROJECT_ROOT/$VAL_FILE" \
+    data.filter_overlong_prompts=True \
+    data.truncation='error' \
     actor_rollout_ref.model.path=$MODEL_PATH \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.actor.use_kl_loss=False \
+    actor_rollout_ref.actor.entropy_coeff=0.01 \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+    actor_rollout_ref.rollout.temperature=0.7 \
+    actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    algorithm.use_kl_in_reward=True \
+    algorithm.kl_ctrl.kl_coef=0.001 \
+    reward_model.enable=False \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
+    custom_reward_function.name=compute_score \
+    trainer.critic_warmup=0 \
+    trainer.logger=console \
+    trainer.project_name='medserl-selfplay' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.default_local_dir=$OUTPUT_DIR
+    trainer.default_local_dir=$OUTPUT_DIR \
+    trainer.n_gpus_per_node=1 \
+    trainer.nnodes=1 \
+    trainer.total_epochs=3 \
+    trainer.save_freq=9999 \
+    trainer.test_freq=10 \
+    trainer.val_before_train=True
 
 echo ""
 echo "=================================================="
