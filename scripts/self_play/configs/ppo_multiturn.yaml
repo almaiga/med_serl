@@ -1,0 +1,102 @@
+# MedSeRL Multi-Turn PPO Configuration for verl
+# This config extends verl's ppo_trainer with multi-turn sglang support
+#
+# Usage: python -m verl.trainer.main_ppo --config-path=<path> --config-name=ppo_multiturn
+# See: https://verl.readthedocs.io/en/latest/sglang_multiturn/multiturn.html
+
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+# Data configuration
+data:
+  train_files: null  # Set via CLI
+  val_files: null    # Set via CLI
+  train_batch_size: 16
+  max_prompt_length: 1024
+  max_response_length: 2048
+  filter_overlong_prompts: True
+  truncation: 'error'
+  shuffle: True
+  return_raw_chat: True
+
+# Actor/Rollout/Reference configuration
+actor_rollout_ref:
+  hybrid_engine: true
+  
+  model:
+    path: "Qwen/Qwen3-4B"  # Override via CLI
+    override_config:
+      attn_implementation: sdpa
+    use_remove_padding: False
+    trust_remote_code: True
+  
+  actor:
+    ppo_mini_batch_size: 8
+    ppo_micro_batch_size_per_gpu: 1
+    ppo_epochs: 2
+    use_kl_loss: False
+    grad_clip: 1.0
+    entropy_coeff: 0.01
+    optim:
+      lr: 1e-6
+    fsdp_config:
+      param_offload: False
+      optimizer_offload: True
+  
+  rollout:
+    # CRITICAL: Multi-turn requires sglang, NOT vllm!
+    name: sglang
+    temperature: 0.7
+    top_p: 0.95
+    gpu_memory_utilization: 0.5
+    tensor_model_parallel_size: 1
+    log_prob_micro_batch_size_per_gpu: 2
+    
+    # Multi-turn configuration for two-turn self-play game
+    multi_turn:
+      enable: True
+      interaction_config_path: null  # Set via CLI to interaction_config.yaml
+      tool_config_path: null         # Not using tools
+      max_user_turns: 2              # Two turns: Injector then Assessor
+      max_assistant_turns: 2
+      format: hermes
+  
+  ref:
+    log_prob_micro_batch_size_per_gpu: 2
+
+# Algorithm: REINFORCE++ (from SeRL paper)
+algorithm:
+  adv_estimator: reinforce_plus_plus
+  gamma: 1.0
+  lam: 0.95
+  use_kl_in_reward: True
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.001
+
+# Disable separate reward model (using custom reward function)
+reward_model:
+  enable: False
+
+# Custom reward function for zero-sum game rewards
+custom_reward_function:
+  path: null   # Set via CLI
+  name: compute_score
+
+# Trainer configuration
+trainer:
+  project_name: 'medserl-selfplay'
+  experiment_name: null  # Set via CLI
+  default_local_dir: null  # Set via CLI
+  logger: console
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_epochs: 3
+  save_freq: 9999
+  test_freq: 10
+  val_before_train: True

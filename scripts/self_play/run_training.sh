@@ -70,57 +70,20 @@ echo "PYTHONPATH set to: $PYTHONPATH"
 #
 # CRITICAL: Multi-turn requires sglang rollout, NOT vllm!
 # See: https://verl.readthedocs.io/en/latest/sglang_multiturn/multiturn.html
+#
+# Using --config-path and --config-name to load base YAML config first,
+# which defines the multi_turn nested structure that Hydra needs.
+# Then we override specific values via CLI.
 python3 -m verl.trainer.main_ppo \
-    algorithm.adv_estimator=reinforce_plus_plus \
+    --config-path="$CONFIG_DIR" \
+    --config-name="ppo_multiturn" \
     data.train_files="$PROJECT_ROOT/data_processed/self_play/train.parquet" \
     data.val_files="$PROJECT_ROOT/$VAL_FILE" \
-    data.train_batch_size=16 \
-    data.max_prompt_length=1024 \
-    data.max_response_length=2048 \
-    data.filter_overlong_prompts=True \
-    data.truncation='error' \
-    data.shuffle=True \
-    data.return_raw_chat=True \
     actor_rollout_ref.model.path=$MODEL_PATH \
-    +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
-    actor_rollout_ref.model.use_remove_padding=False \
-    actor_rollout_ref.model.trust_remote_code=True \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.ppo_epochs=2 \
-    actor_rollout_ref.actor.use_kl_loss=False \
-    actor_rollout_ref.actor.grad_clip=1.0 \
-    actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.rollout.name=sglang \
-    actor_rollout_ref.rollout.temperature=0.7 \
-    actor_rollout_ref.rollout.top_p=0.95 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
-    actor_rollout_ref.rollout.multi_turn=True \
-    actor_rollout_ref.rollout.interaction_config_file="$CONFIG_DIR/interaction_config.yaml" \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
-    algorithm.gamma=1.0 \
-    algorithm.lam=0.95 \
-    algorithm.use_kl_in_reward=True \
-    algorithm.kl_ctrl.kl_coef=0.001 \
-    algorithm.kl_ctrl.type=fixed \
-    reward_model.enable=False \
+    actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
-    custom_reward_function.name=compute_score \
-    trainer.project_name='medserl-selfplay' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.default_local_dir=$OUTPUT_DIR \
-    trainer.logger=console \
-    trainer.n_gpus_per_node=1 \
-    trainer.nnodes=1 \
-    trainer.total_epochs=3 \
-    trainer.save_freq=9999 \
-    trainer.test_freq=10 \
-    trainer.val_before_train=True
+    trainer.default_local_dir=$OUTPUT_DIR
 
 echo ""
 echo "=================================================="
