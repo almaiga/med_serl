@@ -34,7 +34,7 @@ echo ""
 echo "=== Step 1: Preprocessing MEDEC data ==="
 # Use v3 prompts that don't leak the answer to the model
 # MAX_PAIRS configurable via environment variable (default: 100)
-MAX_PAIRS=${MAX_PAIRS:-10}
+MAX_PAIRS=${MAX_PAIRS:-50}
 echo "Training on $MAX_PAIRS note pairs (set MAX_PAIRS env var to change)"
 
 python3 scripts/self_play/preprocess_medec.py \
@@ -137,6 +137,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=-1 \
     trainer.test_freq=10 \
     trainer.val_before_train=True \
+    +trainer.enable_save=False \
     custom_reward_function.path=/workspace/med_serl/scripts/self_play/reward_function.py \
     custom_reward_function.name=compute_score
     
