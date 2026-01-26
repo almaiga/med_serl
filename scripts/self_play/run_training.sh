@@ -33,11 +33,15 @@ echo "=================================================="
 echo ""
 echo "=== Step 1: Preprocessing MEDEC data ==="
 # Use v3 prompts that don't leak the answer to the model
+# MAX_PAIRS configurable via environment variable (default: 100)
+MAX_PAIRS=${MAX_PAIRS:-10}
+echo "Training on $MAX_PAIRS note pairs (set MAX_PAIRS env var to change)"
+
 python3 scripts/self_play/preprocess_medec.py \
     --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
     --output data_processed/self_play/train.parquet \
     --injection-prompts configs/prompts/error_injection_prompts_v3.json \
-    --max-pairs 10
+    --max-pairs $MAX_PAIRS
 
 # Also preprocess validation data if exists
 VAL_FILE="data_processed/self_play/val.parquet"
@@ -113,6 +117,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
     actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
+    actor_rollout_ref.rollout.multi_turn.use_inference_chat_template=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
