@@ -129,7 +129,10 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=3 \
     trainer.save_freq=9999 \
     trainer.test_freq=10 \
-    trainer.val_before_train=True
+    trainer.val_before_train=True \
+    custom_reward_function.path=/workspace/med_serl/scripts/self_play/reward_function.py \
+    custom_reward_function.name=compute_score
+    
 
 echo ""
 echo "=================================================="
