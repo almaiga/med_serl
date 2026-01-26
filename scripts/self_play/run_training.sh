@@ -93,8 +93,8 @@ python3 -m verl.trainer.main_ppo \
     data.val_files="$PROJECT_ROOT/$VAL_FILE" \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
-    data.max_prompt_length=2048 \
-    data.max_response_length=4096 \
+    data.max_prompt_length=1024 \
+    data.max_response_length=2048 \
     actor_rollout_ref.model.path=$MODEL_PATH \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.model.use_remove_padding=False \
