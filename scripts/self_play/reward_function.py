@@ -72,6 +72,14 @@ _stats = {
     "benign_similarity_count": 0,
     "total_similarity_error": 0.0,
     "error_similarity_count": 0,
+    # ===== PHASE SEPARATION METRICS =====
+    "phases_separated_count": 0,
+    "injector_produced_note_count": 0,
+    "assessor_actually_ran_count": 0,
+    "injector_truncated_count": 0,
+    "assessor_truncated_count": 0,
+    "injector_total_chars": 0,
+    "assessor_total_chars": 0,
 }
 
 
@@ -94,6 +102,11 @@ def get_summary_stats() -> Dict[str, Any]:
         min_chars = _stats["min_response_chars"] if _stats["min_response_chars"] != float('inf') else 0
         max_chars = _stats["max_response_chars"]
         truncated = _stats["truncated_responses"]
+        
+        # Phase separation metrics
+        phases_sep = _stats["phases_separated_count"]
+        injector_notes = _stats["injector_produced_note_count"]
+        assessor_ran = _stats["assessor_actually_ran_count"]
         
         return {
             "total_interactions": total,
@@ -132,6 +145,18 @@ def get_summary_stats() -> Dict[str, Any]:
             "similarity_benign_count": _stats["benign_similarity_count"],
             "avg_similarity_error": _stats["total_similarity_error"] / max(_stats["error_similarity_count"], 1),
             "similarity_error_count": _stats["error_similarity_count"],
+            
+            # ===== PHASE SEPARATION METRICS =====
+            "phases_separated_rate": phases_sep / total if total > 0 else 0,
+            "phases_separated_count": phases_sep,
+            "injector_produced_note_rate": injector_notes / total if total > 0 else 0,
+            "injector_produced_note_count": injector_notes,
+            "assessor_actually_ran_rate": assessor_ran / total if total > 0 else 0,
+            "assessor_actually_ran_count": assessor_ran,
+            "injector_truncated_count": _stats["injector_truncated_count"],
+            "assessor_truncated_count": _stats["assessor_truncated_count"],
+            "avg_injector_chars": _stats["injector_total_chars"] / total if total > 0 else 0,
+            "avg_assessor_chars": _stats["assessor_total_chars"] / total if total > 0 else 0,
         }
 
 
@@ -448,44 +473,132 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         if _stats["total_interactions"] % 100 == 0:
             save_summary()
     
+    # =========================================================================
+    # MULTI-TURN RESPONSE PARSING
+    # In multi-turn mode, solution_str contains BOTH turns concatenated:
+    # [Turn 1: Injector response] + [Turn 2: Assessor response]
+    # We need to split them to analyze each phase separately.
+    # =========================================================================
+    
+    # Try to find the boundary between Injector and Assessor responses
+    # The Assessor prompt typically starts with "Classify this note:" or similar
+    injector_response = solution_str
+    assessor_response = ""
+    
+    # Look for common Assessor prompt markers that indicate turn boundary
+    assessor_markers = [
+        r'<\|im_start\|>user\s*\nClassify this note:',  # Qwen format
+        r'<\|im_start\|>user\s*\n.*?Respond in the required format:',
+        r'\nuser\s*\nClassify this note:',
+        r'Classify this note:\s*\n',
+    ]
+    
+    turn_boundary = None
+    for marker in assessor_markers:
+        match = re.search(marker, solution_str, re.IGNORECASE | re.DOTALL)
+        if match:
+            turn_boundary = match.start()
+            break
+    
+    if turn_boundary:
+        injector_response = solution_str[:turn_boundary].strip()
+        assessor_response = solution_str[turn_boundary:].strip()
+    else:
+        # Fallback: If we can't find boundary, check if response has two assistant blocks
+        # Pattern: ends with </think> ... generated_note: ... then later has final_answer from assessor
+        assistant_blocks = re.findall(r'<\|im_start\|>assistant(.*?)(?=<\|im_end\|>|<\|im_start\|>|$)', 
+                                       solution_str, re.DOTALL)
+        if len(assistant_blocks) >= 2:
+            injector_response = assistant_blocks[0].strip()
+            assessor_response = assistant_blocks[-1].strip()
+    
+    # Re-analyze with separated responses
+    injector_truncation = detect_truncation(injector_response)
+    assessor_truncation = detect_truncation(assessor_response) if assessor_response else {
+        "is_truncated": False, "has_think_tag": False, "missing_closing_think": False,
+        "response_chars": 0, "response_tokens_approx": 0
+    }
+    
+    # Re-extract generated note from Injector response only
+    generated_note_from_injector = extract_generated_note(injector_response)
+    injector_produced_note = bool(generated_note_from_injector)
+    
+    # Check if Assessor actually ran (has its own response)
+    assessor_actually_ran = len(assessor_response) > 50
+    
+    # Update phase separation statistics
+    with _stats_lock:
+        if turn_boundary is not None or len(assessor_response) > 0:
+            _stats["phases_separated_count"] += 1
+        if injector_produced_note:
+            _stats["injector_produced_note_count"] += 1
+        if assessor_actually_ran:
+            _stats["assessor_actually_ran_count"] += 1
+        if injector_truncation.get("is_truncated", False):
+            _stats["injector_truncated_count"] += 1
+        if assessor_truncation.get("is_truncated", False):
+            _stats["assessor_truncated_count"] += 1
+        _stats["injector_total_chars"] += injector_truncation.get("response_chars", 0)
+        _stats["assessor_total_chars"] += assessor_truncation.get("response_chars", 0)
+    
     # Build comprehensive log entry for failure analysis
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "data_source": str(data_source),
         
-        # Game outcome (from Assessor perspective)
+        # ===== GAME OUTCOME (from Assessor perspective) =====
         "ground_truth": str(ground_truth),
         "model_answer": model_answer,
         "outcome": outcome,
         "reward": float(reward),
-        "reward_injector": -float(reward) if outcome != "invalid_format" else 0.0,  # Zero-sum
+        "reward_injector": -float(reward) if outcome != "invalid_format" else 0.0,
         "has_valid_format": has_valid_format,
         
-        # Mode info
+        # ===== MODE INFO =====
         "mode": mode,
         "note_id": extra_info.get("note_id", ""),
         
-        # Similarity metrics (Injector modifications)
-        "note_similarity": float(similarity),
-        "has_generated_note": bool(generated_note),
+        # ===== PHASE SEPARATION FLAGS =====
+        "phases_separated": turn_boundary is not None or len(assessor_response) > 0,
+        "injector_produced_note": injector_produced_note,
+        "assessor_actually_ran": assessor_actually_ran,
         
-        # Token/Generation metrics
+        # ===== INJECTOR PHASE METRICS =====
+        "injector_response_chars": injector_truncation["response_chars"],
+        "injector_tokens_approx": injector_truncation["response_tokens_approx"],
+        "injector_is_truncated": injector_truncation["is_truncated"],
+        "injector_has_think_tag": injector_truncation["has_think_tag"],
+        "injector_missing_closing_think": injector_truncation["missing_closing_think"],
+        
+        # ===== ASSESSOR PHASE METRICS =====
+        "assessor_response_chars": assessor_truncation["response_chars"],
+        "assessor_tokens_approx": assessor_truncation["response_tokens_approx"],
+        "assessor_is_truncated": assessor_truncation["is_truncated"],
+        "assessor_has_think_tag": assessor_truncation["has_think_tag"],
+        
+        # ===== NOTE SIMILARITY (Injector modifications) =====
+        "note_similarity": float(similarity),
+        "has_generated_note": injector_produced_note,
+        
+        # Legacy fields for compatibility
         "response_chars": truncation_info["response_chars"],
         "response_tokens_approx": truncation_info["response_tokens_approx"],
         "is_truncated": truncation_info["is_truncated"],
         "has_think_tag": truncation_info["has_think_tag"],
         "missing_closing_think": truncation_info["missing_closing_think"],
         
-        # CRITICAL FOR ANALYSIS: The actual clinical notes
+        # ===== ORIGINAL CLINICAL NOTES =====
         "original_correct_note": extra_info.get("correct_note", "")[:1000],
         "original_incorrect_note": extra_info.get("incorrect_note", "")[:1000],
         "error_type": extra_info.get("error_type", ""),
         "error_sentence": extra_info.get("error_sentence", ""),
         "corrected_sentence": extra_info.get("corrected_sentence", ""),
         
-        # Model outputs
-        "generated_note": (generated_note or "")[:1000],
-        "model_response_full": solution_str[:3000],  # Increased to see more truncation
+        # ===== MODEL OUTPUTS - SEPARATED BY PHASE =====
+        "generated_note": (generated_note_from_injector or generated_note or "")[:1500],
+        "injector_response": injector_response[:4000],  # Full Injector response
+        "assessor_response": assessor_response[:2000],  # Full Assessor response
+        "model_response_full": solution_str[:8000],     # Full concatenated (for debugging)
     }
     
     # Append to log file
@@ -521,6 +634,15 @@ def print_summary():
     print("-"*70)
     print(f"Benign Accuracy: {summary.get('benign_accuracy', 0):.2%} ({summary.get('benign_count', 0)} samples)")
     print(f"Error Accuracy: {summary.get('error_accuracy', 0):.2%} ({summary.get('error_count', 0)} samples)")
+    print("-"*70)
+    print("PHASE SEPARATION (Multi-Turn):")
+    print(f"  Phases Separated: {summary.get('phases_separated_rate', 0):.2%} ({summary.get('phases_separated_count', 0)} samples)")
+    print(f"  Injector Produced Note: {summary.get('injector_produced_note_rate', 0):.2%} ({summary.get('injector_produced_note_count', 0)} samples)")
+    print(f"  Assessor Actually Ran: {summary.get('assessor_actually_ran_rate', 0):.2%} ({summary.get('assessor_actually_ran_count', 0)} samples)")
+    print(f"  Avg Injector Response: {summary.get('avg_injector_chars', 0):.0f} chars")
+    print(f"  Avg Assessor Response: {summary.get('avg_assessor_chars', 0):.0f} chars")
+    print(f"  Injector Truncated: {summary.get('injector_truncated_count', 0)}")
+    print(f"  Assessor Truncated: {summary.get('assessor_truncated_count', 0)}")
     print("-"*70)
     print("TOKEN/GENERATION METRICS:")
     print(f"  Avg Response Length: {summary.get('avg_response_chars', 0):.0f} chars (~{summary.get('avg_response_tokens_approx', 0):.0f} tokens)")

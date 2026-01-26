@@ -34,10 +34,17 @@ class MedicalGameInteraction(BaseInteraction):
     - Assessor correct: Assessor +1.0, Injector -1.0
     - Assessor wrong: Assessor -1.0, Injector +1.0
     - Format bonus: +0.2 for following output format
+    
+    verl Compliance:
+    - Implements BaseInteraction interface from verl.interactions.base
+    - Sets self.name as required by verl interaction registry
+    - Async methods: start_interaction, generate_response, calculate_score, finalize_interaction
     """
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # REQUIRED by verl: Set name for interaction registry
+        self.name: str = config.get("name", "medical_game")
         self._instance_dict = {}
         
         # Load prompts from config files

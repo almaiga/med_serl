@@ -113,6 +113,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
+    actor_rollout_ref.rollout.top_k=20 \
+    actor_rollout_ref.rollout.repetition_penalty=1.1 \
     actor_rollout_ref.rollout.multi_turn.enable=True \
     actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
@@ -132,7 +134,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.total_epochs=3 \
-    trainer.save_freq=9999 \
+    trainer.save_freq=-1 \
     trainer.test_freq=10 \
     trainer.val_before_train=True \
     custom_reward_function.path=/workspace/med_serl/scripts/self_play/reward_function.py \
