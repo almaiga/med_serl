@@ -122,12 +122,13 @@ class MedicalGameInteraction(BaseInteraction):
             (should_terminate, response_content, score, metadata)
         """
         instance = self._instance_dict[instance_id]
-        instance["turn"] += 1  # Increment turn counter
+        current_turn = instance["turn"]
+        instance["turn"] += 1  # Increment turn counter AFTER checking
         
-        if instance["turn"] == 1:
-            # Phase 1: Process Injector output
+        if current_turn == 0:
+            # Phase 1: Process Injector output (first assistant response)
             return await self._process_injector_turn(instance_id, messages)
-        elif instance["turn"] == 2:
+        elif current_turn == 1:
             # Phase 2: Process Assessor output and compute final reward
             return await self._process_assessor_turn(instance_id, messages)
         else:
@@ -167,8 +168,7 @@ class MedicalGameInteraction(BaseInteraction):
         # Construct Assessor prompt using the detection prompts
         assessor_prompt = self._construct_assessor_prompt(generated_note)
         
-        # Move to turn 2
-        instance["turn"] = 2
+        # Don't increment turn here - it's already incremented in generate_response
         
         # Return False (don't terminate), assessor_prompt, 0 score (intermediate)
         return False, assessor_prompt, 0.0, {"phase": "injector_complete"}
