@@ -60,12 +60,14 @@ def print_change(result: dict, index: int):
             print(result['llm_response'])
 
 
-# Load just 10 notes
+# Load notes for testing (configurable)
+NUM_NOTES = 100  # Increase to stress test filters
+
 data_path = Path("data_processed/parsed_medical_note/extractions.jsonl")
 notes = []
 with open(data_path, 'r') as f:
     for i, line in enumerate(f):
-        if i >= 10:
+        if i >= NUM_NOTES:
             break
         notes.append(json.loads(line))
 
@@ -75,7 +77,11 @@ print(f"Testing with {len(notes)} notes...\n")
 config_path = Path("configs/prompts/benign_change_prompt.json")
 generator = BenignChangeGenerator(config_path, model="gpt-4o-mini")
 
-print(f"Change types: {generator.change_types}\n")
+# Exclude logical_restatement - it requires LLM rephrasing
+EXCLUDE_TYPES = {"logical_restatement", "irrelevant_correlation"}
+generator.change_types = [ct for ct in generator.change_types if ct not in EXCLUDE_TYPES]
+
+print(f"Change types (no LLM needed): {generator.change_types}\n")
 
 # Generate changes but DON'T save to file
 from tqdm import tqdm
@@ -103,14 +109,27 @@ for item in tqdm(assignments):
     # Debug: print what term was extracted
     print(f"[DEBUG] Note {note_obj.get('note_id')}: error_type={note_type}, change_type={change_type}, target_term={target_term}")
     
+    # Fallback strategy: if no target found, try an alternative change type
+    if not target_term:
+        allowed_types = generator.get_allowed_change_types(note_type)
+        # Try other allowed change types
+        for alt_type in allowed_types:
+            if alt_type != change_type:
+                alt_target = generator.find_target_term(note_text, extraction, alt_type, note_type=note_type)
+                if alt_target:
+                    print(f"[DEBUG] Fallback: trying {alt_type} instead")
+                    change_type = alt_type
+                    target_term = alt_target
+                    break
+    
     if not target_term:
         # No target term found - skip
         results.append({
             "change_type": change_type,
-            "note_id": note_obj.get("note_id"),
+            "note_id": note_obj.get('note_id'),
             "change_made": False,
             "verified": False,
-            "error": f"No target term found for change type '{change_type}'"
+            "error": f"No target term found for change type '{change_type}' or fallbacks"
         })
         continue
     

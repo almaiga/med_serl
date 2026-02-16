@@ -1,0 +1,2045 @@
+2026-01-28 16:14:21,685 - INFO - Log file: data_processed/benign_changes/restatement_log_20260128_161421.txt
+2026-01-28 16:14:21,686 - INFO - Loading failed notes from: data_processed/benign_changes/failed_notes_20260127_191801.jsonl
+2026-01-28 16:14:21,687 - INFO - Total failed notes: 171
+2026-01-28 16:14:21,705 - INFO - 
+============================================================
+2026-01-28 16:14:21,705 - INFO - Processing: ms-train-1393
+2026-01-28 16:14:21,705 - DEBUG -   Note length: 760 chars
+2026-01-28 16:14:21,705 - DEBUG -   Found candidate sentence in physical_exam_findings: 'On arrival, he is crying and holding his right hand in a flexed position....'
+2026-01-28 16:14:21,706 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:21,706 - INFO -   Original sentence: "On arrival, he is crying and holding his right hand in a flexed position...."
+2026-01-28 16:14:23,356 - INFO -   Replacement: "Upon arrival, the patient is in tears and maintains his right hand in a flexed p..."
+2026-01-28 16:14:23,356 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:23,356 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:23,356 - INFO -     Original: "On arrival, he is crying and holding his right hand in a fle..."
+2026-01-28 16:14:23,357 - INFO -     Replaced: "Upon arrival, the patient is in tears and maintains his righ..."
+2026-01-28 16:14:23,357 - INFO - 
+============================================================
+2026-01-28 16:14:23,357 - INFO - Processing: ms-train-1557
+2026-01-28 16:14:23,357 - DEBUG -   Note length: 914 chars
+2026-01-28 16:14:23,357 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no abnormalities....'
+2026-01-28 16:14:23,357 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:23,357 - INFO -   Original sentence: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:24,729 - INFO -   Replacement: "Physical exam unremarkable..."
+2026-01-28 16:14:24,729 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:24,729 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:24,729 - INFO -     Original: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:24,729 - INFO -     Replaced: "Physical exam unremarkable..."
+2026-01-28 16:14:24,729 - INFO - 
+============================================================
+2026-01-28 16:14:24,729 - INFO - Processing: ms-train-1987
+2026-01-28 16:14:24,730 - DEBUG -   Note length: 846 chars
+2026-01-28 16:14:24,730 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He appears lethargic....'
+2026-01-28 16:14:24,730 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:24,730 - INFO -   Original sentence: "He appears lethargic...."
+2026-01-28 16:14:26,106 - INFO -   Replacement: "Patient demonstrates lethargy..."
+2026-01-28 16:14:26,106 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:26,106 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:26,106 - INFO -     Original: "He appears lethargic...."
+2026-01-28 16:14:26,106 - INFO -     Replaced: "Patient demonstrates lethargy..."
+2026-01-28 16:14:26,106 - INFO - 
+============================================================
+2026-01-28 16:14:26,106 - INFO - Processing: ms-train-1375
+2026-01-28 16:14:26,106 - DEBUG -   Note length: 515 chars
+2026-01-28 16:14:26,106 - DEBUG -   Found candidate sentence in physical_exam_findings: 'EGD is notable for mild esophagitis, and a longitudinal esophageal tear at the g...'
+2026-01-28 16:14:26,106 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:26,106 - INFO -   Original sentence: "EGD is notable for mild esophagitis, and a longitudinal esophageal tear at the g..."
+2026-01-28 16:14:27,717 - INFO -   Replacement: "EGD findings include mild esophagitis and a longitudinal tear in the esophagus a..."
+2026-01-28 16:14:27,717 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:27,717 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:27,717 - INFO -     Original: "EGD is notable for mild esophagitis, and a longitudinal esop..."
+2026-01-28 16:14:27,717 - INFO -     Replaced: "EGD findings include mild esophagitis and a longitudinal tea..."
+2026-01-28 16:14:27,718 - INFO - 
+============================================================
+2026-01-28 16:14:27,718 - INFO - Processing: ms-train-1774
+2026-01-28 16:14:27,718 - DEBUG -   Note length: 233 chars
+2026-01-28 16:14:27,718 - WARNING -   SKIP: No suitable sentence found for restatement
+2026-01-28 16:14:27,718 - INFO - 
+============================================================
+2026-01-28 16:14:27,718 - INFO - Processing: ms-train-336
+2026-01-28 16:14:27,718 - DEBUG -   Note length: 471 chars
+2026-01-28 16:14:27,718 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows a distended upper abdomen....'
+2026-01-28 16:14:27,718 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:27,718 - INFO -   Original sentence: "Physical examination shows a distended upper abdomen...."
+2026-01-28 16:14:29,042 - INFO -   Replacement: "Physical exam reveals distension of the upper abdomen...."
+2026-01-28 16:14:29,042 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:29,043 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:29,043 - INFO -     Original: "Physical examination shows a distended upper abdomen...."
+2026-01-28 16:14:29,043 - INFO -     Replaced: "Physical exam reveals distension of the upper abdomen...."
+2026-01-28 16:14:29,043 - INFO - 
+============================================================
+2026-01-28 16:14:29,043 - INFO - Processing: ms-val-284
+2026-01-28 16:14:29,043 - DEBUG -   Note length: 469 chars
+2026-01-28 16:14:29,043 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The physical exam is within normal limits....'
+2026-01-28 16:14:29,044 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:29,044 - INFO -   Original sentence: "The physical exam is within normal limits...."
+2026-01-28 16:14:30,304 - INFO -   Replacement: "Physical examination unremarkable..."
+2026-01-28 16:14:30,304 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:30,304 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:30,304 - INFO -     Original: "The physical exam is within normal limits...."
+2026-01-28 16:14:30,304 - INFO -     Replaced: "Physical examination unremarkable..."
+2026-01-28 16:14:30,304 - INFO - 
+============================================================
+2026-01-28 16:14:30,304 - INFO - Processing: ms-val-504
+2026-01-28 16:14:30,304 - DEBUG -   Note length: 357 chars
+2026-01-28 16:14:30,305 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Digital rectal examination shows a firm, non-tender, and uniformly enlarged pros...'
+2026-01-28 16:14:30,305 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:30,305 - INFO -   Original sentence: "Digital rectal examination shows a firm, non-tender, and uniformly enlarged pros..."
+2026-01-28 16:14:32,212 - INFO -   Replacement: "DRE reveals a uniformly enlarged, firm, and non-tender prostate...."
+2026-01-28 16:14:32,212 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:32,212 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:32,212 - INFO -     Original: "Digital rectal examination shows a firm, non-tender, and uni..."
+2026-01-28 16:14:32,212 - INFO -     Replaced: "DRE reveals a uniformly enlarged, firm, and non-tender prost..."
+2026-01-28 16:14:32,212 - INFO - 
+============================================================
+2026-01-28 16:14:32,212 - INFO - Processing: ms-val-457
+2026-01-28 16:14:32,212 - DEBUG -   Note length: 217 chars
+2026-01-28 16:14:32,212 - DEBUG -   Found candidate sentence in diagnosis_primary: 'An excisional biopsy is performed and the diagnosis of superficial spreading mel...'
+2026-01-28 16:14:32,212 - INFO -   Target field: diagnosis_primary
+2026-01-28 16:14:32,212 - INFO -   Original sentence: "An excisional biopsy is performed and the diagnosis of superficial spreading mel..."
+2026-01-28 16:14:34,177 - INFO -   Replacement: "An excisional biopsy is conducted, confirming the diagnosis of superficial sprea..."
+2026-01-28 16:14:34,178 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:34,178 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:34,178 - INFO -     Original: "An excisional biopsy is performed and the diagnosis of super..."
+2026-01-28 16:14:34,178 - INFO -     Replaced: "An excisional biopsy is conducted, confirming the diagnosis ..."
+2026-01-28 16:14:34,178 - INFO - 
+============================================================
+2026-01-28 16:14:34,178 - INFO - Processing: ms-val-253
+2026-01-28 16:14:34,178 - DEBUG -   Note length: 849 chars
+2026-01-28 16:14:34,179 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The patient has purulent mucus draining from the nares, and his face is tender t...'
+2026-01-28 16:14:34,179 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:34,179 - INFO -   Original sentence: "The patient has purulent mucus draining from the nares, and his face is tender t..."
+2026-01-28 16:14:36,072 - INFO -   Replacement: "Purulent nasal discharge noted, with tenderness to palpation over the maxillary ..."
+2026-01-28 16:14:36,072 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:36,072 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:36,072 - INFO -     Original: "The patient has purulent mucus draining from the nares, and ..."
+2026-01-28 16:14:36,072 - INFO -     Replaced: "Purulent nasal discharge noted, with tenderness to palpation..."
+2026-01-28 16:14:36,073 - INFO - 
+============================================================
+2026-01-28 16:14:36,073 - INFO - Processing: ms-train-840
+2026-01-28 16:14:36,073 - DEBUG -   Note length: 904 chars
+2026-01-28 16:14:36,073 - DEBUG -   Found candidate sentence in physical_exam_findings: 'She has had numbness and burning sensation in her feet for 4 months....'
+2026-01-28 16:14:36,073 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:36,073 - INFO -   Original sentence: "She has had numbness and burning sensation in her feet for 4 months...."
+2026-01-28 16:14:37,392 - INFO -   Replacement: "Patient reports 4 months of paresthesia and burning in the feet...."
+2026-01-28 16:14:37,392 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:37,392 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:37,392 - INFO -     Original: "She has had numbness and burning sensation in her feet for 4..."
+2026-01-28 16:14:37,392 - INFO -     Replaced: "Patient reports 4 months of paresthesia and burning in the f..."
+2026-01-28 16:14:37,393 - INFO - 
+============================================================
+2026-01-28 16:14:37,393 - INFO - Processing: ms-val-530
+2026-01-28 16:14:37,393 - DEBUG -   Note length: 1025 chars
+2026-01-28 16:14:37,393 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no abnormalities....'
+2026-01-28 16:14:37,393 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:37,393 - INFO -   Original sentence: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:38,878 - INFO -   Replacement: "Physical exam unremarkable..."
+2026-01-28 16:14:38,878 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:38,878 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:38,878 - INFO -     Original: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:38,878 - INFO -     Replaced: "Physical exam unremarkable..."
+2026-01-28 16:14:38,879 - INFO - 
+============================================================
+2026-01-28 16:14:38,879 - INFO - Processing: ms-train-57
+2026-01-28 16:14:38,879 - DEBUG -   Note length: 758 chars
+2026-01-28 16:14:38,879 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He states that over the past day she has developed a fever, become progressively...'
+2026-01-28 16:14:38,879 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:38,879 - INFO -   Original sentence: "He states that over the past day she has developed a fever, become progressively..."
+2026-01-28 16:14:41,537 - INFO -   Replacement: "She reports that in the last 24 hours, she has experienced fever, increasing con..."
+2026-01-28 16:14:41,537 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:41,538 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:41,538 - INFO -     Original: "He states that over the past day she has developed a fever, ..."
+2026-01-28 16:14:41,538 - INFO -     Replaced: "She reports that in the last 24 hours, she has experienced f..."
+2026-01-28 16:14:41,539 - INFO - 
+============================================================
+2026-01-28 16:14:41,539 - INFO - Processing: ms-train-1120
+2026-01-28 16:14:41,539 - DEBUG -   Note length: 669 chars
+2026-01-28 16:14:41,539 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no abnormalities....'
+2026-01-28 16:14:41,539 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:41,539 - INFO -   Original sentence: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:42,681 - INFO -   Replacement: "Physical exam unremarkable..."
+2026-01-28 16:14:42,681 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:42,681 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:42,681 - INFO -     Original: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:42,681 - INFO -     Replaced: "Physical exam unremarkable..."
+2026-01-28 16:14:42,681 - INFO - 
+============================================================
+2026-01-28 16:14:42,681 - INFO - Processing: ms-train-80
+2026-01-28 16:14:42,681 - DEBUG -   Note length: 653 chars
+2026-01-28 16:14:42,682 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 22-year-old man comes to the physician because of an ulcer on his penis for 12...'
+2026-01-28 16:14:42,682 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:42,682 - INFO -   Original sentence: "A 22-year-old man comes to the physician because of an ulcer on his penis for 12..."
+2026-01-28 16:14:44,132 - INFO -   Replacement: "A 22-year-old male presents to the physician with a penile ulcer persisting for ..."
+2026-01-28 16:14:44,132 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:44,132 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:44,132 - INFO -     Original: "A 22-year-old man comes to the physician because of an ulcer..."
+2026-01-28 16:14:44,132 - INFO -     Replaced: "A 22-year-old male presents to the physician with a penile u..."
+2026-01-28 16:14:44,132 - INFO - 
+============================================================
+2026-01-28 16:14:44,132 - INFO - Processing: ms-train-1760
+2026-01-28 16:14:44,132 - DEBUG -   Note length: 982 chars
+2026-01-28 16:14:44,132 - DEBUG -   Found candidate sentence in physical_exam_findings: 'There are enlarged, nontender lymph nodes bilaterally in the neck....'
+2026-01-28 16:14:44,132 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:44,132 - INFO -   Original sentence: "There are enlarged, nontender lymph nodes bilaterally in the neck...."
+2026-01-28 16:14:45,899 - INFO -   Replacement: "Bilateral nontender lymphadenopathy noted in the cervical region...."
+2026-01-28 16:14:45,899 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:45,899 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:45,899 - INFO -     Original: "There are enlarged, nontender lymph nodes bilaterally in the..."
+2026-01-28 16:14:45,899 - INFO -     Replaced: "Bilateral nontender lymphadenopathy noted in the cervical re..."
+2026-01-28 16:14:45,900 - INFO - 
+============================================================
+2026-01-28 16:14:45,900 - INFO - Processing: ms-val-234
+2026-01-28 16:14:45,900 - DEBUG -   Note length: 781 chars
+2026-01-28 16:14:45,900 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination showed rectovaginal tenderness....'
+2026-01-28 16:14:45,900 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:45,901 - INFO -   Original sentence: "Physical examination showed rectovaginal tenderness...."
+2026-01-28 16:14:47,106 - INFO -   Replacement: "Physical exam reveals rectovaginal tenderness...."
+2026-01-28 16:14:47,107 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:47,107 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:47,107 - INFO -     Original: "Physical examination showed rectovaginal tenderness...."
+2026-01-28 16:14:47,107 - INFO -     Replaced: "Physical exam reveals rectovaginal tenderness...."
+2026-01-28 16:14:47,107 - INFO - 
+============================================================
+2026-01-28 16:14:47,107 - INFO - Processing: ms-train-1624
+2026-01-28 16:14:47,107 - DEBUG -   Note length: 533 chars
+2026-01-28 16:14:47,107 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 79-year-old man is admitted to the intensive care unit for hospital acquired p...'
+2026-01-28 16:14:47,107 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:47,107 - INFO -   Original sentence: "A 79-year-old man is admitted to the intensive care unit for hospital acquired p..."
+2026-01-28 16:14:50,069 - INFO -   Replacement: "A 79-year-old male is admitted to the ICU for nosocomial pneumonia, exacerbation..."
+2026-01-28 16:14:50,069 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:50,069 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:50,069 - INFO -     Original: "A 79-year-old man is admitted to the intensive care unit for..."
+2026-01-28 16:14:50,070 - INFO -     Replaced: "A 79-year-old male is admitted to the ICU for nosocomial pne..."
+2026-01-28 16:14:50,070 - INFO - 
+============================================================
+2026-01-28 16:14:50,070 - INFO - Processing: uw-val-40
+2026-01-28 16:14:50,070 - DEBUG -   Note length: 524 chars
+2026-01-28 16:14:50,070 - DEBUG -   Found candidate sentence in hospital_course_summary: 'Nutrition documentation note for " pt meeting ~50-75% of needs PO at this time p...'
+2026-01-28 16:14:50,070 - INFO -   Target field: hospital_course_summary
+2026-01-28 16:14:50,070 - INFO -   Original sentence: "Nutrition documentation note for " pt meeting ~50-75% of needs PO at this time p..."
+2026-01-28 16:14:52,413 - INFO -   Replacement: "Nutritional assessment indicates patient is currently meeting approximately 50-7..."
+2026-01-28 16:14:52,413 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:52,414 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:52,414 - INFO -     Original: "Nutrition documentation note for " pt meeting ~50-75% of nee..."
+2026-01-28 16:14:52,414 - INFO -     Replaced: "Nutritional assessment indicates patient is currently meetin..."
+2026-01-28 16:14:52,414 - INFO - 
+============================================================
+2026-01-28 16:14:52,414 - INFO - Processing: uw-val-126
+2026-01-28 16:14:52,414 - DEBUG -   Note length: 199 chars
+2026-01-28 16:14:52,414 - WARNING -   SKIP: No suitable sentence found for restatement
+2026-01-28 16:14:52,414 - INFO - 
+============================================================
+2026-01-28 16:14:52,414 - INFO - Processing: ms-train-936
+2026-01-28 16:14:52,414 - DEBUG -   Note length: 407 chars
+2026-01-28 16:14:52,414 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A 54-year-old male carpenter accidentally amputated his right thumb while workin...'
+2026-01-28 16:14:52,414 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:14:52,414 - INFO -   Original sentence: "A 54-year-old male carpenter accidentally amputated his right thumb while workin..."
+2026-01-28 16:14:54,234 - INFO -   Replacement: "A 54-year-old male carpenter sustained an accidental amputation of his right thu..."
+2026-01-28 16:14:54,234 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:54,234 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:54,234 - INFO -     Original: "A 54-year-old male carpenter accidentally amputated his righ..."
+2026-01-28 16:14:54,234 - INFO -     Replaced: "A 54-year-old male carpenter sustained an accidental amputat..."
+2026-01-28 16:14:54,235 - INFO - 
+============================================================
+2026-01-28 16:14:54,235 - INFO - Processing: ms-val-244
+2026-01-28 16:14:54,235 - DEBUG -   Note length: 850 chars
+2026-01-28 16:14:54,235 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination in the delivery room shows clitoromegaly....'
+2026-01-28 16:14:54,235 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:54,235 - INFO -   Original sentence: "Examination in the delivery room shows clitoromegaly...."
+2026-01-28 16:14:55,473 - INFO -   Replacement: "Delivery room assessment reveals clitoromegaly...."
+2026-01-28 16:14:55,473 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:55,473 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:55,473 - INFO -     Original: "Examination in the delivery room shows clitoromegaly...."
+2026-01-28 16:14:55,473 - INFO -     Replaced: "Delivery room assessment reveals clitoromegaly...."
+2026-01-28 16:14:55,474 - INFO - 
+============================================================
+2026-01-28 16:14:55,474 - INFO - Processing: ms-train-1227
+2026-01-28 16:14:55,474 - DEBUG -   Note length: 275 chars
+2026-01-28 16:14:55,474 - DEBUG -   Found candidate sentence in hospital_course_summary: 'Five minutes after initiating a change of position and oxygen inhalation, the ox...'
+2026-01-28 16:14:55,474 - INFO -   Target field: hospital_course_summary
+2026-01-28 16:14:55,474 - INFO -   Original sentence: "Five minutes after initiating a change of position and oxygen inhalation, the ox..."
+2026-01-28 16:14:57,038 - INFO -   Replacement: "Five minutes following the adjustment of position and oxygen therapy, the oxytoc..."
+2026-01-28 16:14:57,039 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:57,039 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:57,039 - INFO -     Original: "Five minutes after initiating a change of position and oxyge..."
+2026-01-28 16:14:57,039 - INFO -     Replaced: "Five minutes following the adjustment of position and oxygen..."
+2026-01-28 16:14:57,039 - INFO - 
+============================================================
+2026-01-28 16:14:57,039 - INFO - Processing: ms-val-119
+2026-01-28 16:14:57,039 - DEBUG -   Note length: 891 chars
+2026-01-28 16:14:57,039 - DEBUG -   Found candidate sentence in physical_exam_findings: 'She was tackled from the left side and has been unable to bear weight on her lef...'
+2026-01-28 16:14:57,039 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:57,039 - INFO -   Original sentence: "She was tackled from the left side and has been unable to bear weight on her lef..."
+2026-01-28 16:14:58,839 - INFO -   Replacement: "She was struck on the left side and has been unable to weight-bear on her left l..."
+2026-01-28 16:14:58,839 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:58,839 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:58,839 - INFO -     Original: "She was tackled from the left side and has been unable to be..."
+2026-01-28 16:14:58,839 - INFO -     Replaced: "She was struck on the left side and has been unable to weigh..."
+2026-01-28 16:14:58,840 - INFO - 
+============================================================
+2026-01-28 16:14:58,841 - INFO - Processing: ms-train-1272
+2026-01-28 16:14:58,841 - DEBUG -   Note length: 886 chars
+2026-01-28 16:14:58,841 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no abnormalities....'
+2026-01-28 16:14:58,841 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:58,841 - INFO -   Original sentence: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:59,860 - INFO -   Replacement: "Physical exam unremarkable..."
+2026-01-28 16:14:59,860 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:14:59,860 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:14:59,860 - INFO -     Original: "Physical examination shows no abnormalities...."
+2026-01-28 16:14:59,860 - INFO -     Replaced: "Physical exam unremarkable..."
+2026-01-28 16:14:59,861 - INFO - 
+============================================================
+2026-01-28 16:14:59,861 - INFO - Processing: ms-train-1615
+2026-01-28 16:14:59,861 - DEBUG -   Note length: 883 chars
+2026-01-28 16:14:59,861 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Pelvic examination shows the cervix is 50% effaced and 4 cm dilated; the vertex ...'
+2026-01-28 16:14:59,861 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:14:59,861 - INFO -   Original sentence: "Pelvic examination shows the cervix is 50% effaced and 4 cm dilated; the vertex ..."
+2026-01-28 16:15:01,606 - INFO -   Replacement: "Pelvic exam reveals cervix 50% effaced and 4 cm dilated; vertex at -1 station...."
+2026-01-28 16:15:01,606 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:01,606 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:01,606 - INFO -     Original: "Pelvic examination shows the cervix is 50% effaced and 4 cm ..."
+2026-01-28 16:15:01,606 - INFO -     Replaced: "Pelvic exam reveals cervix 50% effaced and 4 cm dilated; ver..."
+2026-01-28 16:15:01,607 - INFO - 
+============================================================
+2026-01-28 16:15:01,607 - INFO - Processing: ms-val-415
+2026-01-28 16:15:01,607 - DEBUG -   Note length: 1055 chars
+2026-01-28 16:15:01,607 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 46-year-old Caucasian male with past medical history of HIV (CD4: 77/mm^3), hy...'
+2026-01-28 16:15:01,607 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:01,607 - INFO -   Original sentence: "A 46-year-old Caucasian male with past medical history of HIV (CD4: 77/mm^3), hy..."
+2026-01-28 16:15:06,860 - INFO -   Replacement: "A 46-year-old Caucasian male with a medical history of HIV (CD4 count: 77/mm^3),..."
+2026-01-28 16:15:06,860 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:06,860 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:06,860 - INFO -     Original: "A 46-year-old Caucasian male with past medical history of HI..."
+2026-01-28 16:15:06,860 - INFO -     Replaced: "A 46-year-old Caucasian male with a medical history of HIV (..."
+2026-01-28 16:15:06,861 - INFO - 
+============================================================
+2026-01-28 16:15:06,861 - INFO - Processing: ms-train-730
+2026-01-28 16:15:06,861 - DEBUG -   Note length: 567 chars
+2026-01-28 16:15:06,861 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A 1-year-old female presents to the emergency department with 2 days of fever up...'
+2026-01-28 16:15:06,861 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:15:06,861 - INFO -   Original sentence: "A 1-year-old female presents to the emergency department with 2 days of fever up..."
+2026-01-28 16:15:08,868 - INFO -   Replacement: "A 1-year-old girl arrives at the emergency department with a 2-day history of fe..."
+2026-01-28 16:15:08,868 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:08,868 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:08,868 - INFO -     Original: "A 1-year-old female presents to the emergency department wit..."
+2026-01-28 16:15:08,868 - INFO -     Replaced: "A 1-year-old girl arrives at the emergency department with a..."
+2026-01-28 16:15:08,868 - INFO - 
+============================================================
+2026-01-28 16:15:08,868 - INFO - Processing: ms-val-280
+2026-01-28 16:15:08,868 - DEBUG -   Note length: 741 chars
+2026-01-28 16:15:08,869 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 61-year-old man comes to the emergency department because of shortness of brea...'
+2026-01-28 16:15:08,869 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:08,869 - INFO -   Original sentence: "A 61-year-old man comes to the emergency department because of shortness of brea..."
+2026-01-28 16:15:10,573 - INFO -   Replacement: "A 61-year-old male presents to the emergency department with dyspnea and right t..."
+2026-01-28 16:15:10,574 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:10,574 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:10,574 - INFO -     Original: "A 61-year-old man comes to the emergency department because ..."
+2026-01-28 16:15:10,574 - INFO -     Replaced: "A 61-year-old male presents to the emergency department with..."
+2026-01-28 16:15:10,574 - INFO - 
+============================================================
+2026-01-28 16:15:10,575 - INFO - Processing: uw-val-71
+2026-01-28 16:15:10,575 - DEBUG -   Note length: 505 chars
+2026-01-28 16:15:10,575 - DEBUG -   Found candidate sentence in history_of_present_illness: '<NAME/> is being managed for acute blood loss anemia....'
+2026-01-28 16:15:10,575 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:15:10,575 - INFO -   Original sentence: "<NAME/> is being managed for acute blood loss anemia...."
+2026-01-28 16:15:12,262 - INFO -   Replacement: "<NAME/> is receiving treatment for acute hemorrhagic anemia...."
+2026-01-28 16:15:12,262 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:12,262 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:12,262 - INFO -     Original: "<NAME/> is being managed for acute blood loss anemia...."
+2026-01-28 16:15:12,262 - INFO -     Replaced: "<NAME/> is receiving treatment for acute hemorrhagic anemia...."
+2026-01-28 16:15:12,263 - INFO - 
+============================================================
+2026-01-28 16:15:12,263 - INFO - Processing: ms-train-1910
+2026-01-28 16:15:12,263 - DEBUG -   Note length: 1048 chars
+2026-01-28 16:15:12,263 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 22-year-old man comes to the physician for the evaluation of a skin rash over ...'
+2026-01-28 16:15:12,263 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:12,263 - INFO -   Original sentence: "A 22-year-old man comes to the physician for the evaluation of a skin rash over ..."
+2026-01-28 16:15:14,552 - INFO -   Replacement: "A 22-year-old male presents to the physician for assessment of a skin rash on bo..."
+2026-01-28 16:15:14,552 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:14,552 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:14,552 - INFO -     Original: "A 22-year-old man comes to the physician for the evaluation ..."
+2026-01-28 16:15:14,552 - INFO -     Replaced: "A 22-year-old male presents to the physician for assessment ..."
+2026-01-28 16:15:14,553 - INFO - 
+============================================================
+2026-01-28 16:15:14,553 - INFO - Processing: ms-train-1193
+2026-01-28 16:15:14,553 - DEBUG -   Note length: 759 chars
+2026-01-28 16:15:14,553 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination showed symmetrically enlarged, nontender breasts, with bilaterally i...'
+2026-01-28 16:15:14,553 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:14,553 - INFO -   Original sentence: "Examination showed symmetrically enlarged, nontender breasts, with bilaterally i..."
+2026-01-28 16:15:16,291 - INFO -   Replacement: "Examination revealed bilaterally enlarged, nontender breasts with symmetrical in..."
+2026-01-28 16:15:16,291 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:16,291 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:16,291 - INFO -     Original: "Examination showed symmetrically enlarged, nontender breasts..."
+2026-01-28 16:15:16,292 - INFO -     Replaced: "Examination revealed bilaterally enlarged, nontender breasts..."
+2026-01-28 16:15:16,292 - INFO - 
+============================================================
+2026-01-28 16:15:16,292 - INFO - Processing: uw-val-96
+2026-01-28 16:15:16,292 - DEBUG -   Note length: 646 chars
+2026-01-28 16:15:16,293 - DEBUG -   Found candidate sentence in history_of_present_illness: 'This patient was admitted with a concomitant diagnosis of akute kidney injury....'
+2026-01-28 16:15:16,293 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:15:16,293 - INFO -   Original sentence: "This patient was admitted with a concomitant diagnosis of akute kidney injury...."
+2026-01-28 16:15:17,497 - INFO -   Replacement: "This patient was admitted with a concurrent diagnosis of acute kidney injury...."
+2026-01-28 16:15:17,497 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:17,497 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:17,497 - INFO -     Original: "This patient was admitted with a concomitant diagnosis of ak..."
+2026-01-28 16:15:17,497 - INFO -     Replaced: "This patient was admitted with a concurrent diagnosis of acu..."
+2026-01-28 16:15:17,498 - INFO - 
+============================================================
+2026-01-28 16:15:17,498 - INFO - Processing: ms-train-1376
+2026-01-28 16:15:17,498 - DEBUG -   Note length: 475 chars
+2026-01-28 16:15:17,498 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Irrigation is performed after physical exam shows a teary and red left eye....'
+2026-01-28 16:15:17,498 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:17,498 - INFO -   Original sentence: "Irrigation is performed after physical exam shows a teary and red left eye...."
+2026-01-28 16:15:19,117 - INFO -   Replacement: "Irrigation is conducted following physical examination revealing a watery and er..."
+2026-01-28 16:15:19,117 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:19,118 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:19,118 - INFO -     Original: "Irrigation is performed after physical exam shows a teary an..."
+2026-01-28 16:15:19,118 - INFO -     Replaced: "Irrigation is conducted following physical examination revea..."
+2026-01-28 16:15:19,118 - INFO - 
+============================================================
+2026-01-28 16:15:19,118 - INFO - Processing: uw-val-41
+2026-01-28 16:15:19,118 - DEBUG -   Note length: 348 chars
+2026-01-28 16:15:19,118 - DEBUG -   Found candidate sentence in diagnosis_primary: 'DIAGNOSIS CLARIFICATION:  Additional diagnosis of a hypokalemia, additionally mo...'
+2026-01-28 16:15:19,118 - INFO -   Target field: diagnosis_primary
+2026-01-28 16:15:19,118 - INFO -   Original sentence: "DIAGNOSIS CLARIFICATION:  Additional diagnosis of a hypokalemia, additionally mo..."
+2026-01-28 16:15:21,159 - INFO -   Replacement: "DIAGNOSIS CLARIFICATION: Secondary diagnosis of hypokalemia, further monitored, ..."
+2026-01-28 16:15:21,159 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:21,159 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:21,159 - INFO -     Original: "DIAGNOSIS CLARIFICATION:  Additional diagnosis of a hypokale..."
+2026-01-28 16:15:21,159 - INFO -     Replaced: "DIAGNOSIS CLARIFICATION: Secondary diagnosis of hypokalemia,..."
+2026-01-28 16:15:21,160 - INFO - 
+============================================================
+2026-01-28 16:15:21,160 - INFO - Processing: ms-val-466
+2026-01-28 16:15:21,160 - DEBUG -   Note length: 859 chars
+2026-01-28 16:15:21,160 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows bilateral ptosis and mask-like facies....'
+2026-01-28 16:15:21,160 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:21,160 - INFO -   Original sentence: "Physical examination shows bilateral ptosis and mask-like facies...."
+2026-01-28 16:15:22,523 - INFO -   Replacement: "Physical exam reveals bilateral ptosis and a mask-like appearance...."
+2026-01-28 16:15:22,523 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:22,523 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:22,523 - INFO -     Original: "Physical examination shows bilateral ptosis and mask-like fa..."
+2026-01-28 16:15:22,523 - INFO -     Replaced: "Physical exam reveals bilateral ptosis and a mask-like appea..."
+2026-01-28 16:15:22,524 - INFO - 
+============================================================
+2026-01-28 16:15:22,524 - INFO - Processing: ms-train-1036
+2026-01-28 16:15:22,524 - DEBUG -   Note length: 665 chars
+2026-01-28 16:15:22,524 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The rest of the patient's pulmonary and neurological exams are unremarkable....'
+2026-01-28 16:15:22,524 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:22,524 - INFO -   Original sentence: "The rest of the patient's pulmonary and neurological exams are unremarkable...."
+2026-01-28 16:15:23,983 - INFO -   Replacement: "The remainder of the pulmonary and neurological examinations are unremarkable...."
+2026-01-28 16:15:23,983 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:23,983 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:23,983 - INFO -     Original: "The rest of the patient's pulmonary and neurological exams a..."
+2026-01-28 16:15:23,983 - INFO -     Replaced: "The remainder of the pulmonary and neurological examinations..."
+2026-01-28 16:15:23,984 - INFO - 
+============================================================
+2026-01-28 16:15:23,984 - INFO - Processing: ms-train-2034
+2026-01-28 16:15:23,984 - DEBUG -   Note length: 368 chars
+2026-01-28 16:15:23,984 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He is found to have a nonradiating continuous machine-like murmur at the left up...'
+2026-01-28 16:15:23,984 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:23,984 - INFO -   Original sentence: "He is found to have a nonradiating continuous machine-like murmur at the left up..."
+2026-01-28 16:15:25,554 - INFO -   Replacement: "Continuous, non-radiating machine-like murmur detected at the left upper sternal..."
+2026-01-28 16:15:25,554 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:25,555 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:25,555 - INFO -     Original: "He is found to have a nonradiating continuous machine-like m..."
+2026-01-28 16:15:25,555 - INFO -     Replaced: "Continuous, non-radiating machine-like murmur detected at th..."
+2026-01-28 16:15:25,555 - INFO - 
+============================================================
+2026-01-28 16:15:25,555 - INFO - Processing: ms-train-289
+2026-01-28 16:15:25,555 - DEBUG -   Note length: 663 chars
+2026-01-28 16:15:25,555 - DEBUG -   Found candidate sentence in physical_exam_findings: 'On physical exam, the patient is a healthy-appearing 14-year-old boy whose heigh...'
+2026-01-28 16:15:25,555 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:25,555 - INFO -   Original sentence: "On physical exam, the patient is a healthy-appearing 14-year-old boy whose heigh..."
+2026-01-28 16:15:28,697 - INFO -   Replacement: "Physical examination reveals a well-appearing 14-year-old male with height below..."
+2026-01-28 16:15:28,697 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:28,697 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:28,697 - INFO -     Original: "On physical exam, the patient is a healthy-appearing 14-year..."
+2026-01-28 16:15:28,697 - INFO -     Replaced: "Physical examination reveals a well-appearing 14-year-old ma..."
+2026-01-28 16:15:28,697 - INFO - 
+============================================================
+2026-01-28 16:15:28,697 - INFO - Processing: ms-train-795
+2026-01-28 16:15:28,697 - DEBUG -   Note length: 850 chars
+2026-01-28 16:15:28,697 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 14-year-old boy is brought to the emergency department by his parents for join...'
+2026-01-28 16:15:28,697 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:28,697 - INFO -   Original sentence: "A 14-year-old boy is brought to the emergency department by his parents for join..."
+2026-01-28 16:15:30,811 - INFO -   Replacement: "A 14-year-old male presents to the emergency department accompanied by his paren..."
+2026-01-28 16:15:30,811 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:30,811 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:30,811 - INFO -     Original: "A 14-year-old boy is brought to the emergency department by ..."
+2026-01-28 16:15:30,811 - INFO -     Replaced: "A 14-year-old male presents to the emergency department acco..."
+2026-01-28 16:15:30,811 - INFO - 
+============================================================
+2026-01-28 16:15:30,811 - INFO - Processing: ms-train-944
+2026-01-28 16:15:30,811 - DEBUG -   Note length: 515 chars
+2026-01-28 16:15:30,811 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Abdominal exam is notable for pain over the right lower quadrant....'
+2026-01-28 16:15:30,811 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:30,811 - INFO -   Original sentence: "Abdominal exam is notable for pain over the right lower quadrant...."
+2026-01-28 16:15:31,925 - INFO -   Replacement: "Abdominal examination reveals tenderness in the right lower quadrant...."
+2026-01-28 16:15:31,925 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:31,925 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:31,925 - INFO -     Original: "Abdominal exam is notable for pain over the right lower quad..."
+2026-01-28 16:15:31,925 - INFO -     Replaced: "Abdominal examination reveals tenderness in the right lower ..."
+2026-01-28 16:15:31,925 - INFO - 
+============================================================
+2026-01-28 16:15:31,926 - INFO - Processing: uw-val-65
+2026-01-28 16:15:31,926 - DEBUG -   Note length: 340 chars
+2026-01-28 16:15:31,926 - DEBUG -   Found candidate sentence in history_of_present_illness: 'Pt a <AGE/> year old woman with history of T1N1 breast cancer s/p chemoradiation...'
+2026-01-28 16:15:31,926 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:15:31,926 - INFO -   Original sentence: "Pt a <AGE/> year old woman with history of T1N1 breast cancer s/p chemoradiation..."
+2026-01-28 16:15:34,795 - INFO -   Replacement: "Patient is a <AGE/> year old female with a history of T1N1 breast cancer status ..."
+2026-01-28 16:15:34,795 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:34,795 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:34,795 - INFO -     Original: "Pt a <AGE/> year old woman with history of T1N1 breast cance..."
+2026-01-28 16:15:34,795 - INFO -     Replaced: "Patient is a <AGE/> year old female with a history of T1N1 b..."
+2026-01-28 16:15:34,796 - INFO - 
+============================================================
+2026-01-28 16:15:34,796 - INFO - Processing: ms-val-565
+2026-01-28 16:15:34,796 - DEBUG -   Note length: 660 chars
+2026-01-28 16:15:34,796 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Occasionally, the aches travel to his elbows and knees....'
+2026-01-28 16:15:34,796 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:34,796 - INFO -   Original sentence: "Occasionally, the aches travel to his elbows and knees...."
+2026-01-28 16:15:36,048 - INFO -   Replacement: "Aches intermittently radiate to his elbows and knees...."
+2026-01-28 16:15:36,048 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:36,048 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:36,048 - INFO -     Original: "Occasionally, the aches travel to his elbows and knees...."
+2026-01-28 16:15:36,048 - INFO -     Replaced: "Aches intermittently radiate to his elbows and knees...."
+2026-01-28 16:15:36,048 - INFO - 
+============================================================
+2026-01-28 16:15:36,048 - INFO - Processing: ms-train-1759
+2026-01-28 16:15:36,048 - DEBUG -   Note length: 389 chars
+2026-01-28 16:15:36,048 - DEBUG -   Found candidate sentence in physical_exam_findings: 'During her visit, a pelvic exam and Pap smear are performed....'
+2026-01-28 16:15:36,048 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:36,048 - INFO -   Original sentence: "During her visit, a pelvic exam and Pap smear are performed...."
+2026-01-28 16:15:38,131 - INFO -   Replacement: "A pelvic examination and Pap test are conducted during her visit...."
+2026-01-28 16:15:38,131 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:38,131 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:38,131 - INFO -     Original: "During her visit, a pelvic exam and Pap smear are performed...."
+2026-01-28 16:15:38,131 - INFO -     Replaced: "A pelvic examination and Pap test are conducted during her v..."
+2026-01-28 16:15:38,132 - INFO - 
+============================================================
+2026-01-28 16:15:38,132 - INFO - Processing: ms-train-2048
+2026-01-28 16:15:38,132 - DEBUG -   Note length: 496 chars
+2026-01-28 16:15:38,132 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 40-year-old woman with a history of alcoholism presents to the emergency depar...'
+2026-01-28 16:15:38,132 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:38,132 - INFO -   Original sentence: "A 40-year-old woman with a history of alcoholism presents to the emergency depar..."
+2026-01-28 16:15:40,037 - INFO -   Replacement: "A 40-year-old female with a history of alcohol use disorder arrives at the emerg..."
+2026-01-28 16:15:40,037 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:40,037 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:40,037 - INFO -     Original: "A 40-year-old woman with a history of alcoholism presents to..."
+2026-01-28 16:15:40,037 - INFO -     Replaced: "A 40-year-old female with a history of alcohol use disorder ..."
+2026-01-28 16:15:40,037 - INFO - 
+============================================================
+2026-01-28 16:15:40,037 - INFO - Processing: ms-train-747
+2026-01-28 16:15:40,037 - DEBUG -   Note length: 626 chars
+2026-01-28 16:15:40,038 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 32-year-old man comes into your office because of pain in his right knee, left...'
+2026-01-28 16:15:40,038 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:40,038 - INFO -   Original sentence: "A 32-year-old man comes into your office because of pain in his right knee, left..."
+2026-01-28 16:15:41,807 - INFO -   Replacement: "A 32-year-old male presents to the clinic with pain in the right knee, left elbo..."
+2026-01-28 16:15:41,807 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:41,807 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:41,807 - INFO -     Original: "A 32-year-old man comes into your office because of pain in ..."
+2026-01-28 16:15:41,807 - INFO -     Replaced: "A 32-year-old male presents to the clinic with pain in the r..."
+2026-01-28 16:15:41,808 - INFO - 
+============================================================
+2026-01-28 16:15:41,808 - INFO - Processing: ms-train-1782
+2026-01-28 16:15:41,808 - DEBUG -   Note length: 562 chars
+2026-01-28 16:15:41,808 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Chest auscultation reveals diffuse wheezes and coarse crackles....'
+2026-01-28 16:15:41,808 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:41,808 - INFO -   Original sentence: "Chest auscultation reveals diffuse wheezes and coarse crackles...."
+2026-01-28 16:15:43,080 - INFO -   Replacement: "Auscultation of the chest demonstrates widespread wheezing and coarse rales...."
+2026-01-28 16:15:43,081 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:43,081 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:43,081 - INFO -     Original: "Chest auscultation reveals diffuse wheezes and coarse crackl..."
+2026-01-28 16:15:43,081 - INFO -     Replaced: "Auscultation of the chest demonstrates widespread wheezing a..."
+2026-01-28 16:15:43,082 - INFO - 
+============================================================
+2026-01-28 16:15:43,082 - INFO - Processing: ms-train-1589
+2026-01-28 16:15:43,082 - DEBUG -   Note length: 720 chars
+2026-01-28 16:15:43,082 - DEBUG -   Found candidate sentence in physical_exam_findings: 'While evaluating him per your institution's trauma guidelines, you discover pain...'
+2026-01-28 16:15:43,082 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:43,082 - INFO -   Original sentence: "While evaluating him per your institution's trauma guidelines, you discover pain..."
+2026-01-28 16:15:45,163 - INFO -   Replacement: "During assessment according to your facility's trauma protocols, tenderness is n..."
+2026-01-28 16:15:45,164 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:45,164 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:45,164 - INFO -     Original: "While evaluating him per your institution's trauma guideline..."
+2026-01-28 16:15:45,164 - INFO -     Replaced: "During assessment according to your facility's trauma protoc..."
+2026-01-28 16:15:45,164 - INFO - 
+============================================================
+2026-01-28 16:15:45,164 - INFO - Processing: ms-train-2124
+2026-01-28 16:15:45,164 - DEBUG -   Note length: 633 chars
+2026-01-28 16:15:45,165 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination of the breasts showed a secondary mound formed by the nipple and are...'
+2026-01-28 16:15:45,165 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:45,165 - INFO -   Original sentence: "Examination of the breasts showed a secondary mound formed by the nipple and are..."
+2026-01-28 16:15:46,530 - INFO -   Replacement: "Breast examination revealed a secondary prominence created by the nipple and are..."
+2026-01-28 16:15:46,531 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:46,531 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:46,531 - INFO -     Original: "Examination of the breasts showed a secondary mound formed b..."
+2026-01-28 16:15:46,531 - INFO -     Replaced: "Breast examination revealed a secondary prominence created b..."
+2026-01-28 16:15:46,532 - INFO - 
+============================================================
+2026-01-28 16:15:46,532 - INFO - Processing: uw-val-102
+2026-01-28 16:15:46,532 - DEBUG -   Note length: 308 chars
+2026-01-28 16:15:46,532 - DEBUG -   Found candidate sentence in history_of_present_illness: '<NAME/> is a <AGE/> yo male who presents w/  bulbar myasthenia gravis with worse...'
+2026-01-28 16:15:46,532 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:15:46,532 - INFO -   Original sentence: "<NAME/> is a <AGE/> yo male who presents w/  bulbar myasthenia gravis with worse..."
+2026-01-28 16:15:48,649 - INFO -   Replacement: "<NAME/> is a <AGE/> year-old male presenting with bulbar myasthenia gravis, exhi..."
+2026-01-28 16:15:48,650 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:48,650 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:48,650 - INFO -     Original: "<NAME/> is a <AGE/> yo male who presents w/  bulbar myasthen..."
+2026-01-28 16:15:48,650 - INFO -     Replaced: "<NAME/> is a <AGE/> year-old male presenting with bulbar mya..."
+2026-01-28 16:15:48,651 - INFO - 
+============================================================
+2026-01-28 16:15:48,651 - INFO - Processing: ms-train-1660
+2026-01-28 16:15:48,651 - DEBUG -   Note length: 638 chars
+2026-01-28 16:15:48,651 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no signs of life....'
+2026-01-28 16:15:48,651 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:48,651 - INFO -   Original sentence: "Physical examination shows no signs of life...."
+2026-01-28 16:15:49,865 - INFO -   Replacement: "Physical exam reveals absence of vital signs...."
+2026-01-28 16:15:49,866 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:49,866 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:49,866 - INFO -     Original: "Physical examination shows no signs of life...."
+2026-01-28 16:15:49,866 - INFO -     Replaced: "Physical exam reveals absence of vital signs...."
+2026-01-28 16:15:49,866 - INFO - 
+============================================================
+2026-01-28 16:15:49,866 - INFO - Processing: ms-train-1579
+2026-01-28 16:15:49,866 - DEBUG -   Note length: 805 chars
+2026-01-28 16:15:49,866 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 19-year-old man is rushed to the emergency department 30 minutes after diving ...'
+2026-01-28 16:15:49,867 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:49,867 - INFO -   Original sentence: "A 19-year-old man is rushed to the emergency department 30 minutes after diving ..."
+2026-01-28 16:15:51,818 - INFO -   Replacement: "A 19-year-old male is brought to the emergency department 30 minutes following a..."
+2026-01-28 16:15:51,818 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:51,818 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:51,818 - INFO -     Original: "A 19-year-old man is rushed to the emergency department 30 m..."
+2026-01-28 16:15:51,818 - INFO -     Replaced: "A 19-year-old male is brought to the emergency department 30..."
+2026-01-28 16:15:51,818 - INFO - 
+============================================================
+2026-01-28 16:15:51,818 - INFO - Processing: ms-train-74
+2026-01-28 16:15:51,818 - DEBUG -   Note length: 750 chars
+2026-01-28 16:15:51,818 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 5-year-old boy presents to the emergency department with a sore throat and tro...'
+2026-01-28 16:15:51,818 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:51,818 - INFO -   Original sentence: "A 5-year-old boy presents to the emergency department with a sore throat and tro..."
+2026-01-28 16:15:53,387 - INFO -   Replacement: "A 5-year-old male arrives at the emergency department with pharyngodynia and res..."
+2026-01-28 16:15:53,387 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:53,387 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:53,387 - INFO -     Original: "A 5-year-old boy presents to the emergency department with a..."
+2026-01-28 16:15:53,387 - INFO -     Replaced: "A 5-year-old male arrives at the emergency department with p..."
+2026-01-28 16:15:53,388 - INFO - 
+============================================================
+2026-01-28 16:15:53,388 - INFO - Processing: ms-train-2044
+2026-01-28 16:15:53,388 - DEBUG -   Note length: 459 chars
+2026-01-28 16:15:53,388 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He fell and landed on the lateral aspect of his right shoulder....'
+2026-01-28 16:15:53,388 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:53,388 - INFO -   Original sentence: "He fell and landed on the lateral aspect of his right shoulder...."
+2026-01-28 16:15:55,146 - INFO -   Replacement: "He sustained a fall, impacting the lateral side of his right shoulder...."
+2026-01-28 16:15:55,146 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:55,146 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:55,146 - INFO -     Original: "He fell and landed on the lateral aspect of his right should..."
+2026-01-28 16:15:55,146 - INFO -     Replaced: "He sustained a fall, impacting the lateral side of his right..."
+2026-01-28 16:15:55,147 - INFO - 
+============================================================
+2026-01-28 16:15:55,147 - INFO - Processing: uw-val-91
+2026-01-28 16:15:55,147 - DEBUG -   Note length: 718 chars
+2026-01-28 16:15:55,147 - DEBUG -   Found candidate sentence in history_of_present_illness: '<NAME/> is a <AGE/> yo F who was admitted to the <LOCATION/> Urology service on ...'
+2026-01-28 16:15:55,147 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:15:55,147 - INFO -   Original sentence: "<NAME/> is a <AGE/> yo F who was admitted to the <LOCATION/> Urology service on ..."
+2026-01-28 16:15:59,996 - INFO -   Replacement: "<NAME/> is a <AGE/> year old female who was admitted to the <LOCATION/> Urology ..."
+2026-01-28 16:15:59,996 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:15:59,996 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:15:59,996 - INFO -     Original: "<NAME/> is a <AGE/> yo F who was admitted to the <LOCATION/>..."
+2026-01-28 16:15:59,996 - INFO -     Replaced: "<NAME/> is a <AGE/> year old female who was admitted to the ..."
+2026-01-28 16:15:59,997 - INFO - 
+============================================================
+2026-01-28 16:15:59,997 - INFO - Processing: ms-train-2140
+2026-01-28 16:15:59,997 - DEBUG -   Note length: 665 chars
+2026-01-28 16:15:59,997 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows perioral cyanosis and retractions of the lower ribs w...'
+2026-01-28 16:15:59,997 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:15:59,997 - INFO -   Original sentence: "Physical examination shows perioral cyanosis and retractions of the lower ribs w..."
+2026-01-28 16:16:01,820 - INFO -   Replacement: "Physical exam reveals perioral cyanosis and lower rib retractions during respira..."
+2026-01-28 16:16:01,820 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:01,820 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:01,820 - INFO -     Original: "Physical examination shows perioral cyanosis and retractions..."
+2026-01-28 16:16:01,820 - INFO -     Replaced: "Physical exam reveals perioral cyanosis and lower rib retrac..."
+2026-01-28 16:16:01,821 - INFO - 
+============================================================
+2026-01-28 16:16:01,821 - INFO - Processing: ms-train-1115
+2026-01-28 16:16:01,821 - DEBUG -   Note length: 909 chars
+2026-01-28 16:16:01,821 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Speculum examination shows pooling of nonbloody, malodorous fluid in the vaginal...'
+2026-01-28 16:16:01,821 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:01,821 - INFO -   Original sentence: "Speculum examination shows pooling of nonbloody, malodorous fluid in the vaginal..."
+2026-01-28 16:16:03,491 - INFO -   Replacement: "Speculum exam reveals accumulation of foul-smelling, nonbloody fluid in the vagi..."
+2026-01-28 16:16:03,491 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:03,491 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:03,491 - INFO -     Original: "Speculum examination shows pooling of nonbloody, malodorous ..."
+2026-01-28 16:16:03,491 - INFO -     Replaced: "Speculum exam reveals accumulation of foul-smelling, nonbloo..."
+2026-01-28 16:16:03,491 - INFO - 
+============================================================
+2026-01-28 16:16:03,491 - INFO - Processing: uw-val-73
+2026-01-28 16:16:03,491 - DEBUG -   Note length: 426 chars
+2026-01-28 16:16:03,491 - DEBUG -   Found candidate sentence in history_of_present_illness: 'Pt is a <AGE/> yo M admitted with nasal erythema/pain and neutropenic fever; fou...'
+2026-01-28 16:16:03,491 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:16:03,491 - INFO -   Original sentence: "Pt is a <AGE/> yo M admitted with nasal erythema/pain and neutropenic fever; fou..."
+2026-01-28 16:16:07,843 - INFO -   Replacement: "<AGE/> year old male patient admitted with nasal erythema and pain, along with n..."
+2026-01-28 16:16:07,843 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:07,843 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:07,843 - INFO -     Original: "Pt is a <AGE/> yo M admitted with nasal erythema/pain and ne..."
+2026-01-28 16:16:07,843 - INFO -     Replaced: "<AGE/> year old male patient admitted with nasal erythema an..."
+2026-01-28 16:16:07,844 - INFO - 
+============================================================
+2026-01-28 16:16:07,844 - INFO - Processing: ms-train-1746
+2026-01-28 16:16:07,844 - DEBUG -   Note length: 1158 chars
+2026-01-28 16:16:07,844 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The newborn appears restless....'
+2026-01-28 16:16:07,844 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:07,844 - INFO -   Original sentence: "The newborn appears restless...."
+2026-01-28 16:16:08,869 - INFO -   Replacement: "Newborn exhibits restlessness..."
+2026-01-28 16:16:08,870 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:08,870 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:08,870 - INFO -     Original: "The newborn appears restless...."
+2026-01-28 16:16:08,870 - INFO -     Replaced: "Newborn exhibits restlessness..."
+2026-01-28 16:16:08,871 - INFO - 
+============================================================
+2026-01-28 16:16:08,871 - INFO - Processing: uw-val-19
+2026-01-28 16:16:08,871 - DEBUG -   Note length: 1267 chars
+2026-01-28 16:16:08,871 - DEBUG -   Found candidate sentence in history_of_present_illness: '<NAME/> is a <AGE/>M with active IVDU (meth/heroin), p/w worsening hip pain and ...'
+2026-01-28 16:16:08,871 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:16:08,871 - INFO -   Original sentence: "<NAME/> is a <AGE/>M with active IVDU (meth/heroin), p/w worsening hip pain and ..."
+2026-01-28 16:16:12,014 - INFO -   Replacement: "<NAME/> is a <AGE/>M with ongoing intravenous drug use (meth/heroin), presenting..."
+2026-01-28 16:16:12,014 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:12,014 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:12,014 - INFO -     Original: "<NAME/> is a <AGE/>M with active IVDU (meth/heroin), p/w wor..."
+2026-01-28 16:16:12,014 - INFO -     Replaced: "<NAME/> is a <AGE/>M with ongoing intravenous drug use (meth..."
+2026-01-28 16:16:12,015 - INFO - 
+============================================================
+2026-01-28 16:16:12,015 - INFO - Processing: ms-train-2142
+2026-01-28 16:16:12,015 - DEBUG -   Note length: 819 chars
+2026-01-28 16:16:12,015 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 74-year-old woman presents to the emergency department for shortness of breath...'
+2026-01-28 16:16:12,015 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:12,015 - INFO -   Original sentence: "A 74-year-old woman presents to the emergency department for shortness of breath..."
+2026-01-28 16:16:13,651 - INFO -   Replacement: "A 74-year-old female arrives at the emergency department with dyspnea and bilate..."
+2026-01-28 16:16:13,651 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:13,651 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:13,651 - INFO -     Original: "A 74-year-old woman presents to the emergency department for..."
+2026-01-28 16:16:13,651 - INFO -     Replaced: "A 74-year-old female arrives at the emergency department wit..."
+2026-01-28 16:16:13,651 - INFO - 
+============================================================
+2026-01-28 16:16:13,651 - INFO - Processing: ms-val-272
+2026-01-28 16:16:13,651 - DEBUG -   Note length: 607 chars
+2026-01-28 16:16:13,651 - DEBUG -   Found candidate sentence in physical_exam_findings: 'While in the waiting room, he becomes unresponsive and starts jerking his arms a...'
+2026-01-28 16:16:13,652 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:13,652 - INFO -   Original sentence: "While in the waiting room, he becomes unresponsive and starts jerking his arms a..."
+2026-01-28 16:16:15,192 - INFO -   Replacement: "While in the waiting area, he becomes unresponsive and exhibits rhythmic jerking..."
+2026-01-28 16:16:15,192 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:15,192 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:15,193 - INFO -     Original: "While in the waiting room, he becomes unresponsive and start..."
+2026-01-28 16:16:15,193 - INFO -     Replaced: "While in the waiting area, he becomes unresponsive and exhib..."
+2026-01-28 16:16:15,193 - INFO - 
+============================================================
+2026-01-28 16:16:15,193 - INFO - Processing: ms-train-937
+2026-01-28 16:16:15,193 - DEBUG -   Note length: 425 chars
+2026-01-28 16:16:15,193 - DEBUG -   Found candidate sentence in history_of_present_illness: 'Pain medication dose was increased after a 75-year-old woman with metastatic col...'
+2026-01-28 16:16:15,194 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:16:15,194 - INFO -   Original sentence: "Pain medication dose was increased after a 75-year-old woman with metastatic col..."
+2026-01-28 16:16:17,313 - INFO -   Replacement: "Analgesic dosage was escalated following a 75-year-old female with metastatic co..."
+2026-01-28 16:16:17,313 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:17,313 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:17,313 - INFO -     Original: "Pain medication dose was increased after a 75-year-old woman..."
+2026-01-28 16:16:17,313 - INFO -     Replaced: "Analgesic dosage was escalated following a 75-year-old femal..."
+2026-01-28 16:16:17,313 - INFO - 
+============================================================
+2026-01-28 16:16:17,313 - INFO - Processing: ms-train-1207
+2026-01-28 16:16:17,313 - DEBUG -   Note length: 625 chars
+2026-01-28 16:16:17,313 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A 72-year-old man is admitted to the hospital with a productive cough and fever....'
+2026-01-28 16:16:17,313 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:16:17,313 - INFO -   Original sentence: "A 72-year-old man is admitted to the hospital with a productive cough and fever...."
+2026-01-28 16:16:19,551 - INFO -   Replacement: "A 72-year-old male is hospitalized due to a cough with sputum production and ele..."
+2026-01-28 16:16:19,551 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:19,551 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:19,551 - INFO -     Original: "A 72-year-old man is admitted to the hospital with a product..."
+2026-01-28 16:16:19,551 - INFO -     Replaced: "A 72-year-old male is hospitalized due to a cough with sputu..."
+2026-01-28 16:16:19,552 - INFO - 
+============================================================
+2026-01-28 16:16:19,552 - INFO - Processing: ms-val-492
+2026-01-28 16:16:19,552 - DEBUG -   Note length: 559 chars
+2026-01-28 16:16:19,552 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 42-year-old man is admitted to the hospital for pain and swelling in his right...'
+2026-01-28 16:16:19,552 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:19,552 - INFO -   Original sentence: "A 42-year-old man is admitted to the hospital for pain and swelling in his right..."
+2026-01-28 16:16:21,123 - INFO -   Replacement: "A 42-year-old male is hospitalized due to discomfort and edema in his right foot..."
+2026-01-28 16:16:21,124 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:21,124 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:21,124 - INFO -     Original: "A 42-year-old man is admitted to the hospital for pain and s..."
+2026-01-28 16:16:21,124 - INFO -     Replaced: "A 42-year-old male is hospitalized due to discomfort and ede..."
+2026-01-28 16:16:21,124 - INFO - 
+============================================================
+2026-01-28 16:16:21,124 - INFO - Processing: ms-train-1428
+2026-01-28 16:16:21,124 - DEBUG -   Note length: 1137 chars
+2026-01-28 16:16:21,124 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 29-year-old G2P0010 at 33 weeks and 2 days gestation presents to the labor flo...'
+2026-01-28 16:16:21,124 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:21,124 - INFO -   Original sentence: "A 29-year-old G2P0010 at 33 weeks and 2 days gestation presents to the labor flo..."
+2026-01-28 16:16:23,849 - INFO -   Replacement: "A 29-year-old G2P0010 at 33 weeks and 2 days of gestation arrives at the labor u..."
+2026-01-28 16:16:23,849 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:23,849 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:23,849 - INFO -     Original: "A 29-year-old G2P0010 at 33 weeks and 2 days gestation prese..."
+2026-01-28 16:16:23,849 - INFO -     Replaced: "A 29-year-old G2P0010 at 33 weeks and 2 days of gestation ar..."
+2026-01-28 16:16:23,849 - INFO - 
+============================================================
+2026-01-28 16:16:23,849 - INFO - Processing: uw-val-44
+2026-01-28 16:16:23,849 - DEBUG -   Note length: 955 chars
+2026-01-28 16:16:23,850 - DEBUG -   Found candidate sentence in history_of_present_illness: 'Her initial nutrition consult is noted for a 10 lb unintentional wt loss....'
+2026-01-28 16:16:23,850 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:16:23,850 - INFO -   Original sentence: "Her initial nutrition consult is noted for a 10 lb unintentional wt loss...."
+2026-01-28 16:16:25,645 - INFO -   Replacement: "Initial nutrition consultation indicates a 10 lb unintentional weight loss...."
+2026-01-28 16:16:25,645 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:25,645 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:25,645 - INFO -     Original: "Her initial nutrition consult is noted for a 10 lb unintenti..."
+2026-01-28 16:16:25,645 - INFO -     Replaced: "Initial nutrition consultation indicates a 10 lb unintention..."
+2026-01-28 16:16:25,645 - INFO - 
+============================================================
+2026-01-28 16:16:25,645 - INFO - Processing: ms-train-1561
+2026-01-28 16:16:25,645 - DEBUG -   Note length: 473 chars
+2026-01-28 16:16:25,645 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Vital signs are within normal limits....'
+2026-01-28 16:16:25,645 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:25,645 - INFO -   Original sentence: "Vital signs are within normal limits...."
+2026-01-28 16:16:26,799 - INFO -   Replacement: "Vitals unremarkable..."
+2026-01-28 16:16:26,800 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:26,800 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:26,800 - INFO -     Original: "Vital signs are within normal limits...."
+2026-01-28 16:16:26,800 - INFO -     Replaced: "Vitals unremarkable..."
+2026-01-28 16:16:26,800 - INFO - 
+============================================================
+2026-01-28 16:16:26,800 - INFO - Processing: ms-train-878
+2026-01-28 16:16:26,800 - DEBUG -   Note length: 795 chars
+2026-01-28 16:16:26,800 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 60-year-old man presents to the emergency department complaining of worsening ...'
+2026-01-28 16:16:26,800 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:26,800 - INFO -   Original sentence: "A 60-year-old man presents to the emergency department complaining of worsening ..."
+2026-01-28 16:16:28,791 - INFO -   Replacement: "A 60-year-old male arrives at the emergency department reporting increased dyspn..."
+2026-01-28 16:16:28,791 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:28,791 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:28,791 - INFO -     Original: "A 60-year-old man presents to the emergency department compl..."
+2026-01-28 16:16:28,791 - INFO -     Replaced: "A 60-year-old male arrives at the emergency department repor..."
+2026-01-28 16:16:28,792 - INFO - 
+============================================================
+2026-01-28 16:16:28,792 - INFO - Processing: ms-val-543
+2026-01-28 16:16:28,792 - DEBUG -   Note length: 645 chars
+2026-01-28 16:16:28,792 - DEBUG -   Found candidate sentence in physical_exam_findings: 'On physical exam, there is a shallow tear in the posterior verge of his anus....'
+2026-01-28 16:16:28,792 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:28,792 - INFO -   Original sentence: "On physical exam, there is a shallow tear in the posterior verge of his anus...."
+2026-01-28 16:16:29,883 - INFO -   Replacement: "Physical examination reveals a superficial laceration at the posterior margin of..."
+2026-01-28 16:16:29,883 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:29,883 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:29,883 - INFO -     Original: "On physical exam, there is a shallow tear in the posterior v..."
+2026-01-28 16:16:29,883 - INFO -     Replaced: "Physical examination reveals a superficial laceration at the..."
+2026-01-28 16:16:29,883 - INFO - 
+============================================================
+2026-01-28 16:16:29,883 - INFO - Processing: ms-train-1596
+2026-01-28 16:16:29,883 - DEBUG -   Note length: 1157 chars
+2026-01-28 16:16:29,883 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A previously healthy 1-year-old boy is brought to the emergency department becau...'
+2026-01-28 16:16:29,883 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:29,883 - INFO -   Original sentence: "A previously healthy 1-year-old boy is brought to the emergency department becau..."
+2026-01-28 16:16:31,414 - INFO -   Replacement: "A previously well 1-year-old male presents to the emergency department with a 2-..."
+2026-01-28 16:16:31,414 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:31,414 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:31,414 - INFO -     Original: "A previously healthy 1-year-old boy is brought to the emerge..."
+2026-01-28 16:16:31,414 - INFO -     Replaced: "A previously well 1-year-old male presents to the emergency ..."
+2026-01-28 16:16:31,414 - INFO - 
+============================================================
+2026-01-28 16:16:31,414 - INFO - Processing: ms-train-1762
+2026-01-28 16:16:31,414 - DEBUG -   Note length: 840 chars
+2026-01-28 16:16:31,414 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no abnormalities....'
+2026-01-28 16:16:31,414 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:31,414 - INFO -   Original sentence: "Physical examination shows no abnormalities...."
+2026-01-28 16:16:32,659 - INFO -   Replacement: "Physical exam unremarkable..."
+2026-01-28 16:16:32,659 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:32,660 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:32,660 - INFO -     Original: "Physical examination shows no abnormalities...."
+2026-01-28 16:16:32,660 - INFO -     Replaced: "Physical exam unremarkable..."
+2026-01-28 16:16:32,660 - INFO - 
+============================================================
+2026-01-28 16:16:32,660 - INFO - Processing: ms-train-902
+2026-01-28 16:16:32,661 - DEBUG -   Note length: 222 chars
+2026-01-28 16:16:32,661 - DEBUG -   Found candidate sentence in hospital_course_summary: 'A trauma 'huddle' is called....'
+2026-01-28 16:16:32,661 - INFO -   Target field: hospital_course_summary
+2026-01-28 16:16:32,661 - INFO -   Original sentence: "A trauma 'huddle' is called...."
+2026-01-28 16:16:33,705 - INFO -   Replacement: "A trauma team meeting is convened...."
+2026-01-28 16:16:33,705 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:33,705 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:33,705 - INFO -     Original: "A trauma 'huddle' is called...."
+2026-01-28 16:16:33,705 - INFO -     Replaced: "A trauma team meeting is convened...."
+2026-01-28 16:16:33,705 - INFO - 
+============================================================
+2026-01-28 16:16:33,706 - INFO - Processing: ms-train-1348
+2026-01-28 16:16:33,706 - DEBUG -   Note length: 703 chars
+2026-01-28 16:16:33,706 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows ecchymoses over the trunk and abdomen....'
+2026-01-28 16:16:33,706 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:33,706 - INFO -   Original sentence: "Physical examination shows ecchymoses over the trunk and abdomen...."
+2026-01-28 16:16:34,858 - INFO -   Replacement: "Physical exam reveals ecchymoses on the trunk and abdomen...."
+2026-01-28 16:16:34,858 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:34,858 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:34,858 - INFO -     Original: "Physical examination shows ecchymoses over the trunk and abd..."
+2026-01-28 16:16:34,858 - INFO -     Replaced: "Physical exam reveals ecchymoses on the trunk and abdomen...."
+2026-01-28 16:16:34,858 - INFO - 
+============================================================
+2026-01-28 16:16:34,858 - INFO - Processing: ms-train-870
+2026-01-28 16:16:34,858 - DEBUG -   Note length: 643 chars
+2026-01-28 16:16:34,858 - DEBUG -   Found candidate sentence in physical_exam_findings: 'En route, the patientâ€™s blood pressure is 127/73 mmHg, pulse is 91/min, respir...'
+2026-01-28 16:16:34,858 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:34,858 - INFO -   Original sentence: "En route, the patientâ€™s blood pressure is 127/73 mmHg, pulse is 91/min, respir..."
+2026-01-28 16:16:37,440 - INFO -   Replacement: "During transport, the patient's blood pressure measures 127/73 mmHg, heart rate ..."
+2026-01-28 16:16:37,440 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:37,440 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:37,440 - INFO -     Original: "En route, the patientâ€™s blood pressure is 127/73 mmHg, pul..."
+2026-01-28 16:16:37,440 - INFO -     Replaced: "During transport, the patient's blood pressure measures 127/..."
+2026-01-28 16:16:37,441 - INFO - 
+============================================================
+2026-01-28 16:16:37,441 - INFO - Processing: ms-val-230
+2026-01-28 16:16:37,441 - DEBUG -   Note length: 562 chars
+2026-01-28 16:16:37,441 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Her physical exam is notable for a gravid uterus and possible left ovarian mass ...'
+2026-01-28 16:16:37,441 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:37,441 - INFO -   Original sentence: "Her physical exam is notable for a gravid uterus and possible left ovarian mass ..."
+2026-01-28 16:16:38,822 - INFO -   Replacement: "Physical examination reveals a pregnant uterus and a potential left ovarian mass..."
+2026-01-28 16:16:38,822 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:38,822 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:38,822 - INFO -     Original: "Her physical exam is notable for a gravid uterus and possibl..."
+2026-01-28 16:16:38,822 - INFO -     Replaced: "Physical examination reveals a pregnant uterus and a potenti..."
+2026-01-28 16:16:38,823 - INFO - 
+============================================================
+2026-01-28 16:16:38,823 - INFO - Processing: uw-val-80
+2026-01-28 16:16:38,823 - DEBUG -   Note length: 445 chars
+2026-01-28 16:16:38,823 - DEBUG -   Found candidate sentence in history_of_present_illness: '<NAME/> is being managed for a malignant right pleural effusion, present on admi...'
+2026-01-28 16:16:38,823 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:16:38,823 - INFO -   Original sentence: "<NAME/> is being managed for a malignant right pleural effusion, present on admi..."
+2026-01-28 16:16:39,999 - INFO -   Replacement: "<NAME/> is receiving treatment for a malignant right pleural effusion identified..."
+2026-01-28 16:16:39,999 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:39,999 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:39,999 - INFO -     Original: "<NAME/> is being managed for a malignant right pleural effus..."
+2026-01-28 16:16:39,999 - INFO -     Replaced: "<NAME/> is receiving treatment for a malignant right pleural..."
+2026-01-28 16:16:39,999 - INFO - 
+============================================================
+2026-01-28 16:16:39,999 - INFO - Processing: uw-val-117
+2026-01-28 16:16:39,999 - DEBUG -   Note length: 320 chars
+2026-01-28 16:16:39,999 - DEBUG -   Found candidate sentence in diagnosis_primary: '<NAME/> has been noted to have documentation of protein calorie malnutrition on ...'
+2026-01-28 16:16:39,999 - INFO -   Target field: diagnosis_primary
+2026-01-28 16:16:39,999 - INFO -   Original sentence: "<NAME/> has been noted to have documentation of protein calorie malnutrition on ..."
+2026-01-28 16:16:41,468 - INFO -   Replacement: "<NAME/> documented as having protein-calorie malnutrition on <DATE/> in the ICU ..."
+2026-01-28 16:16:41,469 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:41,469 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:41,469 - INFO -     Original: "<NAME/> has been noted to have documentation of protein calo..."
+2026-01-28 16:16:41,469 - INFO -     Replaced: "<NAME/> documented as having protein-calorie malnutrition on..."
+2026-01-28 16:16:41,469 - INFO - 
+============================================================
+2026-01-28 16:16:41,470 - INFO - Processing: ms-train-1980
+2026-01-28 16:16:41,470 - DEBUG -   Note length: 720 chars
+2026-01-28 16:16:41,470 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Her father died of sudden cardiac death at the age of 44 years....'
+2026-01-28 16:16:41,470 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:41,470 - INFO -   Original sentence: "Her father died of sudden cardiac death at the age of 44 years...."
+2026-01-28 16:16:42,819 - INFO -   Replacement: "Her father experienced sudden cardiac arrest at 44 years of age...."
+2026-01-28 16:16:42,820 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:42,820 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:42,820 - INFO -     Original: "Her father died of sudden cardiac death at the age of 44 yea..."
+2026-01-28 16:16:42,820 - INFO -     Replaced: "Her father experienced sudden cardiac arrest at 44 years of ..."
+2026-01-28 16:16:42,820 - INFO - 
+============================================================
+2026-01-28 16:16:42,820 - INFO - Processing: ms-train-777
+2026-01-28 16:16:42,821 - DEBUG -   Note length: 505 chars
+2026-01-28 16:16:42,821 - DEBUG -   Found candidate sentence in history_of_present_illness: 'He admits to recently having an affair several months ago and requests STD testi...'
+2026-01-28 16:16:42,821 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:16:42,821 - INFO -   Original sentence: "He admits to recently having an affair several months ago and requests STD testi..."
+2026-01-28 16:16:43,998 - INFO -   Replacement: "Patient acknowledges a recent extramarital relationship from several months prio..."
+2026-01-28 16:16:43,998 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:43,998 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:43,998 - INFO -     Original: "He admits to recently having an affair several months ago an..."
+2026-01-28 16:16:43,998 - INFO -     Replaced: "Patient acknowledges a recent extramarital relationship from..."
+2026-01-28 16:16:43,999 - INFO - 
+============================================================
+2026-01-28 16:16:43,999 - INFO - Processing: ms-train-522
+2026-01-28 16:16:43,999 - DEBUG -   Note length: 808 chars
+2026-01-28 16:16:43,999 - DEBUG -   Found candidate sentence in physical_exam_findings: 'On physical exam the patient is a well nourished 11-year-old girl in no acute di...'
+2026-01-28 16:16:43,999 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:43,999 - INFO -   Original sentence: "On physical exam the patient is a well nourished 11-year-old girl in no acute di..."
+2026-01-28 16:16:45,304 - INFO -   Replacement: "Physical examination reveals a well-nourished 11-year-old girl in no acute distr..."
+2026-01-28 16:16:45,304 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:45,305 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:45,305 - INFO -     Original: "On physical exam the patient is a well nourished 11-year-old..."
+2026-01-28 16:16:45,305 - INFO -     Replaced: "Physical examination reveals a well-nourished 11-year-old gi..."
+2026-01-28 16:16:45,305 - INFO - 
+============================================================
+2026-01-28 16:16:45,305 - INFO - Processing: ms-val-483
+2026-01-28 16:16:45,305 - DEBUG -   Note length: 776 chars
+2026-01-28 16:16:45,305 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Pelvic examination shows a uterus consistent in size with a 37-week gestation....'
+2026-01-28 16:16:45,305 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:45,305 - INFO -   Original sentence: "Pelvic examination shows a uterus consistent in size with a 37-week gestation...."
+2026-01-28 16:16:46,512 - INFO -   Replacement: "Pelvic exam reveals a uterus appropriate for 37 weeks of gestation...."
+2026-01-28 16:16:46,512 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:46,512 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:46,512 - INFO -     Original: "Pelvic examination shows a uterus consistent in size with a ..."
+2026-01-28 16:16:46,512 - INFO -     Replaced: "Pelvic exam reveals a uterus appropriate for 37 weeks of ges..."
+2026-01-28 16:16:46,513 - INFO - 
+============================================================
+2026-01-28 16:16:46,513 - INFO - Processing: ms-train-162
+2026-01-28 16:16:46,513 - DEBUG -   Note length: 580 chars
+2026-01-28 16:16:46,513 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination of the neonate 2 hours later shows a soft, nonpulsatile swelling ove...'
+2026-01-28 16:16:46,513 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:46,514 - INFO -   Original sentence: "Examination of the neonate 2 hours later shows a soft, nonpulsatile swelling ove..."
+2026-01-28 16:16:48,799 - INFO -   Replacement: "Assessment of the neonate 2 hours post-delivery reveals a soft, nonpulsatile mas..."
+2026-01-28 16:16:48,799 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:48,799 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:48,799 - INFO -     Original: "Examination of the neonate 2 hours later shows a soft, nonpu..."
+2026-01-28 16:16:48,799 - INFO -     Replaced: "Assessment of the neonate 2 hours post-delivery reveals a so..."
+2026-01-28 16:16:48,800 - INFO - 
+============================================================
+2026-01-28 16:16:48,800 - INFO - Processing: ms-val-187
+2026-01-28 16:16:48,800 - DEBUG -   Note length: 563 chars
+2026-01-28 16:16:48,800 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Three days after surgical repair of a distal right radius fracture, a 62-year-ol...'
+2026-01-28 16:16:48,800 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:48,800 - INFO -   Original sentence: "Three days after surgical repair of a distal right radius fracture, a 62-year-ol..."
+2026-01-28 16:16:50,516 - INFO -   Replacement: "A 62-year-old man experiences significant wound pain and fever three days post-s..."
+2026-01-28 16:16:50,517 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:50,517 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:50,517 - INFO -     Original: "Three days after surgical repair of a distal right radius fr..."
+2026-01-28 16:16:50,517 - INFO -     Replaced: "A 62-year-old man experiences significant wound pain and fev..."
+2026-01-28 16:16:50,517 - INFO - 
+============================================================
+2026-01-28 16:16:50,517 - INFO - Processing: ms-train-827
+2026-01-28 16:16:50,517 - DEBUG -   Note length: 939 chars
+2026-01-28 16:16:50,517 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He is complaining of pain in his right arm, forehead, and pelvis....'
+2026-01-28 16:16:50,518 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:50,518 - INFO -   Original sentence: "He is complaining of pain in his right arm, forehead, and pelvis...."
+2026-01-28 16:16:51,711 - INFO -   Replacement: "Patient reports pain in the right arm, forehead, and pelvis...."
+2026-01-28 16:16:51,711 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:51,711 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:51,711 - INFO -     Original: "He is complaining of pain in his right arm, forehead, and pe..."
+2026-01-28 16:16:51,711 - INFO -     Replaced: "Patient reports pain in the right arm, forehead, and pelvis...."
+2026-01-28 16:16:51,711 - INFO - 
+============================================================
+2026-01-28 16:16:51,711 - INFO - Processing: ms-train-1593
+2026-01-28 16:16:51,711 - DEBUG -   Note length: 664 chars
+2026-01-28 16:16:51,712 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Exam demonstrates abdominal wall rigidity, involuntary guarding, and tenderness ...'
+2026-01-28 16:16:51,712 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:51,712 - INFO -   Original sentence: "Exam demonstrates abdominal wall rigidity, involuntary guarding, and tenderness ..."
+2026-01-28 16:16:53,320 - INFO -   Replacement: "Examination reveals abdominal wall rigidity, involuntary guarding, and tendernes..."
+2026-01-28 16:16:53,320 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:53,320 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:53,320 - INFO -     Original: "Exam demonstrates abdominal wall rigidity, involuntary guard..."
+2026-01-28 16:16:53,320 - INFO -     Replaced: "Examination reveals abdominal wall rigidity, involuntary gua..."
+2026-01-28 16:16:53,321 - INFO - 
+============================================================
+2026-01-28 16:16:53,321 - INFO - Processing: ms-train-16
+2026-01-28 16:16:53,321 - DEBUG -   Note length: 961 chars
+2026-01-28 16:16:53,321 - DEBUG -   Found candidate sentence in physical_exam_findings: 'There are several crusted insect bites on her extremities....'
+2026-01-28 16:16:53,321 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:53,321 - INFO -   Original sentence: "There are several crusted insect bites on her extremities...."
+2026-01-28 16:16:54,560 - INFO -   Replacement: "Multiple crusted insect bites noted on her limbs...."
+2026-01-28 16:16:54,560 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:54,561 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:54,561 - INFO -     Original: "There are several crusted insect bites on her extremities...."
+2026-01-28 16:16:54,561 - INFO -     Replaced: "Multiple crusted insect bites noted on her limbs...."
+2026-01-28 16:16:54,561 - INFO - 
+============================================================
+2026-01-28 16:16:54,561 - INFO - Processing: ms-train-2015
+2026-01-28 16:16:54,561 - DEBUG -   Note length: 806 chars
+2026-01-28 16:16:54,562 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The spleen is palpated 10 cm below the left costal margin....'
+2026-01-28 16:16:54,562 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:54,562 - INFO -   Original sentence: "The spleen is palpated 10 cm below the left costal margin...."
+2026-01-28 16:16:55,839 - INFO -   Replacement: "Spleen palpated 10 cm inferior to the left costal margin...."
+2026-01-28 16:16:55,839 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:55,839 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:55,839 - INFO -     Original: "The spleen is palpated 10 cm below the left costal margin...."
+2026-01-28 16:16:55,839 - INFO -     Replaced: "Spleen palpated 10 cm inferior to the left costal margin...."
+2026-01-28 16:16:55,839 - INFO - 
+============================================================
+2026-01-28 16:16:55,839 - INFO - Processing: ms-val-274
+2026-01-28 16:16:55,839 - DEBUG -   Note length: 668 chars
+2026-01-28 16:16:55,839 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical exam demonstrates a 3 cm laceration 1 cm inferior to the mastoid proces...'
+2026-01-28 16:16:55,839 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:55,839 - INFO -   Original sentence: "Physical exam demonstrates a 3 cm laceration 1 cm inferior to the mastoid proces..."
+2026-01-28 16:16:57,632 - INFO -   Replacement: "Physical examination reveals a 3 cm laceration located 1 cm below the right mast..."
+2026-01-28 16:16:57,633 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:57,633 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:57,633 - INFO -     Original: "Physical exam demonstrates a 3 cm laceration 1 cm inferior t..."
+2026-01-28 16:16:57,633 - INFO -     Replaced: "Physical examination reveals a 3 cm laceration located 1 cm ..."
+2026-01-28 16:16:57,633 - INFO - 
+============================================================
+2026-01-28 16:16:57,633 - INFO - Processing: ms-train-2184
+2026-01-28 16:16:57,633 - DEBUG -   Note length: 795 chars
+2026-01-28 16:16:57,633 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination is notable for crackles noted in the bases of the lungs bil...'
+2026-01-28 16:16:57,633 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:57,633 - INFO -   Original sentence: "Physical examination is notable for crackles noted in the bases of the lungs bil..."
+2026-01-28 16:16:58,872 - INFO -   Replacement: "Physical exam significant for bilateral basilar crackles...."
+2026-01-28 16:16:58,872 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:16:58,872 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:16:58,872 - INFO -     Original: "Physical examination is notable for crackles noted in the ba..."
+2026-01-28 16:16:58,872 - INFO -     Replaced: "Physical exam significant for bilateral basilar crackles...."
+2026-01-28 16:16:58,873 - INFO - 
+============================================================
+2026-01-28 16:16:58,873 - INFO - Processing: ms-train-999
+2026-01-28 16:16:58,873 - DEBUG -   Note length: 814 chars
+2026-01-28 16:16:58,873 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 2-week old newborn is brought to the physician for a follow-up examination aft...'
+2026-01-28 16:16:58,873 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:16:58,873 - INFO -   Original sentence: "A 2-week old newborn is brought to the physician for a follow-up examination aft..."
+2026-01-28 16:17:00,249 - INFO -   Replacement: "A 2-week-old infant presents to the physician for a follow-up assessment followi..."
+2026-01-28 16:17:00,250 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:00,250 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:00,250 - INFO -     Original: "A 2-week old newborn is brought to the physician for a follo..."
+2026-01-28 16:17:00,250 - INFO -     Replaced: "A 2-week-old infant presents to the physician for a follow-u..."
+2026-01-28 16:17:00,250 - INFO - 
+============================================================
+2026-01-28 16:17:00,250 - INFO - Processing: ms-train-425
+2026-01-28 16:17:00,250 - DEBUG -   Note length: 972 chars
+2026-01-28 16:17:00,250 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination shows multiple facial lacerations....'
+2026-01-28 16:17:00,250 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:00,250 - INFO -   Original sentence: "Examination shows multiple facial lacerations...."
+2026-01-28 16:17:01,326 - INFO -   Replacement: "Evaluation reveals several facial lacerations...."
+2026-01-28 16:17:01,327 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:01,327 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:01,327 - INFO -     Original: "Examination shows multiple facial lacerations...."
+2026-01-28 16:17:01,327 - INFO -     Replaced: "Evaluation reveals several facial lacerations...."
+2026-01-28 16:17:01,327 - INFO - 
+============================================================
+2026-01-28 16:17:01,327 - INFO - Processing: ms-train-2005
+2026-01-28 16:17:01,327 - DEBUG -   Note length: 593 chars
+2026-01-28 16:17:01,327 - DEBUG -   Found candidate sentence in physical_exam_findings: 'She appears pale....'
+2026-01-28 16:17:01,327 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:01,327 - INFO -   Original sentence: "She appears pale...."
+2026-01-28 16:17:02,347 - INFO -   Replacement: "Patient exhibits pallor...."
+2026-01-28 16:17:02,347 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:02,347 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:02,347 - INFO -     Original: "She appears pale...."
+2026-01-28 16:17:02,347 - INFO -     Replaced: "Patient exhibits pallor...."
+2026-01-28 16:17:02,348 - INFO - 
+============================================================
+2026-01-28 16:17:02,348 - INFO - Processing: ms-train-1338
+2026-01-28 16:17:02,348 - DEBUG -   Note length: 816 chars
+2026-01-28 16:17:02,348 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination shows macrocephaly and prominent brow bones....'
+2026-01-28 16:17:02,348 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:02,348 - INFO -   Original sentence: "Examination shows macrocephaly and prominent brow bones...."
+2026-01-28 16:17:04,123 - INFO -   Replacement: "Examination reveals macrocephaly and pronounced brow ridges...."
+2026-01-28 16:17:04,124 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:04,124 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:04,124 - INFO -     Original: "Examination shows macrocephaly and prominent brow bones...."
+2026-01-28 16:17:04,124 - INFO -     Replaced: "Examination reveals macrocephaly and pronounced brow ridges...."
+2026-01-28 16:17:04,124 - INFO - 
+============================================================
+2026-01-28 16:17:04,124 - INFO - Processing: ms-train-1677
+2026-01-28 16:17:04,124 - DEBUG -   Note length: 1010 chars
+2026-01-28 16:17:04,124 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination shows multiple bruises on the right anterior thoracic wall....'
+2026-01-28 16:17:04,124 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:04,124 - INFO -   Original sentence: "Examination shows multiple bruises on the right anterior thoracic wall...."
+2026-01-28 16:17:05,166 - INFO -   Replacement: "Examination reveals numerous contusions on the right anterior chest wall...."
+2026-01-28 16:17:05,166 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:05,166 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:05,166 - INFO -     Original: "Examination shows multiple bruises on the right anterior tho..."
+2026-01-28 16:17:05,166 - INFO -     Replaced: "Examination reveals numerous contusions on the right anterio..."
+2026-01-28 16:17:05,166 - INFO - 
+============================================================
+2026-01-28 16:17:05,166 - INFO - Processing: ms-val-328
+2026-01-28 16:17:05,166 - DEBUG -   Note length: 946 chars
+2026-01-28 16:17:05,166 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The spleen is palpated 6 cm below the left costal margin....'
+2026-01-28 16:17:05,166 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:05,166 - INFO -   Original sentence: "The spleen is palpated 6 cm below the left costal margin...."
+2026-01-28 16:17:06,665 - INFO -   Replacement: "Spleen palpated 6 cm inferior to the left costal margin...."
+2026-01-28 16:17:06,665 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:06,666 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:06,666 - INFO -     Original: "The spleen is palpated 6 cm below the left costal margin...."
+2026-01-28 16:17:06,666 - INFO -     Replaced: "Spleen palpated 6 cm inferior to the left costal margin...."
+2026-01-28 16:17:06,667 - INFO - 
+============================================================
+2026-01-28 16:17:06,667 - INFO - Processing: ms-train-1328
+2026-01-28 16:17:06,667 - DEBUG -   Note length: 991 chars
+2026-01-28 16:17:06,667 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The lungs are clear to auscultation....'
+2026-01-28 16:17:06,667 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:06,668 - INFO -   Original sentence: "The lungs are clear to auscultation...."
+2026-01-28 16:17:07,664 - INFO -   Replacement: "Auscultation reveals clear lung fields...."
+2026-01-28 16:17:07,664 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:07,664 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:07,664 - INFO -     Original: "The lungs are clear to auscultation...."
+2026-01-28 16:17:07,664 - INFO -     Replaced: "Auscultation reveals clear lung fields...."
+2026-01-28 16:17:07,664 - INFO - 
+============================================================
+2026-01-28 16:17:07,664 - INFO - Processing: ms-train-1801
+2026-01-28 16:17:07,664 - DEBUG -   Note length: 1600 chars
+2026-01-28 16:17:07,664 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination of the mouth shows several white patches on the tongue and oral muco...'
+2026-01-28 16:17:07,664 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:07,664 - INFO -   Original sentence: "Examination of the mouth shows several white patches on the tongue and oral muco..."
+2026-01-28 16:17:09,507 - INFO -   Replacement: "Oral examination reveals multiple white lesions on the tongue and buccal mucosa ..."
+2026-01-28 16:17:09,507 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:09,507 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:09,507 - INFO -     Original: "Examination of the mouth shows several white patches on the ..."
+2026-01-28 16:17:09,507 - INFO -     Replaced: "Oral examination reveals multiple white lesions on the tongu..."
+2026-01-28 16:17:09,508 - INFO - 
+============================================================
+2026-01-28 16:17:09,508 - INFO - Processing: ms-train-1482
+2026-01-28 16:17:09,508 - DEBUG -   Note length: 628 chars
+2026-01-28 16:17:09,508 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The ECG monitor shows a tachycardic irregular rhythm with erratic undulations, b...'
+2026-01-28 16:17:09,508 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:09,508 - INFO -   Original sentence: "The ECG monitor shows a tachycardic irregular rhythm with erratic undulations, b..."
+2026-01-28 16:17:11,346 - INFO -   Replacement: "The ECG monitor displays an irregular tachycardic rhythm with chaotic fluctuatio..."
+2026-01-28 16:17:11,346 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:11,346 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:11,346 - INFO -     Original: "The ECG monitor shows a tachycardic irregular rhythm with er..."
+2026-01-28 16:17:11,346 - INFO -     Replaced: "The ECG monitor displays an irregular tachycardic rhythm wit..."
+2026-01-28 16:17:11,347 - INFO - 
+============================================================
+2026-01-28 16:17:11,347 - INFO - Processing: ms-train-1712
+2026-01-28 16:17:11,347 - DEBUG -   Note length: 960 chars
+2026-01-28 16:17:11,348 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He is confused and oriented only to person....'
+2026-01-28 16:17:11,348 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:11,348 - INFO -   Original sentence: "He is confused and oriented only to person...."
+2026-01-28 16:17:12,439 - INFO -   Replacement: "Patient exhibits confusion and is oriented solely to self...."
+2026-01-28 16:17:12,439 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:12,439 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:12,440 - INFO -     Original: "He is confused and oriented only to person...."
+2026-01-28 16:17:12,440 - INFO -     Replaced: "Patient exhibits confusion and is oriented solely to self...."
+2026-01-28 16:17:12,440 - INFO - 
+============================================================
+2026-01-28 16:17:12,440 - INFO - Processing: uw-val-57
+2026-01-28 16:17:12,440 - DEBUG -   Note length: 576 chars
+2026-01-28 16:17:12,440 - DEBUG -   Found candidate sentence in history_of_present_illness: 'He is a <AGE/> y/o m, h/o T4aN1 laryngeal carcinoma s/p total laryngectomy, BND,...'
+2026-01-28 16:17:12,440 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:17:12,440 - INFO -   Original sentence: "He is a <AGE/> y/o m, h/o T4aN1 laryngeal carcinoma s/p total laryngectomy, BND,..."
+2026-01-28 16:17:15,684 - INFO -   Replacement: "The patient is a <AGE/> year-old male with a history of T4aN1 laryngeal carcinom..."
+2026-01-28 16:17:15,684 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:15,684 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:15,684 - INFO -     Original: "He is a <AGE/> y/o m, h/o T4aN1 laryngeal carcinoma s/p tota..."
+2026-01-28 16:17:15,684 - INFO -     Replaced: "The patient is a <AGE/> year-old male with a history of T4aN..."
+2026-01-28 16:17:15,685 - INFO - 
+============================================================
+2026-01-28 16:17:15,685 - INFO - Processing: ms-train-1797
+2026-01-28 16:17:15,685 - DEBUG -   Note length: 308 chars
+2026-01-28 16:17:15,685 - WARNING -   SKIP: No suitable sentence found for restatement
+2026-01-28 16:17:15,685 - INFO - 
+============================================================
+2026-01-28 16:17:15,685 - INFO - Processing: uw-val-118
+2026-01-28 16:17:15,685 - DEBUG -   Note length: 609 chars
+2026-01-28 16:17:15,685 - DEBUG -   Found candidate sentence in history_of_present_illness: 'Patient is a <AGE/>  YO M with h/o ALL treated with complete response from hyper...'
+2026-01-28 16:17:15,685 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:17:15,685 - INFO -   Original sentence: "Patient is a <AGE/>  YO M with h/o ALL treated with complete response from hyper..."
+2026-01-28 16:17:18,601 - INFO -   Replacement: "The patient is a <AGE/> year-old male with a history of acute lymphoblastic leuk..."
+2026-01-28 16:17:18,601 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:18,601 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:18,601 - INFO -     Original: "Patient is a <AGE/>  YO M with h/o ALL treated with complete..."
+2026-01-28 16:17:18,601 - INFO -     Replaced: "The patient is a <AGE/> year-old male with a history of acut..."
+2026-01-28 16:17:18,602 - INFO - 
+============================================================
+2026-01-28 16:17:18,602 - INFO - Processing: ms-train-690
+2026-01-28 16:17:18,602 - DEBUG -   Note length: 679 chars
+2026-01-28 16:17:18,602 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 55-year-old IV drug user comes into the emergency department after four days o...'
+2026-01-28 16:17:18,602 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:18,602 - INFO -   Original sentence: "A 55-year-old IV drug user comes into the emergency department after four days o..."
+2026-01-28 16:17:20,210 - INFO -   Replacement: "A 55-year-old intravenous drug user presents to the emergency department followi..."
+2026-01-28 16:17:20,210 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:20,211 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:20,211 - INFO -     Original: "A 55-year-old IV drug user comes into the emergency departme..."
+2026-01-28 16:17:20,211 - INFO -     Replaced: "A 55-year-old intravenous drug user presents to the emergenc..."
+2026-01-28 16:17:20,211 - INFO - 
+============================================================
+2026-01-28 16:17:20,211 - INFO - Processing: ms-train-2043
+2026-01-28 16:17:20,211 - DEBUG -   Note length: 829 chars
+2026-01-28 16:17:20,211 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical exam is notable for 3+ deep tendon reflexes bilaterally and 4/5 strengt...'
+2026-01-28 16:17:20,211 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:20,211 - INFO -   Original sentence: "Physical exam is notable for 3+ deep tendon reflexes bilaterally and 4/5 strengt..."
+2026-01-28 16:17:21,883 - INFO -   Replacement: "Physical examination reveals bilateral 3+ deep tendon reflexes and 4/5 muscle st..."
+2026-01-28 16:17:21,883 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:21,883 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:21,883 - INFO -     Original: "Physical exam is notable for 3+ deep tendon reflexes bilater..."
+2026-01-28 16:17:21,883 - INFO -     Replaced: "Physical examination reveals bilateral 3+ deep tendon reflex..."
+2026-01-28 16:17:21,883 - INFO - 
+============================================================
+2026-01-28 16:17:21,883 - INFO - Processing: ms-train-1185
+2026-01-28 16:17:21,883 - DEBUG -   Note length: 516 chars
+2026-01-28 16:17:21,883 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no abnormalities....'
+2026-01-28 16:17:21,883 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:21,883 - INFO -   Original sentence: "Physical examination shows no abnormalities...."
+2026-01-28 16:17:22,798 - INFO -   Replacement: "Physical exam unremarkable..."
+2026-01-28 16:17:22,798 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:22,798 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:22,799 - INFO -     Original: "Physical examination shows no abnormalities...."
+2026-01-28 16:17:22,799 - INFO -     Replaced: "Physical exam unremarkable..."
+2026-01-28 16:17:22,799 - INFO - 
+============================================================
+2026-01-28 16:17:22,799 - INFO - Processing: ms-train-833
+2026-01-28 16:17:22,799 - DEBUG -   Note length: 727 chars
+2026-01-28 16:17:22,799 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination is significant for pelvic organ prolapse on pelvic exam....'
+2026-01-28 16:17:22,799 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:22,799 - INFO -   Original sentence: "Physical examination is significant for pelvic organ prolapse on pelvic exam...."
+2026-01-28 16:17:24,151 - INFO -   Replacement: "Pelvic examination reveals significant pelvic organ prolapse...."
+2026-01-28 16:17:24,151 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:24,151 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:24,152 - INFO -     Original: "Physical examination is significant for pelvic organ prolaps..."
+2026-01-28 16:17:24,152 - INFO -     Replaced: "Pelvic examination reveals significant pelvic organ prolapse..."
+2026-01-28 16:17:24,152 - INFO - 
+============================================================
+2026-01-28 16:17:24,152 - INFO - Processing: ms-train-1080
+2026-01-28 16:17:24,152 - DEBUG -   Note length: 638 chars
+2026-01-28 16:17:24,152 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination in the delivery room shows both feet pointing downwards and inwards....'
+2026-01-28 16:17:24,152 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:24,152 - INFO -   Original sentence: "Examination in the delivery room shows both feet pointing downwards and inwards...."
+2026-01-28 16:17:25,574 - INFO -   Replacement: "Delivery room examination reveals bilateral feet in a downward and inward positi..."
+2026-01-28 16:17:25,574 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:25,574 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:25,574 - INFO -     Original: "Examination in the delivery room shows both feet pointing do..."
+2026-01-28 16:17:25,574 - INFO -     Replaced: "Delivery room examination reveals bilateral feet in a downwa..."
+2026-01-28 16:17:25,575 - INFO - 
+============================================================
+2026-01-28 16:17:25,575 - INFO - Processing: ms-train-90
+2026-01-28 16:17:25,575 - DEBUG -   Note length: 989 chars
+2026-01-28 16:17:25,575 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 47-year-old female presents to the emergency department in distress with a wou...'
+2026-01-28 16:17:25,575 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:25,575 - INFO -   Original sentence: "A 47-year-old female presents to the emergency department in distress with a wou..."
+2026-01-28 16:17:27,002 - INFO -   Replacement: "A 47-year-old woman arrives at the emergency department in distress with an inju..."
+2026-01-28 16:17:27,002 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:27,002 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:27,002 - INFO -     Original: "A 47-year-old female presents to the emergency department in..."
+2026-01-28 16:17:27,002 - INFO -     Replaced: "A 47-year-old woman arrives at the emergency department in d..."
+2026-01-28 16:17:27,003 - INFO - 
+============================================================
+2026-01-28 16:17:27,003 - INFO - Processing: ms-train-1528
+2026-01-28 16:17:27,003 - DEBUG -   Note length: 657 chars
+2026-01-28 16:17:27,003 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A previously healthy 3-year-old girl is brought to the physician because she ref...'
+2026-01-28 16:17:27,003 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:27,003 - INFO -   Original sentence: "A previously healthy 3-year-old girl is brought to the physician because she ref..."
+2026-01-28 16:17:29,325 - INFO -   Replacement: "A previously healthy 3-year-old female presents to the physician due to refusal ..."
+2026-01-28 16:17:29,325 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:29,325 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:29,325 - INFO -     Original: "A previously healthy 3-year-old girl is brought to the physi..."
+2026-01-28 16:17:29,325 - INFO -     Replaced: "A previously healthy 3-year-old female presents to the physi..."
+2026-01-28 16:17:29,326 - INFO - 
+============================================================
+2026-01-28 16:17:29,326 - INFO - Processing: ms-train-1503
+2026-01-28 16:17:29,326 - DEBUG -   Note length: 436 chars
+2026-01-28 16:17:29,326 - DEBUG -   Found candidate sentence in physical_exam_findings: 'On exam, you notice a 2 cm nodule on her anterior neck....'
+2026-01-28 16:17:29,326 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:29,326 - INFO -   Original sentence: "On exam, you notice a 2 cm nodule on her anterior neck...."
+2026-01-28 16:17:30,492 - INFO -   Replacement: "Examination reveals a 2 cm nodule located on the anterior aspect of the neck...."
+2026-01-28 16:17:30,492 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:30,492 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:30,492 - INFO -     Original: "On exam, you notice a 2 cm nodule on her anterior neck...."
+2026-01-28 16:17:30,492 - INFO -     Replaced: "Examination reveals a 2 cm nodule located on the anterior as..."
+2026-01-28 16:17:30,492 - INFO - 
+============================================================
+2026-01-28 16:17:30,492 - INFO - Processing: ms-train-761
+2026-01-28 16:17:30,492 - DEBUG -   Note length: 673 chars
+2026-01-28 16:17:30,493 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 23-year-old man presents to his primary care physician with complaints of fati...'
+2026-01-28 16:17:30,493 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:30,493 - INFO -   Original sentence: "A 23-year-old man presents to his primary care physician with complaints of fati..."
+2026-01-28 16:17:32,241 - INFO -   Replacement: "A 23-year-old male visits his primary care provider reporting fatigue and facial..."
+2026-01-28 16:17:32,242 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:32,242 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:32,242 - INFO -     Original: "A 23-year-old man presents to his primary care physician wit..."
+2026-01-28 16:17:32,242 - INFO -     Replaced: "A 23-year-old male visits his primary care provider reportin..."
+2026-01-28 16:17:32,242 - INFO - 
+============================================================
+2026-01-28 16:17:32,243 - INFO - Processing: ms-val-437
+2026-01-28 16:17:32,243 - DEBUG -   Note length: 539 chars
+2026-01-28 16:17:32,243 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination reveals a left carotid bruit....'
+2026-01-28 16:17:32,243 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:32,243 - INFO -   Original sentence: "Examination reveals a left carotid bruit...."
+2026-01-28 16:17:33,160 - INFO -   Replacement: "Examination demonstrates a bruit over the left carotid artery...."
+2026-01-28 16:17:33,160 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:33,160 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:33,160 - INFO -     Original: "Examination reveals a left carotid bruit...."
+2026-01-28 16:17:33,160 - INFO -     Replaced: "Examination demonstrates a bruit over the left carotid arter..."
+2026-01-28 16:17:33,160 - INFO - 
+============================================================
+2026-01-28 16:17:33,160 - INFO - Processing: uw-val-16
+2026-01-28 16:17:33,160 - DEBUG -   Note length: 363 chars
+2026-01-28 16:17:33,160 - DEBUG -   Found candidate sentence in hospital_course_summary: 'Postoperatively she received IVF in the setting of hypotension and low uop....'
+2026-01-28 16:17:33,160 - INFO -   Target field: hospital_course_summary
+2026-01-28 16:17:33,160 - INFO -   Original sentence: "Postoperatively she received IVF in the setting of hypotension and low uop...."
+2026-01-28 16:17:34,338 - INFO -   Replacement: "Post-surgery, she was administered intravenous fluids due to hypotension and dec..."
+2026-01-28 16:17:34,338 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:34,338 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:34,338 - INFO -     Original: "Postoperatively she received IVF in the setting of hypotensi..."
+2026-01-28 16:17:34,338 - INFO -     Replaced: "Post-surgery, she was administered intravenous fluids due to..."
+2026-01-28 16:17:34,339 - INFO - 
+============================================================
+2026-01-28 16:17:34,339 - INFO - Processing: ms-train-1809
+2026-01-28 16:17:34,339 - DEBUG -   Note length: 407 chars
+2026-01-28 16:17:34,339 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 26-year-old woman, gravida 2, para 1, at 26 weeksâ€™ gestation, comes to the e...'
+2026-01-28 16:17:34,339 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:34,339 - INFO -   Original sentence: "A 26-year-old woman, gravida 2, para 1, at 26 weeksâ€™ gestation, comes to the e..."
+2026-01-28 16:17:36,310 - INFO -   Replacement: "A 26-year-old female, gravida 2, para 1, at 26 weeks of gestation, presents to t..."
+2026-01-28 16:17:36,310 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:36,310 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:36,310 - INFO -     Original: "A 26-year-old woman, gravida 2, para 1, at 26 weeksâ€™ gesta..."
+2026-01-28 16:17:36,310 - INFO -     Replaced: "A 26-year-old female, gravida 2, para 1, at 26 weeks of gest..."
+2026-01-28 16:17:36,311 - INFO - 
+============================================================
+2026-01-28 16:17:36,311 - INFO - Processing: ms-val-46
+2026-01-28 16:17:36,311 - DEBUG -   Note length: 470 chars
+2026-01-28 16:17:36,311 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Cardiac examination shows a continuous heart murmur....'
+2026-01-28 16:17:36,311 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:36,311 - INFO -   Original sentence: "Cardiac examination shows a continuous heart murmur...."
+2026-01-28 16:17:37,516 - INFO -   Replacement: "Cardiac assessment reveals a persistent heart murmur...."
+2026-01-28 16:17:37,516 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:37,516 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:37,516 - INFO -     Original: "Cardiac examination shows a continuous heart murmur...."
+2026-01-28 16:17:37,516 - INFO -     Replaced: "Cardiac assessment reveals a persistent heart murmur...."
+2026-01-28 16:17:37,516 - INFO - 
+============================================================
+2026-01-28 16:17:37,516 - INFO - Processing: ms-train-2168
+2026-01-28 16:17:37,516 - DEBUG -   Note length: 533 chars
+2026-01-28 16:17:37,516 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A 35-year-old female presents to her PCP at the request of her husband after 3 w...'
+2026-01-28 16:17:37,516 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:17:37,516 - INFO -   Original sentence: "A 35-year-old female presents to her PCP at the request of her husband after 3 w..."
+2026-01-28 16:17:39,249 - INFO -   Replacement: "A 35-year-old woman arrives at her primary care physician's office at her husban..."
+2026-01-28 16:17:39,249 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:39,249 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:39,249 - INFO -     Original: "A 35-year-old female presents to her PCP at the request of h..."
+2026-01-28 16:17:39,250 - INFO -     Replaced: "A 35-year-old woman arrives at her primary care physician's ..."
+2026-01-28 16:17:39,250 - INFO - 
+============================================================
+2026-01-28 16:17:39,250 - INFO - Processing: ms-train-1871
+2026-01-28 16:17:39,250 - DEBUG -   Note length: 753 chars
+2026-01-28 16:17:39,251 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows dilated pupils, diaphoresis, and piloerection....'
+2026-01-28 16:17:39,251 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:39,251 - INFO -   Original sentence: "Physical examination shows dilated pupils, diaphoresis, and piloerection...."
+2026-01-28 16:17:40,358 - INFO -   Replacement: "Physical exam reveals mydriasis, sweating, and piloerection...."
+2026-01-28 16:17:40,358 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:40,358 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:40,358 - INFO -     Original: "Physical examination shows dilated pupils, diaphoresis, and ..."
+2026-01-28 16:17:40,358 - INFO -     Replaced: "Physical exam reveals mydriasis, sweating, and piloerection...."
+2026-01-28 16:17:40,358 - INFO - 
+============================================================
+2026-01-28 16:17:40,358 - INFO - Processing: ms-train-867
+2026-01-28 16:17:40,358 - DEBUG -   Note length: 651 chars
+2026-01-28 16:17:40,359 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 2-week-old newborn is brought to the physician for a follow-up examination....'
+2026-01-28 16:17:40,359 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:40,359 - INFO -   Original sentence: "A 2-week-old newborn is brought to the physician for a follow-up examination...."
+2026-01-28 16:17:41,699 - INFO -   Replacement: "A 2-week-old infant is presented to the physician for a follow-up assessment...."
+2026-01-28 16:17:41,699 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:41,699 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:41,699 - INFO -     Original: "A 2-week-old newborn is brought to the physician for a follo..."
+2026-01-28 16:17:41,699 - INFO -     Replaced: "A 2-week-old infant is presented to the physician for a foll..."
+2026-01-28 16:17:41,699 - INFO - 
+============================================================
+2026-01-28 16:17:41,699 - INFO - Processing: ms-val-258
+2026-01-28 16:17:41,699 - DEBUG -   Note length: 851 chars
+2026-01-28 16:17:41,700 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 55-year-old woman comes to the physician 10 days after noticing a mass in her ...'
+2026-01-28 16:17:41,700 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:41,700 - INFO -   Original sentence: "A 55-year-old woman comes to the physician 10 days after noticing a mass in her ..."
+2026-01-28 16:17:43,243 - INFO -   Replacement: "A 55-year-old female presents to the physician 10 days after discovering a lump ..."
+2026-01-28 16:17:43,243 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:43,243 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:43,243 - INFO -     Original: "A 55-year-old woman comes to the physician 10 days after not..."
+2026-01-28 16:17:43,243 - INFO -     Replaced: "A 55-year-old female presents to the physician 10 days after..."
+2026-01-28 16:17:43,243 - INFO - 
+============================================================
+2026-01-28 16:17:43,243 - INFO - Processing: ms-val-265
+2026-01-28 16:17:43,243 - DEBUG -   Note length: 765 chars
+2026-01-28 16:17:43,243 - DEBUG -   Found candidate sentence in physical_exam_findings: 'His physical exam and FAST exam is normal other than the knife wound....'
+2026-01-28 16:17:43,243 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:43,243 - INFO -   Original sentence: "His physical exam and FAST exam is normal other than the knife wound...."
+2026-01-28 16:17:44,601 - INFO -   Replacement: "Physical examination and FAST assessment are unremarkable except for the knife i..."
+2026-01-28 16:17:44,601 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:44,602 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:44,602 - INFO -     Original: "His physical exam and FAST exam is normal other than the kni..."
+2026-01-28 16:17:44,602 - INFO -     Replaced: "Physical examination and FAST assessment are unremarkable ex..."
+2026-01-28 16:17:44,602 - INFO - 
+============================================================
+2026-01-28 16:17:44,602 - INFO - Processing: ms-train-2052
+2026-01-28 16:17:44,602 - DEBUG -   Note length: 401 chars
+2026-01-28 16:17:44,603 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A one-week-old, full-term infant born by uncomplicated vaginal delivery is broug...'
+2026-01-28 16:17:44,603 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:17:44,603 - INFO -   Original sentence: "A one-week-old, full-term infant born by uncomplicated vaginal delivery is broug..."
+2026-01-28 16:17:46,999 - INFO -   Replacement: "A full-term infant, one week old, delivered vaginally without complications, is ..."
+2026-01-28 16:17:47,000 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:47,000 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:47,000 - INFO -     Original: "A one-week-old, full-term infant born by uncomplicated vagin..."
+2026-01-28 16:17:47,000 - INFO -     Replaced: "A full-term infant, one week old, delivered vaginally withou..."
+2026-01-28 16:17:47,001 - INFO - 
+============================================================
+2026-01-28 16:17:47,001 - INFO - Processing: ms-train-862
+2026-01-28 16:17:47,001 - DEBUG -   Note length: 1168 chars
+2026-01-28 16:17:47,001 - DEBUG -   Found candidate sentence in physical_exam_findings: 'She is well appearing and has no abdominal tenderness....'
+2026-01-28 16:17:47,001 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:47,001 - INFO -   Original sentence: "She is well appearing and has no abdominal tenderness...."
+2026-01-28 16:17:48,292 - INFO -   Replacement: "Patient appears well and exhibits no abdominal tenderness...."
+2026-01-28 16:17:48,292 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:48,292 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:48,292 - INFO -     Original: "She is well appearing and has no abdominal tenderness...."
+2026-01-28 16:17:48,292 - INFO -     Replaced: "Patient appears well and exhibits no abdominal tenderness...."
+2026-01-28 16:17:48,293 - INFO - 
+============================================================
+2026-01-28 16:17:48,293 - INFO - Processing: uw-val-42
+2026-01-28 16:17:48,293 - DEBUG -   Note length: 283 chars
+2026-01-28 16:17:48,293 - DEBUG -   Found candidate sentence in diagnosis_primary: 'This patient was admitted with a concomitant diagnosis of chronic respiratory fa...'
+2026-01-28 16:17:48,293 - INFO -   Target field: diagnosis_primary
+2026-01-28 16:17:48,293 - INFO -   Original sentence: "This patient was admitted with a concomitant diagnosis of chronic respiratory fa..."
+2026-01-28 16:17:49,323 - INFO -   Replacement: "This patient was hospitalized with a concurrent diagnosis of chronic respiratory..."
+2026-01-28 16:17:49,323 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:49,323 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:49,323 - INFO -     Original: "This patient was admitted with a concomitant diagnosis of ch..."
+2026-01-28 16:17:49,323 - INFO -     Replaced: "This patient was hospitalized with a concurrent diagnosis of..."
+2026-01-28 16:17:49,324 - INFO - 
+============================================================
+2026-01-28 16:17:49,324 - INFO - Processing: uw-val-69
+2026-01-28 16:17:49,324 - DEBUG -   Note length: 541 chars
+2026-01-28 16:17:49,324 - DEBUG -   Found candidate sentence in history_of_present_illness: '<NAME/> is a <AGE/> YO M with severe obstructive hydrocephalus due to large four...'
+2026-01-28 16:17:49,324 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:17:49,324 - INFO -   Original sentence: "<NAME/> is a <AGE/> YO M with severe obstructive hydrocephalus due to large four..."
+2026-01-28 16:17:52,262 - INFO -   Replacement: "<NAME/> is a <AGE/> year-old male with significant obstructive hydrocephalus sec..."
+2026-01-28 16:17:52,262 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:52,262 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:52,262 - INFO -     Original: "<NAME/> is a <AGE/> YO M with severe obstructive hydrocephal..."
+2026-01-28 16:17:52,262 - INFO -     Replaced: "<NAME/> is a <AGE/> year-old male with significant obstructi..."
+2026-01-28 16:17:52,263 - INFO - 
+============================================================
+2026-01-28 16:17:52,263 - INFO - Processing: ms-train-1966
+2026-01-28 16:17:52,263 - DEBUG -   Note length: 717 chars
+2026-01-28 16:17:52,263 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination shows scattered pustules on the forehead and oily skin....'
+2026-01-28 16:17:52,263 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:52,263 - INFO -   Original sentence: "Examination shows scattered pustules on the forehead and oily skin...."
+2026-01-28 16:17:53,372 - INFO -   Replacement: "Inspection reveals dispersed pustules on the forehead and seborrheic skin...."
+2026-01-28 16:17:53,372 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:53,372 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:53,372 - INFO -     Original: "Examination shows scattered pustules on the forehead and oil..."
+2026-01-28 16:17:53,372 - INFO -     Replaced: "Inspection reveals dispersed pustules on the forehead and se..."
+2026-01-28 16:17:53,373 - INFO - 
+============================================================
+2026-01-28 16:17:53,373 - INFO - Processing: ms-val-219
+2026-01-28 16:17:53,373 - DEBUG -   Note length: 219 chars
+2026-01-28 16:17:53,373 - DEBUG -   Found candidate sentence in imaging_results: 'Ultrasonography of the scrotum shows a 2-cm hypoechoic, homogeneous testicular m...'
+2026-01-28 16:17:53,373 - INFO -   Target field: imaging_results
+2026-01-28 16:17:53,373 - INFO -   Original sentence: "Ultrasonography of the scrotum shows a 2-cm hypoechoic, homogeneous testicular m..."
+2026-01-28 16:17:54,866 - INFO -   Replacement: "Scrotal ultrasound reveals a 2-cm homogeneous, hypoechoic testicular mass with w..."
+2026-01-28 16:17:54,866 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:54,866 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:54,867 - INFO -     Original: "Ultrasonography of the scrotum shows a 2-cm hypoechoic, homo..."
+2026-01-28 16:17:54,867 - INFO -     Replaced: "Scrotal ultrasound reveals a 2-cm homogeneous, hypoechoic te..."
+2026-01-28 16:17:54,867 - INFO - 
+============================================================
+2026-01-28 16:17:54,867 - INFO - Processing: ms-train-1485
+2026-01-28 16:17:54,867 - DEBUG -   Note length: 959 chars
+2026-01-28 16:17:54,867 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He has a wound on his left lower extremity with actively bleeding puncture sites...'
+2026-01-28 16:17:54,867 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:54,867 - INFO -   Original sentence: "He has a wound on his left lower extremity with actively bleeding puncture sites..."
+2026-01-28 16:17:56,351 - INFO -   Replacement: "Left lower extremity exhibits a wound with actively bleeding puncture sites...."
+2026-01-28 16:17:56,351 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:56,351 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:56,351 - INFO -     Original: "He has a wound on his left lower extremity with actively ble..."
+2026-01-28 16:17:56,351 - INFO -     Replaced: "Left lower extremity exhibits a wound with actively bleeding..."
+2026-01-28 16:17:56,352 - INFO - 
+============================================================
+2026-01-28 16:17:56,352 - INFO - Processing: ms-train-22
+2026-01-28 16:17:56,352 - DEBUG -   Note length: 604 chars
+2026-01-28 16:17:56,352 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Pulmonary examination shows scattered inspiratory crackles in all lung fields....'
+2026-01-28 16:17:56,352 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:56,352 - INFO -   Original sentence: "Pulmonary examination shows scattered inspiratory crackles in all lung fields...."
+2026-01-28 16:17:57,573 - INFO -   Replacement: "Pulmonary exam reveals diffuse inspiratory crackles throughout all lung fields...."
+2026-01-28 16:17:57,573 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:57,573 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:57,573 - INFO -     Original: "Pulmonary examination shows scattered inspiratory crackles i..."
+2026-01-28 16:17:57,573 - INFO -     Replaced: "Pulmonary exam reveals diffuse inspiratory crackles througho..."
+2026-01-28 16:17:57,573 - INFO - 
+============================================================
+2026-01-28 16:17:57,573 - INFO - Processing: ms-train-1506
+2026-01-28 16:17:57,573 - DEBUG -   Note length: 772 chars
+2026-01-28 16:17:57,573 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He whimpers in response to a soft pinch on the thigh, and he has moderate muscle...'
+2026-01-28 16:17:57,573 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:57,573 - INFO -   Original sentence: "He whimpers in response to a soft pinch on the thigh, and he has moderate muscle..."
+2026-01-28 16:17:59,497 - INFO -   Replacement: "Patient exhibits whimpering to a gentle pinch on the thigh, and displays moderat..."
+2026-01-28 16:17:59,497 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:17:59,497 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:17:59,498 - INFO -     Original: "He whimpers in response to a soft pinch on the thigh, and he..."
+2026-01-28 16:17:59,498 - INFO -     Replaced: "Patient exhibits whimpering to a gentle pinch on the thigh, ..."
+2026-01-28 16:17:59,498 - INFO - 
+============================================================
+2026-01-28 16:17:59,498 - INFO - Processing: ms-train-755
+2026-01-28 16:17:59,498 - DEBUG -   Note length: 826 chars
+2026-01-28 16:17:59,498 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows no abnormalities....'
+2026-01-28 16:17:59,498 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:17:59,498 - INFO -   Original sentence: "Physical examination shows no abnormalities...."
+2026-01-28 16:18:01,480 - INFO -   Replacement: "Physical exam unremarkable..."
+2026-01-28 16:18:01,480 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:01,480 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:01,480 - INFO -     Original: "Physical examination shows no abnormalities...."
+2026-01-28 16:18:01,481 - INFO -     Replaced: "Physical exam unremarkable..."
+2026-01-28 16:18:01,481 - INFO - 
+============================================================
+2026-01-28 16:18:01,481 - INFO - Processing: ms-train-1626
+2026-01-28 16:18:01,481 - DEBUG -   Note length: 980 chars
+2026-01-28 16:18:01,481 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He also states that he has not been able to stop his nose from bleeding for the ...'
+2026-01-28 16:18:01,482 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:01,482 - INFO -   Original sentence: "He also states that he has not been able to stop his nose from bleeding for the ..."
+2026-01-28 16:18:02,876 - INFO -   Replacement: "He reports persistent nasal bleeding for the past few hours...."
+2026-01-28 16:18:02,876 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:02,876 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:02,876 - INFO -     Original: "He also states that he has not been able to stop his nose fr..."
+2026-01-28 16:18:02,876 - INFO -     Replaced: "He reports persistent nasal bleeding for the past few hours...."
+2026-01-28 16:18:02,876 - INFO - 
+============================================================
+2026-01-28 16:18:02,876 - INFO - Processing: ms-train-1003
+2026-01-28 16:18:02,876 - DEBUG -   Note length: 956 chars
+2026-01-28 16:18:02,876 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 29-year-old male is brought to the emergency department 20 minutes after susta...'
+2026-01-28 16:18:02,876 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:02,876 - INFO -   Original sentence: "A 29-year-old male is brought to the emergency department 20 minutes after susta..."
+2026-01-28 16:18:04,818 - INFO -   Replacement: "A 29-year-old male presents to the emergency department 20 minutes following a s..."
+2026-01-28 16:18:04,818 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:04,818 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:04,818 - INFO -     Original: "A 29-year-old male is brought to the emergency department 20..."
+2026-01-28 16:18:04,818 - INFO -     Replaced: "A 29-year-old male presents to the emergency department 20 m..."
+2026-01-28 16:18:04,818 - INFO - 
+============================================================
+2026-01-28 16:18:04,818 - INFO - Processing: ms-val-238
+2026-01-28 16:18:04,818 - DEBUG -   Note length: 579 chars
+2026-01-28 16:18:04,818 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A 48-year-old man with a 30-pack-year history comes to the physician for a follo...'
+2026-01-28 16:18:04,818 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:18:04,818 - INFO -   Original sentence: "A 48-year-old man with a 30-pack-year history comes to the physician for a follo..."
+2026-01-28 16:18:09,490 - INFO -   Replacement: "A 48-year-old male with a 30-pack-year smoking history presents to the physician..."
+2026-01-28 16:18:09,490 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:09,490 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:09,490 - INFO -     Original: "A 48-year-old man with a 30-pack-year history comes to the p..."
+2026-01-28 16:18:09,490 - INFO -     Replaced: "A 48-year-old male with a 30-pack-year smoking history prese..."
+2026-01-28 16:18:09,490 - INFO - 
+============================================================
+2026-01-28 16:18:09,490 - INFO - Processing: ms-train-1406
+2026-01-28 16:18:09,490 - DEBUG -   Note length: 923 chars
+2026-01-28 16:18:09,490 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A 64-year-old man presents to the emergency department with sudden onset of pleu...'
+2026-01-28 16:18:09,490 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:18:09,490 - INFO -   Original sentence: "A 64-year-old man presents to the emergency department with sudden onset of pleu..."
+2026-01-28 16:18:11,617 - INFO -   Replacement: "A 64-year-old male arrives at the emergency department with abrupt pleuritic che..."
+2026-01-28 16:18:11,617 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:11,617 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:11,617 - INFO -     Original: "A 64-year-old man presents to the emergency department with ..."
+2026-01-28 16:18:11,617 - INFO -     Replaced: "A 64-year-old male arrives at the emergency department with ..."
+2026-01-28 16:18:11,618 - INFO - 
+============================================================
+2026-01-28 16:18:11,618 - INFO - Processing: ms-train-1286
+2026-01-28 16:18:11,618 - DEBUG -   Note length: 1279 chars
+2026-01-28 16:18:11,618 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 45-year-old homeless man comes to the emergency department because of progress...'
+2026-01-28 16:18:11,618 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:11,618 - INFO -   Original sentence: "A 45-year-old homeless man comes to the emergency department because of progress..."
+2026-01-28 16:18:13,376 - INFO -   Replacement: "A 45-year-old man without stable housing presents to the emergency department wi..."
+2026-01-28 16:18:13,377 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:13,377 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:13,377 - INFO -     Original: "A 45-year-old homeless man comes to the emergency department..."
+2026-01-28 16:18:13,377 - INFO -     Replaced: "A 45-year-old man without stable housing presents to the eme..."
+2026-01-28 16:18:13,377 - INFO - 
+============================================================
+2026-01-28 16:18:13,377 - INFO - Processing: ms-train-103
+2026-01-28 16:18:13,377 - DEBUG -   Note length: 599 chars
+2026-01-28 16:18:13,377 - DEBUG -   Found candidate sentence in physical_exam_findings: 'His vitals are significant for a temperature of 100.9F and his physical exam is ...'
+2026-01-28 16:18:13,377 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:13,377 - INFO -   Original sentence: "His vitals are significant for a temperature of 100.9F and his physical exam is ..."
+2026-01-28 16:18:15,097 - INFO -   Replacement: "Vitals notable for a temperature of 100.9°F; physical examination reveals interc..."
+2026-01-28 16:18:15,097 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:15,097 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:15,097 - INFO -     Original: "His vitals are significant for a temperature of 100.9F and h..."
+2026-01-28 16:18:15,097 - INFO -     Replaced: "Vitals notable for a temperature of 100.9°F; physical examin..."
+2026-01-28 16:18:15,097 - INFO - 
+============================================================
+2026-01-28 16:18:15,097 - INFO - Processing: ms-train-1244
+2026-01-28 16:18:15,097 - DEBUG -   Note length: 831 chars
+2026-01-28 16:18:15,098 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Femoral pulses are palpable bilaterally....'
+2026-01-28 16:18:15,098 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:15,098 - INFO -   Original sentence: "Femoral pulses are palpable bilaterally...."
+2026-01-28 16:18:16,385 - INFO -   Replacement: "Bilateral femoral pulses are detectable...."
+2026-01-28 16:18:16,385 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:16,385 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:16,385 - INFO -     Original: "Femoral pulses are palpable bilaterally...."
+2026-01-28 16:18:16,385 - INFO -     Replaced: "Bilateral femoral pulses are detectable...."
+2026-01-28 16:18:16,386 - INFO - 
+============================================================
+2026-01-28 16:18:16,386 - INFO - Processing: ms-train-816
+2026-01-28 16:18:16,386 - DEBUG -   Note length: 755 chars
+2026-01-28 16:18:16,386 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 76-year-old male is brought in by fire rescue to the emergency department....'
+2026-01-28 16:18:16,386 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:16,387 - INFO -   Original sentence: "A 76-year-old male is brought in by fire rescue to the emergency department...."
+2026-01-28 16:18:18,004 - INFO -   Replacement: "A 76-year-old man is transported to the emergency department by fire rescue...."
+2026-01-28 16:18:18,004 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:18,004 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:18,004 - INFO -     Original: "A 76-year-old male is brought in by fire rescue to the emerg..."
+2026-01-28 16:18:18,004 - INFO -     Replaced: "A 76-year-old man is transported to the emergency department..."
+2026-01-28 16:18:18,005 - INFO - 
+============================================================
+2026-01-28 16:18:18,005 - INFO - Processing: ms-train-1481
+2026-01-28 16:18:18,005 - DEBUG -   Note length: 642 chars
+2026-01-28 16:18:18,005 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination shows dry mucous membranes, delayed capillary refill time, and cool ...'
+2026-01-28 16:18:18,005 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:18,005 - INFO -   Original sentence: "Examination shows dry mucous membranes, delayed capillary refill time, and cool ..."
+2026-01-28 16:18:19,948 - INFO -   Replacement: "Examination reveals xerostomia, prolonged capillary refill time, and cool skin w..."
+2026-01-28 16:18:19,948 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:19,948 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:19,948 - INFO -     Original: "Examination shows dry mucous membranes, delayed capillary re..."
+2026-01-28 16:18:19,948 - INFO -     Replaced: "Examination reveals xerostomia, prolonged capillary refill t..."
+2026-01-28 16:18:19,948 - INFO - 
+============================================================
+2026-01-28 16:18:19,948 - INFO - Processing: ms-train-926
+2026-01-28 16:18:19,948 - DEBUG -   Note length: 695 chars
+2026-01-28 16:18:19,949 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination shows a 2-cm wound at the left fourth intercostal space at the midcl...'
+2026-01-28 16:18:19,949 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:19,949 - INFO -   Original sentence: "Examination shows a 2-cm wound at the left fourth intercostal space at the midcl..."
+2026-01-28 16:18:21,549 - INFO -   Replacement: "Examination reveals a 2-cm laceration located at the left fourth intercostal spa..."
+2026-01-28 16:18:21,549 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:21,549 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:21,550 - INFO -     Original: "Examination shows a 2-cm wound at the left fourth intercosta..."
+2026-01-28 16:18:21,550 - INFO -     Replaced: "Examination reveals a 2-cm laceration located at the left fo..."
+2026-01-28 16:18:21,550 - INFO - 
+============================================================
+2026-01-28 16:18:21,550 - INFO - Processing: ms-train-400
+2026-01-28 16:18:21,550 - DEBUG -   Note length: 680 chars
+2026-01-28 16:18:21,550 - DEBUG -   Found candidate sentence in physical_exam_findings: 'On physical examination, radial and pedal pulses are weak....'
+2026-01-28 16:18:21,550 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:21,550 - INFO -   Original sentence: "On physical examination, radial and pedal pulses are weak...."
+2026-01-28 16:18:22,879 - INFO -   Replacement: "Physical exam reveals diminished radial and pedal pulses...."
+2026-01-28 16:18:22,879 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:22,879 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:22,879 - INFO -     Original: "On physical examination, radial and pedal pulses are weak...."
+2026-01-28 16:18:22,880 - INFO -     Replaced: "Physical exam reveals diminished radial and pedal pulses...."
+2026-01-28 16:18:22,880 - INFO - 
+============================================================
+2026-01-28 16:18:22,880 - INFO - Processing: ms-val-138
+2026-01-28 16:18:22,880 - DEBUG -   Note length: 658 chars
+2026-01-28 16:18:22,880 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 36-year-old man presents to the emergency room with subacute worsening of chro...'
+2026-01-28 16:18:22,880 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:22,880 - INFO -   Original sentence: "A 36-year-old man presents to the emergency room with subacute worsening of chro..."
+2026-01-28 16:18:25,193 - INFO -   Replacement: "A 36-year-old male arrives at the emergency department with a subacute exacerbat..."
+2026-01-28 16:18:25,193 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:25,193 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:25,193 - INFO -     Original: "A 36-year-old man presents to the emergency room with subacu..."
+2026-01-28 16:18:25,193 - INFO -     Replaced: "A 36-year-old male arrives at the emergency department with ..."
+2026-01-28 16:18:25,194 - INFO - 
+============================================================
+2026-01-28 16:18:25,194 - INFO - Processing: ms-val-196
+2026-01-28 16:18:25,194 - DEBUG -   Note length: 945 chars
+2026-01-28 16:18:25,194 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical exam is notable for a healthy young girl....'
+2026-01-28 16:18:25,194 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:25,194 - INFO -   Original sentence: "Physical exam is notable for a healthy young girl...."
+2026-01-28 16:18:26,857 - INFO -   Replacement: "Physical examination reveals a well-nourished young female...."
+2026-01-28 16:18:26,857 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:26,857 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:26,857 - INFO -     Original: "Physical exam is notable for a healthy young girl...."
+2026-01-28 16:18:26,857 - INFO -     Replaced: "Physical examination reveals a well-nourished young female...."
+2026-01-28 16:18:26,858 - INFO - 
+============================================================
+2026-01-28 16:18:26,858 - INFO - Processing: ms-train-1345
+2026-01-28 16:18:26,858 - DEBUG -   Note length: 558 chars
+2026-01-28 16:18:26,858 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows a palpable suprapubic mass....'
+2026-01-28 16:18:26,858 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:26,858 - INFO -   Original sentence: "Physical examination shows a palpable suprapubic mass...."
+2026-01-28 16:18:28,112 - INFO -   Replacement: "Physical exam reveals a palpable mass in the suprapubic region...."
+2026-01-28 16:18:28,112 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:28,113 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:28,113 - INFO -     Original: "Physical examination shows a palpable suprapubic mass...."
+2026-01-28 16:18:28,113 - INFO -     Replaced: "Physical exam reveals a palpable mass in the suprapubic regi..."
+2026-01-28 16:18:28,113 - INFO - 
+============================================================
+2026-01-28 16:18:28,113 - INFO - Processing: ms-train-342
+2026-01-28 16:18:28,113 - DEBUG -   Note length: 798 chars
+2026-01-28 16:18:28,113 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Examination shows dry, scaly skin and dry mucous membranes....'
+2026-01-28 16:18:28,113 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:28,114 - INFO -   Original sentence: "Examination shows dry, scaly skin and dry mucous membranes...."
+2026-01-28 16:18:29,445 - INFO -   Replacement: "Examination reveals xerotic, scaly dermis and dry mucosal membranes...."
+2026-01-28 16:18:29,445 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:29,445 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:29,445 - INFO -     Original: "Examination shows dry, scaly skin and dry mucous membranes...."
+2026-01-28 16:18:29,445 - INFO -     Replaced: "Examination reveals xerotic, scaly dermis and dry mucosal me..."
+2026-01-28 16:18:29,446 - INFO - 
+============================================================
+2026-01-28 16:18:29,446 - INFO - Processing: ms-train-1278
+2026-01-28 16:18:29,446 - DEBUG -   Note length: 708 chars
+2026-01-28 16:18:29,446 - DEBUG -   Found candidate sentence in physical_exam_findings: 'There is a large bruise on the anterior scalp....'
+2026-01-28 16:18:29,446 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:29,446 - INFO -   Original sentence: "There is a large bruise on the anterior scalp...."
+2026-01-28 16:18:30,957 - INFO -   Replacement: "A significant contusion is present on the frontal scalp...."
+2026-01-28 16:18:30,957 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:30,957 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:30,957 - INFO -     Original: "There is a large bruise on the anterior scalp...."
+2026-01-28 16:18:30,957 - INFO -     Replaced: "A significant contusion is present on the frontal scalp...."
+2026-01-28 16:18:30,957 - INFO - 
+============================================================
+2026-01-28 16:18:30,957 - INFO - Processing: ms-train-804
+2026-01-28 16:18:30,957 - DEBUG -   Note length: 1154 chars
+2026-01-28 16:18:30,957 - DEBUG -   Found candidate sentence in physical_exam_findings: 'An arterial blood gas (ABG) is obtained, with results shown below:
+
+pH: 7.47
+pO2...'
+2026-01-28 16:18:30,957 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:30,957 - INFO -   Original sentence: "An arterial blood gas (ABG) is obtained, with results shown below:
+
+pH: 7.47
+pO2..."
+2026-01-28 16:18:33,640 - INFO -   Replacement: "An arterial blood gas (ABG) analysis is performed, yielding the following result..."
+2026-01-28 16:18:33,640 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:33,640 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:33,640 - INFO -     Original: "An arterial blood gas (ABG) is obtained, with results shown ..."
+2026-01-28 16:18:33,640 - INFO -     Replaced: "An arterial blood gas (ABG) analysis is performed, yielding ..."
+2026-01-28 16:18:33,640 - INFO - 
+============================================================
+2026-01-28 16:18:33,641 - INFO - Processing: ms-train-1271
+2026-01-28 16:18:33,641 - DEBUG -   Note length: 963 chars
+2026-01-28 16:18:33,641 - DEBUG -   Found candidate sentence in physical_exam_findings: 'An abdominal exam is performed and there is no tenderness upon palpation, and th...'
+2026-01-28 16:18:33,641 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:33,641 - INFO -   Original sentence: "An abdominal exam is performed and there is no tenderness upon palpation, and th..."
+2026-01-28 16:18:35,249 - INFO -   Replacement: "Abdominal examination reveals no tenderness on palpation, with a soft and non-di..."
+2026-01-28 16:18:35,250 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:35,250 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:35,250 - INFO -     Original: "An abdominal exam is performed and there is no tenderness up..."
+2026-01-28 16:18:35,250 - INFO -     Replaced: "Abdominal examination reveals no tenderness on palpation, wi..."
+2026-01-28 16:18:35,250 - INFO - 
+============================================================
+2026-01-28 16:18:35,250 - INFO - Processing: ms-train-1276
+2026-01-28 16:18:35,250 - DEBUG -   Note length: 501 chars
+2026-01-28 16:18:35,250 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 34-year-old man presents to the emergency department by ambulance after being ...'
+2026-01-28 16:18:35,250 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:35,250 - INFO -   Original sentence: "A 34-year-old man presents to the emergency department by ambulance after being ..."
+2026-01-28 16:18:36,929 - INFO -   Replacement: "A 34-year-old male arrives at the emergency department via ambulance following a..."
+2026-01-28 16:18:36,929 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:36,929 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:36,929 - INFO -     Original: "A 34-year-old man presents to the emergency department by am..."
+2026-01-28 16:18:36,929 - INFO -     Replaced: "A 34-year-old male arrives at the emergency department via a..."
+2026-01-28 16:18:36,930 - INFO - 
+============================================================
+2026-01-28 16:18:36,930 - INFO - Processing: ms-val-276
+2026-01-28 16:18:36,930 - DEBUG -   Note length: 611 chars
+2026-01-28 16:18:36,930 - DEBUG -   Found candidate sentence in physical_exam_findings: 'He appears healthy....'
+2026-01-28 16:18:36,930 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:36,930 - INFO -   Original sentence: "He appears healthy...."
+2026-01-28 16:18:37,885 - INFO -   Replacement: "Patient appears well..."
+2026-01-28 16:18:37,885 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:37,885 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:37,885 - INFO -     Original: "He appears healthy...."
+2026-01-28 16:18:37,885 - INFO -     Replaced: "Patient appears well..."
+2026-01-28 16:18:37,886 - INFO - 
+============================================================
+2026-01-28 16:18:37,886 - INFO - Processing: ms-train-1201
+2026-01-28 16:18:37,886 - DEBUG -   Note length: 801 chars
+2026-01-28 16:18:37,886 - DEBUG -   Found candidate sentence in physical_exam_findings: 'On examination, neck stiffness is present....'
+2026-01-28 16:18:37,886 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:37,886 - INFO -   Original sentence: "On examination, neck stiffness is present...."
+2026-01-28 16:18:39,079 - INFO -   Replacement: "Neck rigidity noted on examination...."
+2026-01-28 16:18:39,079 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:39,079 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:39,079 - INFO -     Original: "On examination, neck stiffness is present...."
+2026-01-28 16:18:39,079 - INFO -     Replaced: "Neck rigidity noted on examination...."
+2026-01-28 16:18:39,080 - INFO - 
+============================================================
+2026-01-28 16:18:39,080 - INFO - Processing: ms-train-1437
+2026-01-28 16:18:39,080 - DEBUG -   Note length: 464 chars
+2026-01-28 16:18:39,080 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical exam shows an enlarged, soft uterus....'
+2026-01-28 16:18:39,080 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:39,080 - INFO -   Original sentence: "Physical exam shows an enlarged, soft uterus...."
+2026-01-28 16:18:40,145 - INFO -   Replacement: "Physical examination reveals a distended, non-firm uterus...."
+2026-01-28 16:18:40,146 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:40,146 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:40,146 - INFO -     Original: "Physical exam shows an enlarged, soft uterus...."
+2026-01-28 16:18:40,146 - INFO -     Replaced: "Physical examination reveals a distended, non-firm uterus...."
+2026-01-28 16:18:40,146 - INFO - 
+============================================================
+2026-01-28 16:18:40,146 - INFO - Processing: ms-val-411
+2026-01-28 16:18:40,146 - DEBUG -   Note length: 892 chars
+2026-01-28 16:18:40,146 - DEBUG -   Found candidate sentence in physical_exam_findings: 'The obstetrician manually removes the placenta, but a red mass protrudes through...'
+2026-01-28 16:18:40,146 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:40,146 - INFO -   Original sentence: "The obstetrician manually removes the placenta, but a red mass protrudes through..."
+2026-01-28 16:18:42,491 - INFO -   Replacement: "The obstetrician performs manual extraction of the placenta, but a red mass is s..."
+2026-01-28 16:18:42,491 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:42,491 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:42,491 - INFO -     Original: "The obstetrician manually removes the placenta, but a red ma..."
+2026-01-28 16:18:42,491 - INFO -     Replaced: "The obstetrician performs manual extraction of the placenta,..."
+2026-01-28 16:18:42,492 - INFO - 
+============================================================
+2026-01-28 16:18:42,492 - INFO - Processing: uw-val-15
+2026-01-28 16:18:42,492 - DEBUG -   Note length: 292 chars
+2026-01-28 16:18:42,492 - WARNING -   SKIP: No suitable sentence found for restatement
+2026-01-28 16:18:42,492 - INFO - 
+============================================================
+2026-01-28 16:18:42,492 - INFO - Processing: ms-train-1778
+2026-01-28 16:18:42,492 - DEBUG -   Note length: 729 chars
+2026-01-28 16:18:42,492 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination shows a nontender abdomen....'
+2026-01-28 16:18:42,492 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:42,492 - INFO -   Original sentence: "Physical examination shows a nontender abdomen...."
+2026-01-28 16:18:43,850 - INFO -   Replacement: "Abdomen is soft and non-tender on examination...."
+2026-01-28 16:18:43,850 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:43,850 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:43,850 - INFO -     Original: "Physical examination shows a nontender abdomen...."
+2026-01-28 16:18:43,850 - INFO -     Replaced: "Abdomen is soft and non-tender on examination...."
+2026-01-28 16:18:43,850 - INFO - 
+============================================================
+2026-01-28 16:18:43,851 - INFO - Processing: ms-train-1725
+2026-01-28 16:18:43,851 - DEBUG -   Note length: 1201 chars
+2026-01-28 16:18:43,851 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 36-year-old man is brought to the emergency department 25 minutes after being ...'
+2026-01-28 16:18:43,851 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:43,851 - INFO -   Original sentence: "A 36-year-old man is brought to the emergency department 25 minutes after being ..."
+2026-01-28 16:18:46,276 - INFO -   Replacement: "A 36-year-old male arrives at the emergency department 25 minutes post high-spee..."
+2026-01-28 16:18:46,276 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:46,276 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:46,276 - INFO -     Original: "A 36-year-old man is brought to the emergency department 25 ..."
+2026-01-28 16:18:46,276 - INFO -     Replaced: "A 36-year-old male arrives at the emergency department 25 mi..."
+2026-01-28 16:18:46,277 - INFO - 
+============================================================
+2026-01-28 16:18:46,277 - INFO - Processing: ms-val-428
+2026-01-28 16:18:46,277 - DEBUG -   Note length: 588 chars
+2026-01-28 16:18:46,277 - DEBUG -   Found candidate sentence in physical_exam_findings: 'She had an ultrasound scan performed 1 month ago that showed a live intrauterine...'
+2026-01-28 16:18:46,277 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:46,277 - INFO -   Original sentence: "She had an ultrasound scan performed 1 month ago that showed a live intrauterine..."
+2026-01-28 16:18:48,158 - INFO -   Replacement: "An ultrasound conducted 1 month prior demonstrated a viable intrauterine pregnan..."
+2026-01-28 16:18:48,158 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:48,159 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:48,159 - INFO -     Original: "She had an ultrasound scan performed 1 month ago that showed..."
+2026-01-28 16:18:48,159 - INFO -     Replaced: "An ultrasound conducted 1 month prior demonstrated a viable ..."
+2026-01-28 16:18:48,159 - INFO - 
+============================================================
+2026-01-28 16:18:48,159 - INFO - Processing: ms-train-964
+2026-01-28 16:18:48,159 - DEBUG -   Note length: 485 chars
+2026-01-28 16:18:48,159 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination was unremarkable....'
+2026-01-28 16:18:48,159 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:48,159 - INFO -   Original sentence: "Physical examination was unremarkable...."
+2026-01-28 16:18:49,197 - INFO -   Replacement: "Physical exam revealed no significant findings...."
+2026-01-28 16:18:49,197 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:49,197 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:49,197 - INFO -     Original: "Physical examination was unremarkable...."
+2026-01-28 16:18:49,197 - INFO -     Replaced: "Physical exam revealed no significant findings...."
+2026-01-28 16:18:49,198 - INFO - 
+============================================================
+2026-01-28 16:18:49,198 - INFO - Processing: ms-train-1719
+2026-01-28 16:18:49,198 - DEBUG -   Note length: 602 chars
+2026-01-28 16:18:49,198 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination is significant for splenomegaly, tonsillar exudate, and pos...'
+2026-01-28 16:18:49,198 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:49,198 - INFO -   Original sentence: "Physical examination is significant for splenomegaly, tonsillar exudate, and pos..."
+2026-01-28 16:18:50,944 - INFO -   Replacement: "Physical exam notable for splenomegaly, tonsillar exudate, and posterior auricul..."
+2026-01-28 16:18:50,944 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:50,944 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:50,944 - INFO -     Original: "Physical examination is significant for splenomegaly, tonsil..."
+2026-01-28 16:18:50,944 - INFO -     Replaced: "Physical exam notable for splenomegaly, tonsillar exudate, a..."
+2026-01-28 16:18:50,945 - INFO - 
+============================================================
+2026-01-28 16:18:50,945 - INFO - Processing: ms-train-735
+2026-01-28 16:18:50,945 - DEBUG -   Note length: 694 chars
+2026-01-28 16:18:50,945 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 23-year-old man is brought to the emergency department because of severe right...'
+2026-01-28 16:18:50,945 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:50,945 - INFO -   Original sentence: "A 23-year-old man is brought to the emergency department because of severe right..."
+2026-01-28 16:18:53,341 - INFO -   Replacement: "A 23-year-old male presents to the emergency department with acute right shoulde..."
+2026-01-28 16:18:53,341 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:53,341 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:53,341 - INFO -     Original: "A 23-year-old man is brought to the emergency department bec..."
+2026-01-28 16:18:53,341 - INFO -     Replaced: "A 23-year-old male presents to the emergency department with..."
+2026-01-28 16:18:53,341 - INFO - 
+============================================================
+2026-01-28 16:18:53,341 - INFO - Processing: ms-val-353
+2026-01-28 16:18:53,341 - DEBUG -   Note length: 734 chars
+2026-01-28 16:18:53,342 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Pelvic examination shows a closed cervical os and a uterus consistent in size wi...'
+2026-01-28 16:18:53,342 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:53,342 - INFO -   Original sentence: "Pelvic examination shows a closed cervical os and a uterus consistent in size wi..."
+2026-01-28 16:18:55,225 - INFO -   Replacement: "Pelvic exam reveals a closed cervical os and a uterus size appropriate for 8 wee..."
+2026-01-28 16:18:55,225 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:55,225 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:55,225 - INFO -     Original: "Pelvic examination shows a closed cervical os and a uterus c..."
+2026-01-28 16:18:55,225 - INFO -     Replaced: "Pelvic exam reveals a closed cervical os and a uterus size a..."
+2026-01-28 16:18:55,226 - INFO - 
+============================================================
+2026-01-28 16:18:55,226 - INFO - Processing: ms-train-1248
+2026-01-28 16:18:55,226 - DEBUG -   Note length: 809 chars
+2026-01-28 16:18:55,226 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 43-year-old woman comes to the physician because of a 3-month history of a pai...'
+2026-01-28 16:18:55,226 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:55,226 - INFO -   Original sentence: "A 43-year-old woman comes to the physician because of a 3-month history of a pai..."
+2026-01-28 16:18:57,265 - INFO -   Replacement: "A 43-year-old female presents to the physician with a 3-month history of a non-p..."
+2026-01-28 16:18:57,265 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:57,265 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:57,266 - INFO -     Original: "A 43-year-old woman comes to the physician because of a 3-mo..."
+2026-01-28 16:18:57,266 - INFO -     Replaced: "A 43-year-old female presents to the physician with a 3-mont..."
+2026-01-28 16:18:57,266 - INFO - 
+============================================================
+2026-01-28 16:18:57,266 - INFO - Processing: ms-train-13
+2026-01-28 16:18:57,266 - DEBUG -   Note length: 543 chars
+2026-01-28 16:18:57,266 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 27-year-old man comes to the physician with throbbing right scrotal pain for 1...'
+2026-01-28 16:18:57,266 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:57,266 - INFO -   Original sentence: "A 27-year-old man comes to the physician with throbbing right scrotal pain for 1..."
+2026-01-28 16:18:59,273 - INFO -   Replacement: "A 27-year-old male presents to the physician with pulsating right scrotal pain l..."
+2026-01-28 16:18:59,273 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:18:59,273 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:18:59,273 - INFO -     Original: "A 27-year-old man comes to the physician with throbbing righ..."
+2026-01-28 16:18:59,273 - INFO -     Replaced: "A 27-year-old male presents to the physician with pulsating ..."
+2026-01-28 16:18:59,273 - INFO - 
+============================================================
+2026-01-28 16:18:59,273 - INFO - Processing: uw-val-127
+2026-01-28 16:18:59,273 - DEBUG -   Note length: 775 chars
+2026-01-28 16:18:59,273 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Moans only with logrolls....'
+2026-01-28 16:18:59,273 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:18:59,273 - INFO -   Original sentence: "Moans only with logrolls...."
+2026-01-28 16:19:00,448 - INFO -   Replacement: "Vocalizations noted only during logrolling...."
+2026-01-28 16:19:00,448 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:19:00,448 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:19:00,448 - INFO -     Original: "Moans only with logrolls...."
+2026-01-28 16:19:00,448 - INFO -     Replaced: "Vocalizations noted only during logrolling...."
+2026-01-28 16:19:00,449 - INFO - 
+============================================================
+2026-01-28 16:19:00,449 - INFO - Processing: ms-train-1291
+2026-01-28 16:19:00,449 - DEBUG -   Note length: 93 chars
+2026-01-28 16:19:00,449 - DEBUG -   Found candidate sentence in diagnosis_primary: 'A clinical diagnosis of abruptio placentae is suspected....'
+2026-01-28 16:19:00,449 - INFO -   Target field: diagnosis_primary
+2026-01-28 16:19:00,449 - INFO -   Original sentence: "A clinical diagnosis of abruptio placentae is suspected...."
+2026-01-28 16:19:01,573 - INFO -   Replacement: "Clinical presentation suggests abruptio placentae...."
+2026-01-28 16:19:01,573 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:19:01,573 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:19:01,573 - INFO -     Original: "A clinical diagnosis of abruptio placentae is suspected...."
+2026-01-28 16:19:01,573 - INFO -     Replaced: "Clinical presentation suggests abruptio placentae...."
+2026-01-28 16:19:01,574 - INFO - 
+============================================================
+2026-01-28 16:19:01,574 - INFO - Processing: ms-train-853
+2026-01-28 16:19:01,574 - DEBUG -   Note length: 791 chars
+2026-01-28 16:19:01,574 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Her pulse is 95/min, respirations are 16/min, and blood pressure is 130/76 mm Hg...'
+2026-01-28 16:19:01,574 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:19:01,574 - INFO -   Original sentence: "Her pulse is 95/min, respirations are 16/min, and blood pressure is 130/76 mm Hg..."
+2026-01-28 16:19:03,613 - INFO -   Replacement: "Pulse rate is 95 beats per minute, respiratory rate is 16 breaths per minute, an..."
+2026-01-28 16:19:03,613 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:19:03,613 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:19:03,613 - INFO -     Original: "Her pulse is 95/min, respirations are 16/min, and blood pres..."
+2026-01-28 16:19:03,613 - INFO -     Replaced: "Pulse rate is 95 beats per minute, respiratory rate is 16 br..."
+2026-01-28 16:19:03,614 - INFO - 
+============================================================
+2026-01-28 16:19:03,614 - INFO - Processing: ms-train-503
+2026-01-28 16:19:03,614 - DEBUG -   Note length: 692 chars
+2026-01-28 16:19:03,614 - DEBUG -   Found candidate sentence in history_of_present_illness: 'A 4-year-old boy is brought to the physician by his mother because of generalize...'
+2026-01-28 16:19:03,614 - INFO -   Target field: history_of_present_illness
+2026-01-28 16:19:03,614 - INFO -   Original sentence: "A 4-year-old boy is brought to the physician by his mother because of generalize..."
+2026-01-28 16:19:06,089 - INFO -   Replacement: "A 4-year-old male is presented to the physician by his mother due to widespread ..."
+2026-01-28 16:19:06,089 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:19:06,089 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:19:06,090 - INFO -     Original: "A 4-year-old boy is brought to the physician by his mother b..."
+2026-01-28 16:19:06,090 - INFO -     Replaced: "A 4-year-old male is presented to the physician by his mothe..."
+2026-01-28 16:19:06,090 - INFO - 
+============================================================
+2026-01-28 16:19:06,090 - INFO - Processing: ms-train-101
+2026-01-28 16:19:06,090 - DEBUG -   Note length: 430 chars
+2026-01-28 16:19:06,090 - DEBUG -   Found candidate sentence in physical_exam_findings: 'There is no costovertebral angle tenderness....'
+2026-01-28 16:19:06,090 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:19:06,090 - INFO -   Original sentence: "There is no costovertebral angle tenderness...."
+2026-01-28 16:19:07,001 - INFO -   Replacement: "Costovertebral angle tenderness absent...."
+2026-01-28 16:19:07,001 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:19:07,001 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:19:07,001 - INFO -     Original: "There is no costovertebral angle tenderness...."
+2026-01-28 16:19:07,001 - INFO -     Replaced: "Costovertebral angle tenderness absent...."
+2026-01-28 16:19:07,001 - INFO - 
+============================================================
+2026-01-28 16:19:07,001 - INFO - Processing: ms-train-1490
+2026-01-28 16:19:07,001 - DEBUG -   Note length: 806 chars
+2026-01-28 16:19:07,002 - DEBUG -   Found candidate sentence in physical_exam_findings: 'A 40-year-old female visits the emergency department with right upper quadrant p...'
+2026-01-28 16:19:07,002 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:19:07,002 - INFO -   Original sentence: "A 40-year-old female visits the emergency department with right upper quadrant p..."
+2026-01-28 16:19:09,509 - INFO -   Replacement: "A 40-year-old woman presents to the emergency department with right upper quadra..."
+2026-01-28 16:19:09,509 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:19:09,509 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:19:09,509 - INFO -     Original: "A 40-year-old female visits the emergency department with ri..."
+2026-01-28 16:19:09,509 - INFO -     Replaced: "A 40-year-old woman presents to the emergency department wit..."
+2026-01-28 16:19:09,509 - INFO - 
+============================================================
+2026-01-28 16:19:09,509 - INFO - Processing: ms-train-2053
+2026-01-28 16:19:09,509 - DEBUG -   Note length: 980 chars
+2026-01-28 16:19:09,509 - DEBUG -   Found candidate sentence in physical_exam_findings: 'Physical examination reveals an enlarged, irregularly-shaped uterus palpable at ...'
+2026-01-28 16:19:09,509 - INFO -   Target field: physical_exam_findings
+2026-01-28 16:19:09,509 - INFO -   Original sentence: "Physical examination reveals an enlarged, irregularly-shaped uterus palpable at ..."
+2026-01-28 16:19:11,063 - INFO -   Replacement: "Physical exam demonstrates a palpable, enlarged, irregularly contoured uterus at..."
+2026-01-28 16:19:11,063 - DEBUG -   Verifying single-sentence change...
+2026-01-28 16:19:11,063 - INFO -   ✓ SUCCESS: Single-sentence replacement verified
+2026-01-28 16:19:11,063 - INFO -     Original: "Physical examination reveals an enlarged, irregularly-shaped..."
+2026-01-28 16:19:11,063 - INFO -     Replaced: "Physical exam demonstrates a palpable, enlarged, irregularly..."
+2026-01-28 16:19:11,063 - INFO - 
+============================================================
+2026-01-28 16:19:11,063 - INFO - PROCESSING COMPLETE
+2026-01-28 16:19:11,063 - INFO - ============================================================
+2026-01-28 16:19:11,063 - INFO - Total processed: 171
+2026-01-28 16:19:11,063 - INFO - ✓ Successful: 167 (97.7%)
+2026-01-28 16:19:11,063 - INFO - ✗ Failed: 4 (2.3%)
+2026-01-28 16:19:11,063 - INFO - 
+Output files:
+2026-01-28 16:19:11,063 - INFO -   Success: data_processed/benign_changes/restatement_success_20260128_161421.jsonl
+2026-01-28 16:19:11,063 - INFO -   Failed: data_processed/benign_changes/restatement_failed_20260128_161421.jsonl
+2026-01-28 16:19:11,063 - INFO -   Log: data_processed/benign_changes/restatement_log_20260128_161421.txt
