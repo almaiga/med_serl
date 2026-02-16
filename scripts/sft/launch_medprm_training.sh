@@ -54,7 +54,7 @@ mkdir -p "${OUTPUT_DIR}"
 if ! command -v screen &> /dev/null; then
     echo "📦 Installing screen..."
     if command -v apt-get &> /dev/null; then
-        sudo apt-get update && sudo apt-get install -y screen
+        apt-get update && apt-get install -y screen
     elif command -v brew &> /dev/null; then
         brew install screen
     else
