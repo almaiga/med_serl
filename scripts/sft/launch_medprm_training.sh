@@ -38,6 +38,7 @@ NUM_EPOCHS="3"
 LORA_R="16"
 LORA_ALPHA="32"
 LORA_DROPOUT="0.05"
+LORA_TARGET_MODULES="all-linear"  # Qwen3 recommendation: target all linear layers
 EVAL_SPLIT="0.05"
 EARLY_STOPPING_PATIENCE="3"
 
@@ -88,6 +89,7 @@ TRAIN_CMD="${VENV_ACTIVATE}python scripts/sft/train_medprm_lora.py \\
     --lora-r ${LORA_R} \\
     --lora-alpha ${LORA_ALPHA} \\
     --lora-dropout ${LORA_DROPOUT} \\
+    --lora-target-modules ${LORA_TARGET_MODULES} \\
     --eval-split ${EVAL_SPLIT} \\
     --early-stopping-patience ${EARLY_STOPPING_PATIENCE} \\
     --bf16 \\

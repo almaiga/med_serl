@@ -181,12 +181,41 @@ def format_for_sft(example: Dict, tokenizer, include_thinking: bool = True) -> D
         input_note, scenario, error_type, error_sentence, corrected_sentence
     )
     
-    # Assistant response: reasoning chain (already contains final_answer)
-    if include_thinking:
-        # Wrap reasoning in think tags for Qwen3's thinking mode
-        assistant_content = f"<think>\n{reasoning_chain}\n</think>"
+    # Split reasoning_chain: reasoning goes inside <think>, final_answer goes outside
+    # The reasoning_chain contains both reasoning steps AND final_answer at the end
+    # Per Qwen3 best practices: format should be <think>\nreasoning\n</think>\n\nfinal_answer
+    import re
+    
+    # Extract the final_answer portion (final_answer: "X"\nExplanation: Y)
+    final_answer_match = re.search(
+        r'(final_answer:.*?)(?:\n*$)', 
+        reasoning_chain, 
+        re.DOTALL | re.IGNORECASE
+    )
+    
+    if final_answer_match:
+        # Split into reasoning (before final_answer) and answer (final_answer onwards)
+        reasoning_only = reasoning_chain[:final_answer_match.start()].strip()
+        final_answer_part = final_answer_match.group(1).strip()
     else:
-        assistant_content = reasoning_chain
+        # Fallback: no final_answer found, use entire chain as reasoning
+        reasoning_only = reasoning_chain.strip()
+        final_answer_part = ""
+    
+    # Format per Qwen3 best practices: <think>\nreasoning\n</think>\n\nfinal_answer
+    if include_thinking:
+        if final_answer_part:
+            # Proper Qwen3 format with answer OUTSIDE think tags
+            assistant_content = f"<think>\n{reasoning_only}\n</think>\n\n{final_answer_part}"
+        else:
+            # Fallback to old behavior if no final_answer found
+            assistant_content = f"<think>\n{reasoning_chain}\n</think>"
+    else:
+        # For non-thinking mode, output empty think tags per Qwen3 recommendation
+        if final_answer_part:
+            assistant_content = f"<think>\n\n</think>\n\n{final_answer_part}"
+        else:
+            assistant_content = reasoning_chain
     
     messages = [
         {"role": "system", "content": system_prompt},
@@ -382,13 +411,19 @@ def main() -> None:
     )
     
     # LoRA config
+    # Handle target_modules: can be "all-linear" or comma-separated list
+    if args.lora_target_modules.lower() == "all-linear":
+        target_modules = "all-linear"
+    else:
+        target_modules = [m.strip() for m in args.lora_target_modules.split(",") if m.strip()]
+    
     peft_config = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         bias="none",
         task_type="CAUSAL_LM",
-        target_modules=[m.strip() for m in args.lora_target_modules.split(",") if m.strip()],
+        target_modules=target_modules,
     )
     
     # Training config
