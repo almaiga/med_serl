@@ -93,73 +93,44 @@ def load_medprm_data(data_file: Optional[str] = None) -> Dataset:
 # PROMPT CONFIGURATION
 # =============================================================================
 
+def load_inference_prompts() -> Dict[str, str]:
+    """Load prompts from the same config file used for inference.
+    
+    This ensures training and inference use identical prompts.
+    """
+    prompt_file = PROJECT_ROOT / "configs" / "prompts" / "error_detection_prompts.json"
+    
+    if prompt_file.exists():
+        with open(prompt_file, 'r') as f:
+            prompts = json.load(f)
+        return prompts
+    else:
+        # Fallback prompts matching inference defaults
+        return {
+            "system_prompt": "You are a medical note classifier.\n\nClassify each note as CORRECT or INCORRECT.\n\nCORRECT = No medical errors\nINCORRECT = Contains medical error (wrong diagnosis, treatment, or management)\n\nYou must respond with EXACTLY this format:\nfinal_answer: \"CORRECT\"\nExplanation: [one sentence]\n\nOR\n\nfinal_answer: \"INCORRECT\"\nExplanation: [one sentence why it's wrong]",
+            "user_template": "Classify this note:\n\n{note}\n\nRespond in the required format:"
+        }
+
+
 def get_system_prompt() -> str:
-    """Get the system prompt for Med-PRM training."""
-    return """You are a clinical reasoning expert. Analyze medical notes for accuracy.
-
-For CORRECT notes: Explain pathophysiology supporting the diagnosis.
-For INCORRECT notes: Identify errors with mechanistic reasoning.
-
-Output format:
-[CLINICAL FINDINGS]
-• Key findings with clinical significance
-
-[CLINICAL PRINCIPLE]
-Relevant pathophysiology in 30-50 words.
-
-[REASONING]
-Mechanistic explanation of findings.
-
-[ERROR_TYPE]
-none (if correct) or diagnosis/treatment/management/pharmacotherapy
-
-[LOCATION]
-none (if correct) or quoted error sentence
-
-[CORRECTION]
-none (if correct) or corrected sentence
-
-final_answer: "CORRECT" or "INCORRECT"
-Explanation: One sentence summary."""
+    """Get the system prompt - same as inference."""
+    prompts = load_inference_prompts()
+    return prompts.get("system_prompt", "You are a medical note classifier.")
 
 
 def build_user_prompt(input_note: str, scenario: str, error_type: Optional[str] = None,
                       error_sentence: Optional[str] = None, corrected_sentence: Optional[str] = None) -> str:
-    """Build user prompt based on scenario."""
-    if scenario == "correct":
-        return f"""CLINICAL NOTE:
-\"\"\"
-{input_note}
-\"\"\"
-
-Verify this note is clinically correct with mechanistic reasoning:"""
+    """Build user prompt - same format as inference.
     
-    elif scenario == "incorrect":
-        # For incorrect notes with ground truth
-        ground_truth = ""
-        if error_type and error_sentence and corrected_sentence:
-            ground_truth = f"""
-
-GROUND TRUTH:
-- Error Type: {error_type}
-- Error Sentence: "{error_sentence}"
-- Corrected Sentence: "{corrected_sentence}" """
-        
-        return f"""CLINICAL NOTE:
-\"\"\"
-{input_note}
-\"\"\"{ground_truth}
-
-Detect the clinical error with mechanistic reasoning:"""
+    NOTE: We do NOT include ground truth hints during training.
+    The model must learn to reason without being given the answer.
+    """
+    prompts = load_inference_prompts()
+    user_template = prompts.get("user_template", "Classify this note:\n\n{note}\n\nRespond in the required format:")
     
-    else:
-        # Generic fallback
-        return f"""CLINICAL NOTE:
-\"\"\"
-{input_note}
-\"\"\"
-
-Analyze this clinical note:"""
+    # Use the same template for both correct and incorrect notes
+    # No hints about whether the note is correct or incorrect!
+    return user_template.format(note=input_note)
 
 
 # =============================================================================
@@ -181,15 +152,13 @@ def format_for_sft(example: Dict, tokenizer, include_thinking: bool = True) -> D
         input_note, scenario, error_type, error_sentence, corrected_sentence
     )
     
-    # Split reasoning_chain: reasoning goes inside <think>, final_answer goes outside
-    # The reasoning_chain contains both reasoning steps AND final_answer at the end
-    # Per Qwen3 best practices: format should be <think>\nreasoning\n</think>\n\nfinal_answer
-    import re
+    # Split reasoning_chain: reasoning goes inside <think>, final_answer outside
+    # Per Qwen3 best practices: <think>\nreasoning\n</think>\n\nfinal_answer
     
     # Extract the final_answer portion (final_answer: "X"\nExplanation: Y)
     final_answer_match = re.search(
-        r'(final_answer:.*?)(?:\n*$)', 
-        reasoning_chain, 
+        r'(final_answer:.*)$',
+        reasoning_chain,
         re.DOTALL | re.IGNORECASE
     )
     
