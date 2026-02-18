@@ -13,6 +13,7 @@ Supports both Qwen3 thinking format and standard generation.
 
 import os
 import json
+import re
 import argparse
 import pandas as pd
 import torch
