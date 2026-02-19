@@ -1,14 +1,18 @@
 """
 LLM sanity check for benign changes in benign_train.jsonl.
-Verifies each modified note still makes clinical sense.
+Verifies each modified note still makes clinical sense using GPT-4o.
+Optionally auto-runs fix_failed_benign.py on failures.
 
 Usage:
     python scripts/injection/verify_benign_changes.py --limit 20
     python scripts/injection/verify_benign_changes.py --all
+    python scripts/injection/verify_benign_changes.py --all --auto-fix
 """
 
 import json
 import argparse
+import subprocess
+import sys
 from pathlib import Path
 from datetime import datetime
 from openai import OpenAI
@@ -47,7 +51,7 @@ def verify_one(client, record):
     )
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -135,10 +139,27 @@ def main(limit=None):
         pass_pct = 100 * c["PASS"] / total_ct if total_ct > 0 else 0
         print(f"  {ct:30s} PASS: {c['PASS']:4d}/{total_ct} ({pass_pct:.1f}%)  FAIL: {c['FAIL']:3d}")
 
+    return out_fails, counts["FAIL"]
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Verify benign changes using GPT-4o-mini")
+    parser = argparse.ArgumentParser(description="Verify benign changes using GPT-4o")
     parser.add_argument("--limit", type=int, default=None, help="Number of records to verify (default: 20)")
     parser.add_argument("--all", action="store_true", help="Process all records")
+    parser.add_argument("--auto-fix", action="store_true",
+                        help="Automatically run fix_failed_benign.py on failures after verification")
     args = parser.parse_args()
-    main(limit=None if args.all else (args.limit or 20))
+
+    out_fails, fail_count = main(limit=None if args.all else (args.limit or 20))
+
+    if args.auto_fix and fail_count > 0:
+        print(f"\n{'='*50}")
+        print(f"AUTO-FIX: Running fix on {fail_count} failures...")
+        print(f"{'='*50}")
+        fix_script = Path(__file__).parent / "fix_failed_benign.py"
+        subprocess.run(
+            [sys.executable, str(fix_script), "--failures", str(out_fails)],
+            check=True
+        )
+    elif args.auto_fix and fail_count == 0:
+        print("\nNo failures to fix!")

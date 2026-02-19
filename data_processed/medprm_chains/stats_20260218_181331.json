@@ -1,0 +1,25 @@
+{
+  "total_pairs": 1101,
+  "total_chains": 1101,
+  "valid_chains": 1074,
+  "invalid_chains": 27,
+  "validation_rate": 97.54768392370572,
+  "error_type_distribution": {
+    "pharmacotherapy": 108,
+    "treatment": 101,
+    "diagnosis": 304,
+    "management": 533,
+    "causalorganism": 55
+  },
+  "elapsed_seconds": 11499.24543094635,
+  "elapsed_minutes": 191.6540905157725,
+  "chains_per_minute": 5.744724764480784,
+  "api_stats": {
+    "total_calls": 1176,
+    "successful_calls": 1176,
+    "failed_calls": 0,
+    "success_rate": 100.0
+  },
+  "output_file": "data_processed/medprm_chains/medprm_chains_20260218_181331.jsonl",
+  "timestamp": "2026-02-18T21:25:10.380913"
+}

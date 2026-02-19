@@ -65,26 +65,43 @@ def find_latest_medprm_file(data_dir: Path = DEFAULT_DATA_DIR) -> Optional[Path]
 
 
 def load_medprm_data(data_file: Optional[str] = None) -> Dataset:
-    """Load Med-PRM chains data, auto-detecting latest file if not specified."""
+    """Load Med-PRM chains data, auto-detecting latest file if not specified.
+    
+    Supports multiple files via comma-separated paths or glob patterns:
+      --train-file "assessor_chains.jsonl,injector_chains.jsonl"
+      --train-file "data_processed/medprm_chains/medprm_chains_*.jsonl"
+    """
     if data_file:
-        data_path = Path(data_file)
+        # Support comma-separated file lists
+        raw_paths = [p.strip() for p in data_file.split(",") if p.strip()]
+        # Expand globs
+        data_paths = []
+        for p in raw_paths:
+            expanded = glob.glob(p)
+            if expanded:
+                data_paths.extend(expanded)
+            else:
+                data_paths.append(p)  # Keep as-is if no glob match (will error if missing)
     else:
-        data_path = find_latest_medprm_file()
-        if data_path is None:
+        latest = find_latest_medprm_file()
+        if latest is None:
             raise FileNotFoundError(
                 f"No medprm_chains_*.jsonl files found in {DEFAULT_DATA_DIR}. "
                 "Please specify --train-file explicitly."
             )
+        data_paths = [str(latest)]
     
-    print(f"📂 Loading data from: {data_path}")
+    for dp in data_paths:
+        print(f"📂 Loading data from: {dp}")
     
     # Load and filter valid chains only
-    dataset = load_dataset("json", data_files=str(data_path), split="train")
+    dataset = load_dataset("json", data_files=data_paths, split="train")
     
     # Filter to valid chains only
     original_len = len(dataset)
     dataset = dataset.filter(lambda x: x.get("is_valid", True))
-    print(f"✓ Loaded {len(dataset)} valid chains (filtered {original_len - len(dataset)} invalid)")
+    print(f"✓ Loaded {len(dataset)} valid chains from {len(data_paths)} file(s) "
+          f"(filtered {original_len - len(dataset)} invalid)")
     
     return dataset
 
@@ -118,6 +135,28 @@ def get_system_prompt() -> str:
     return prompts.get("system_prompt", "You are a medical note classifier.")
 
 
+# Module-level cache to avoid re-reading the file per training example
+_injector_prompts_cache: Optional[Dict] = None
+
+
+def load_injector_prompts() -> Dict:
+    """Load injector SFT prompts from config (cached after first call)."""
+    global _injector_prompts_cache
+    if _injector_prompts_cache is not None:
+        return _injector_prompts_cache
+    
+    prompt_file = PROJECT_ROOT / "configs" / "prompts" / "sft" / "injector_sft_prompts.json"
+    if prompt_file.exists():
+        with open(prompt_file, 'r') as f:
+            _injector_prompts_cache = json.load(f)
+        return _injector_prompts_cache
+    else:
+        raise FileNotFoundError(
+            f"Injector SFT prompts not found: {prompt_file}. "
+            "Create configs/prompts/sft/injector_sft_prompts.json"
+        )
+
+
 def build_user_prompt(input_note: str, scenario: str, error_type: Optional[str] = None,
                       error_sentence: Optional[str] = None, corrected_sentence: Optional[str] = None) -> str:
     """Build user prompt - same format as inference.
@@ -138,19 +177,53 @@ def build_user_prompt(input_note: str, scenario: str, error_type: Optional[str] 
 # =============================================================================
 
 def format_for_sft(example: Dict, tokenizer, include_thinking: bool = True) -> Dict[str, str]:
-    """Format Med-PRM chain example for SFT training."""
+    """Format Med-PRM chain example for SFT training.
+    
+    Role-aware formatting:
+    - Assessor: "Classify this note" → reasoning → CORRECT/INCORRECT
+    - Injector error: "Introduce a subtle error" → cognitive trap analysis → change
+    - Injector benign: "Make a safe change" → semantic equivalence reasoning → change
+    """
     input_note = example.get("input_note", "")
     reasoning_chain = example.get("reasoning_chain", "")
+    role = example.get("role", "assessor")
     scenario = example.get("scenario", "correct")
     error_type = example.get("error_type")
     error_sentence = example.get("error_sentence")
     corrected_sentence = example.get("corrected_sentence")
     
-    # Build messages
-    system_prompt = get_system_prompt()
-    user_prompt = build_user_prompt(
-        input_note, scenario, error_type, error_sentence, corrected_sentence
-    )
+    # Build role-specific messages
+    if role == "injector" and scenario == "error":
+        injector_prompts = load_injector_prompts()
+        system_prompt = injector_prompts["injector_error"]["system_prompt"]
+        user_template = injector_prompts["injector_error"]["user_template"]
+        user_prompt = user_template.format(
+            note=input_note,
+            error_type=error_type or "any"
+        )
+    elif role == "injector" and scenario == "benign":
+        injector_prompts = load_injector_prompts()
+        benign_cfg = injector_prompts["injector_benign"]
+        system_prompt = benign_cfg["system_prompt"]
+        # Get change_type from the chain data (stored during generation)
+        change_type = example.get("change_type", "pseudo_factual")
+        # Look up the description for this change type
+        type_descriptions = benign_cfg.get("change_type_descriptions", {})
+        change_type_desc = type_descriptions.get(
+            change_type,
+            f"Make a {change_type} change that preserves clinical meaning."
+        )
+        user_prompt = benign_cfg["user_template"].format(
+            note=input_note,
+            change_type=change_type,
+            change_type_description=change_type_desc
+        )
+    else:
+        # Assessor scenarios (correct + incorrect) — use detection prompt
+        system_prompt = get_system_prompt()
+        user_prompt = build_user_prompt(
+            input_note, scenario, error_type, error_sentence, corrected_sentence
+        )
     
     # Split reasoning_chain: reasoning goes inside <think>, final_answer outside
     # Per Qwen3 best practices: <think>\nreasoning\n</think>\n\nfinal_answer

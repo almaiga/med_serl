@@ -38,13 +38,14 @@ class MedPRMChain:
     """Single Med-PRM reasoning chain."""
     note_id: str
     role: str  # 'assessor' or 'injector'
-    scenario: str  # 'correct', 'incorrect', 'error'
+    scenario: str  # 'correct', 'incorrect', 'error', 'benign'
     input_note: str
     reasoning_chain: str
     label: str  # 'CORRECT' or 'INCORRECT'
     error_type: Optional[str] = None
     error_sentence: Optional[str] = None
     corrected_sentence: Optional[str] = None
+    change_type: Optional[str] = None  # benign change type: pseudo_factual, temporal_rephrasing, etc.
     is_valid: bool = True
     validation_errors: Optional[List[str]] = None
     token_estimate: int = 0
@@ -419,7 +420,7 @@ class MedPRMGenerator:
             prompts = json.load(f)
         
         # Validate required keys
-        required = ['assessor_correct', 'assessor_incorrect', 'injector_error']
+        required = ['assessor_correct', 'assessor_incorrect', 'injector_error', 'injector_benign']
         for key in required:
             if key not in prompts:
                 raise ValueError(f"Missing prompt template: {key}")
@@ -445,6 +446,16 @@ class MedPRMGenerator:
             error_type=pair.get('error_type', ''),
             error_sentence=pair.get('error_sentence', ''),
             corrected_sentence=pair.get('corrected_sentence', '')
+        )
+
+    def _format_benign_prompt(self, template: str, record: Dict) -> str:
+        """Format prompt template with benign change record data (different schema)."""
+        return template.format(
+            original_note=record.get('original_note', ''),
+            modified_note=record.get('modified_note', ''),
+            change_type=record.get('change_type', ''),
+            original_term=record.get('original_term', ''),
+            replacement_term=record.get('replacement_term', '')
         )
     
     async def generate_assessor_correct(self, pair: Dict) -> Optional[MedPRMChain]:
@@ -553,7 +564,7 @@ class MedPRMGenerator:
             note_id=note_id,
             role="injector",
             scenario="error",
-            input_note=pair['incorrect_note'],
+            input_note=pair['correct_note'],
             reasoning_chain=result,
             label="INCORRECT",
             error_type=pair.get('error_type'),
@@ -563,15 +574,61 @@ class MedPRMGenerator:
             validation_errors=errors if errors else None,
             token_estimate=ChainValidator.estimate_tokens(result) if result else 0
         )
+
+    async def generate_injector_benign(self, record: Dict) -> Optional[MedPRMChain]:
+        """Generate Injector-Benign chain (semantic equivalence reasoning).
+        
+        Uses benign change schema: original_note, modified_note, change_type,
+        original_term, replacement_term.
+        """
+        note_id = f"{record.get('note_id', 'unknown')}_{record.get('change_type', 'benign')}_injector_benign"
+        max_tokens = self.token_limits.get('injector_benign', 450)
+
+        system = self.prompts['injector_benign']['system']
+        user = self._format_benign_prompt(self.prompts['injector_benign']['user_template'], record)
+
+        result = await self.client.generate(system, user, note_id)
+
+        if not result:
+            return None
+
+        is_valid, errors = ChainValidator.validate(result, "CORRECT", max_tokens=max_tokens)
+
+        # Selective retry: one attempt if errors are recoverable
+        if not is_valid and ChainValidator.is_retry_eligible(errors):
+            logger.info(f"Retrying {note_id} due to: {errors}")
+            feedback = ChainValidator.format_retry_feedback(errors, max_tokens)
+            result = await self.client.generate(system, user + feedback, f"{note_id}_retry")
+            if result:
+                is_valid, errors = ChainValidator.validate(result, "CORRECT", max_tokens=max_tokens)
+
+        return MedPRMChain(
+            note_id=note_id,
+            role="injector",
+            scenario="benign",
+            input_note=record.get('original_note', ''),
+            reasoning_chain=result,
+            label="CORRECT",
+            error_type=None,
+            error_sentence=None,
+            corrected_sentence=None,
+            change_type=record.get('change_type', 'pseudo_factual'),
+            is_valid=is_valid,
+            validation_errors=errors if errors else None,
+            token_estimate=ChainValidator.estimate_tokens(result) if result else 0
+        )
     
     async def generate_chains_for_pair(self, pair: Dict, scenarios: List[str] = None) -> List[MedPRMChain]:
-        """Generate chain types for a single pair based on selected scenarios.
+        """Generate chain types for a single medec pair based on selected scenarios.
+        
+        Note: injector_benign is NOT handled here - it uses a different data schema
+        and is processed via process_benign_dataset() instead.
         
         Args:
-            pair: Note pair data
+            pair: Note pair data (medec schema: correct_note, incorrect_note, etc.)
             scenarios: List of scenarios to generate. Options:
                        'assessor_correct', 'assessor_incorrect', 'injector_error'
-                       If None, generates all scenarios.
+                       If None, generates all medec scenarios.
         """
         if scenarios is None:
             scenarios = ['assessor_correct', 'assessor_incorrect', 'injector_error']
@@ -711,6 +768,102 @@ class MedPRMGenerator:
         
         return all_chains
 
+    async def process_benign_dataset(
+        self,
+        records: List[Dict],
+        checkpoint_every: int = 25,
+        resume_from: int = 0,
+    ) -> List[MedPRMChain]:
+        """
+        Process benign change records to generate injector_benign CoT chains.
+        Reads from benign_train_clean.jsonl schema (original_note/modified_note).
+        """
+        all_chains = []
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = self.output_dir / f"medprm_chains_benign_{timestamp}.jsonl"
+        checkpoint_file = self.output_dir / "checkpoint_benign.json"
+        stats_file = self.output_dir / f"stats_benign_{timestamp}.json"
+
+        if resume_from > 0:
+            logger.info(f"Resuming benign from record index {resume_from}")
+            records = records[resume_from:]
+
+        logger.info(f"Processing {len(records)} benign change records")
+        logger.info(f"Output: {output_file}")
+
+        start_time = time.time()
+        valid_count = 0
+        change_type_counts = {}
+
+        for i, record in enumerate(tqdm_async(records, desc="Generating injector_benign chains")):
+            chain = await self.generate_injector_benign(record)
+
+            if chain is None:
+                continue
+
+            all_chains.append(chain)
+
+            if chain.is_valid:
+                valid_count += 1
+
+            ct = record.get('change_type', 'unknown')
+            change_type_counts[ct] = change_type_counts.get(ct, 0) + 1
+
+            # Write incrementally
+            with open(output_file, 'a') as f:
+                f.write(json.dumps(asdict(chain)) + '\n')
+
+            # Checkpoint every N records
+            if (i + 1) % checkpoint_every == 0:
+                elapsed = time.time() - start_time
+                rate = (i + 1) / elapsed * 60
+                checkpoint_data = {
+                    'last_index': resume_from + i,
+                    'total_chains': len(all_chains),
+                    'valid_chains': valid_count,
+                    'elapsed_seconds': elapsed,
+                    'records_per_minute': rate,
+                    'timestamp': datetime.now().isoformat()
+                }
+                with open(checkpoint_file, 'w') as f:
+                    json.dump(checkpoint_data, f, indent=2)
+                logger.info(f"Checkpoint: {i+1}/{len(records)} records | {valid_count} valid | {rate:.1f}/min")
+
+        # Final statistics
+        elapsed = time.time() - start_time
+        api_stats = self.client.get_stats()
+
+        final_stats = {
+            'total_records': len(records),
+            'total_chains': len(all_chains),
+            'valid_chains': valid_count,
+            'invalid_chains': len(all_chains) - valid_count,
+            'validation_rate': valid_count / max(len(all_chains), 1) * 100,
+            'change_type_distribution': change_type_counts,
+            'elapsed_seconds': elapsed,
+            'elapsed_minutes': elapsed / 60,
+            'chains_per_minute': len(all_chains) / max(elapsed, 1) * 60,
+            'api_stats': api_stats,
+            'output_file': str(output_file),
+            'timestamp': datetime.now().isoformat()
+        }
+
+        with open(stats_file, 'w') as f:
+            json.dump(final_stats, f, indent=2)
+
+        logger.info("=" * 60)
+        logger.info("BENIGN GENERATION COMPLETE")
+        logger.info("=" * 60)
+        logger.info(f"Records processed: {len(records)}")
+        logger.info(f"Chains generated: {len(all_chains)}")
+        logger.info(f"Valid chains: {valid_count} ({final_stats['validation_rate']:.1f}%)")
+        logger.info(f"Change type distribution: {change_type_counts}")
+        logger.info(f"Time elapsed: {elapsed/60:.1f} minutes")
+        logger.info(f"API success rate: {api_stats['success_rate']:.1f}%")
+        logger.info(f"Output: {output_file}")
+
+        return all_chains
+
 
 def load_pairs(input_path: str) -> List[Dict]:
     """Load pairs from JSONL file."""
@@ -773,21 +926,18 @@ async def main():
     parser.add_argument(
         '--scenarios',
         nargs='+',
-        choices=['assessor_correct', 'assessor_incorrect', 'injector_error', 'all'],
+        choices=['assessor_correct', 'assessor_incorrect', 'injector_error', 'injector_benign', 'all'],
         default=['all'],
-        help='Scenarios to generate. Use "all" for all scenarios, or specify: assessor_correct, assessor_incorrect, injector_error'
+        help='Scenarios to generate. "all" runs all medec + benign scenarios. '
+             'injector_benign uses --benign-input instead of --input.'
+    )
+    parser.add_argument(
+        '--benign-input',
+        default='data_processed/benign_changes/benign_train_clean.jsonl',
+        help='Input JSONL for injector_benign scenario (benign changes schema)'
     )
     
     args = parser.parse_args()
-    
-    # Load pairs
-    logger.info(f"Loading pairs from {args.input}")
-    pairs = load_pairs(args.input)
-    logger.info(f"Loaded {len(pairs)} pairs")
-    
-    if args.limit:
-        pairs = pairs[:args.limit]
-        logger.info(f"Limited to {len(pairs)} pairs")
     
     # Initialize generator
     generator = MedPRMGenerator(
@@ -797,19 +947,62 @@ async def main():
         max_concurrent=args.concurrency
     )
     
-    # Parse scenarios
-    scenarios = None  # None means all
-    if args.scenarios and 'all' not in args.scenarios:
-        scenarios = args.scenarios
-        logger.info(f"Selected scenarios: {scenarios}")
+    # Determine which pipelines to run
+    run_medec = False
+    run_benign = False
+    medec_scenarios = None  # None means all medec scenarios
     
-    # Process
-    await generator.process_dataset(
-        pairs,
-        checkpoint_every=args.checkpoint_every,
-        resume_from=args.resume,
-        scenarios=scenarios
-    )
+    if args.scenarios and 'all' not in args.scenarios:
+        # Specific scenarios selected
+        if 'injector_benign' in args.scenarios:
+            run_benign = True
+        medec_only = [s for s in args.scenarios if s != 'injector_benign']
+        if medec_only:
+            run_medec = True
+            medec_scenarios = medec_only
+    else:
+        # 'all' selected — run everything
+        run_medec = True
+        run_benign = True
+    
+    # Process medec pairs (assessor_correct, assessor_incorrect, injector_error)
+    if run_medec:
+        logger.info(f"Loading medec pairs from {args.input}")
+        pairs = load_pairs(args.input)
+        logger.info(f"Loaded {len(pairs)} medec pairs")
+        
+        if args.limit:
+            pairs = pairs[:args.limit]
+            logger.info(f"Limited to {len(pairs)} pairs")
+        
+        logger.info(f"Medec scenarios: {medec_scenarios or 'all'}")
+        await generator.process_dataset(
+            pairs,
+            checkpoint_every=args.checkpoint_every,
+            resume_from=args.resume,
+            scenarios=medec_scenarios
+        )
+    
+    # Process benign changes (injector_benign)
+    if run_benign:
+        benign_path = Path(args.benign_input)
+        if not benign_path.exists():
+            logger.error(f"Benign input not found: {benign_path}")
+            logger.error("Run the verify+fix pipeline first, then create benign_train_clean.jsonl")
+        else:
+            logger.info(f"Loading benign records from {benign_path}")
+            benign_records = load_pairs(str(benign_path))
+            logger.info(f"Loaded {len(benign_records)} benign records")
+            
+            if args.limit:
+                benign_records = benign_records[:args.limit]
+                logger.info(f"Limited to {len(benign_records)} benign records")
+            
+            await generator.process_benign_dataset(
+                benign_records,
+                checkpoint_every=args.checkpoint_every,
+                resume_from=args.resume,
+            )
 
 
 if __name__ == '__main__':

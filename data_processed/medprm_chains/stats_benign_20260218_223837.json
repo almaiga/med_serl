@@ -1,0 +1,24 @@
+{
+  "total_records": 1057,
+  "total_chains": 1057,
+  "valid_chains": 585,
+  "invalid_chains": 472,
+  "validation_rate": 55.34531693472091,
+  "change_type_distribution": {
+    "pseudo_factual": 534,
+    "temporal_rephrasing": 334,
+    "equivalent_citation": 160,
+    "logical_restatement": 29
+  },
+  "elapsed_seconds": 10666.140732765198,
+  "elapsed_minutes": 177.7690122127533,
+  "chains_per_minute": 5.945918171244527,
+  "api_stats": {
+    "total_calls": 1708,
+    "successful_calls": 1708,
+    "failed_calls": 0,
+    "success_rate": 100.0
+  },
+  "output_file": "data_processed/medprm_chains/medprm_chains_benign_20260218_223837.jsonl",
+  "timestamp": "2026-02-19T01:36:23.573583"
+}
