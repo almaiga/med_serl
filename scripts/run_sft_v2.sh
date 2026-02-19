@@ -125,12 +125,11 @@ MODEL_SIZE="${MODEL_SIZE}"
 $(declare -f run_pipeline)
 run_pipeline 2>&1 | tee "${LOG_FILE}"
 HEREDOC
-chmod +x "\$PIPELINE_SCRIPT"
 
 echo "Launching SFT v2 in screen session '${SESSION}'..."
 echo "Log: ${LOG_FILE}"
 echo ""
-screen -dmS "${SESSION}" bash "\$PIPELINE_SCRIPT"
+screen -dmS "${SESSION}" bash "$PIPELINE_SCRIPT"
 
 echo "Screen session started."
 echo ""
