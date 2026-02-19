@@ -11,6 +11,13 @@
 
 set -e
 
+# Ensure screen is installed
+if ! command -v screen &> /dev/null; then
+    echo "screen not found — installing via apt-get..."
+    apt-get update -qq && apt-get install -y screen
+    echo "screen installed."
+fi
+
 REPO_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 cd "$REPO_ROOT"
 
@@ -91,22 +98,43 @@ print(f'  Patched {len(chains)} benign chains')
     echo "=============================================="
 }
 
-# Export variables so subshell can see them
-export BENIGN_FILE ASSESSOR_FILE INJECTOR_PARTIAL INJECTOR_FULL COMBINED_FILE MODEL_SIZE
+SESSION="sft_v2"
 
-# Launch in background via nohup
-echo "Launching SFT v2 pipeline in background..."
-echo "Log: $LOG_FILE"
-echo ""
-nohup bash -c "
-    cd ${REPO_ROOT}
-    $(declare -f run_pipeline)
-    run_pipeline
-" >> "$LOG_FILE" 2>&1 &
+# Abort if session already exists
+if screen -list | grep -q "${SESSION}"; then
+    echo "Screen session '${SESSION}' already exists!"
+    echo "Attach:  screen -r ${SESSION}"
+    echo "Kill:    screen -S ${SESSION} -X quit"
+    exit 1
+fi
 
-BGPID=$!
-echo "PID: $BGPID"
+# Write pipeline to a temp script so screen can run it cleanly
+PIPELINE_SCRIPT=$(mktemp /tmp/sft_v2_XXXXXX.sh)
+cat > "$PIPELINE_SCRIPT" << HEREDOC
+#!/bin/bash
+set -e
+cd ${REPO_ROOT}
+
+BENIGN_FILE="${BENIGN_FILE}"
+ASSESSOR_FILE="${ASSESSOR_FILE}"
+INJECTOR_PARTIAL="${INJECTOR_PARTIAL}"
+INJECTOR_FULL="${INJECTOR_FULL}"
+COMBINED_FILE="${COMBINED_FILE}"
+MODEL_SIZE="${MODEL_SIZE}"
+
+$(declare -f run_pipeline)
+run_pipeline 2>&1 | tee "${LOG_FILE}"
+HEREDOC
+chmod +x "\$PIPELINE_SCRIPT"
+
+echo "Launching SFT v2 in screen session '${SESSION}'..."
+echo "Log: ${LOG_FILE}"
 echo ""
-echo "Monitor:  tail -f $LOG_FILE"
-echo "Status:   kill -0 $BGPID 2>/dev/null && echo 'still running' || echo 'finished'"
-echo "Stop:     kill $BGPID"
+screen -dmS "${SESSION}" bash "\$PIPELINE_SCRIPT"
+
+echo "Screen session started."
+echo ""
+echo "Attach:   screen -r ${SESSION}"
+echo "Detach:   Ctrl-A then D"
+echo "Monitor:  tail -f ${LOG_FILE}"
+echo "Kill:     screen -S ${SESSION} -X quit"
