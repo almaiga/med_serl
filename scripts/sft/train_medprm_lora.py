@@ -23,7 +23,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from datasets import load_dataset, Dataset
+from datasets import Dataset
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback
 from trl import SFTConfig, SFTTrainer
@@ -94,8 +94,17 @@ def load_medprm_data(data_file: Optional[str] = None) -> Dataset:
     for dp in data_paths:
         print(f"📂 Loading data from: {dp}")
     
-    # Load and filter valid chains only
-    dataset = load_dataset("json", data_files=data_paths, split="train")
+    # Manually load JSONL to avoid schema inference conflicts across files
+    # (e.g. change_type is null in assessor files but a string in benign files,
+    # which causes HuggingFace datasets to crash with "Couldn't cast string to null")
+    records = []
+    for dp in data_paths:
+        with open(dp, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+    dataset = Dataset.from_list(records)
     
     # Filter to valid chains only
     original_len = len(dataset)
