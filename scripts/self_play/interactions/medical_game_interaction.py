@@ -221,33 +221,32 @@ class MedicalGameInteraction(BaseInteraction):
         }
     
     def _extract_generated_note(self, injector_output: str) -> str:
-        """Extract ONLY the generated_note from Injector output.
+        """Extract ONLY the generated note from Injector output.
         
         CRITICAL FOR HIDDEN COT (SeRL paper design):
         Strips ALL of the following so Assessor cannot see:
         - <think>...</think> tags (CoT reasoning)
         - final_answer: "CORRECT" or "INCORRECT" (if present)
         - changes_made: {...} (metadata about what was changed)
+        - Explanation: ... (if present)
         
         The Assessor should see ONLY the modified clinical note text,
         with no hints about whether it contains errors.
         
-        Supports both:
+        Supports:
         - v2 format: generated_note: ... final_answer: ... changes_made: ...
-        - v3 format: <think>...</think> generated_note: ... (no final_answer)
+        - v3 format: <think>...</think> generated_note: ...
+        - v4/SFT format: <think>...</think>\n\ngenerated_note: ... (may also have final_answer after)
         """
         # Step 1: Remove <think> tags and their content (Hidden CoT)
         output = re.sub(r'<think>.*?</think>', '', injector_output, flags=re.DOTALL)
         
-        # Step 2: Extract ONLY the text after "generated_note:" 
-        # Try multiple patterns to handle variations in formatting
+        # Step 2: Extract text after "generated_note:" stopping at known markers
         patterns = [
-            # Pattern 1: v3 format - generated_note: until end (no final_answer)
-            r'generated_note:\s*\n(.*?)$',
-            # Pattern 2: v2 format - stop at final_answer or changes_made
-            r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)',
-            # Pattern 3: More lenient - any text after generated_note:
-            r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|$)',
+            # Stop at final_answer, changes_made, or Explanation
+            r'generated_note:\s*\n(.*?)(?=\n\s*(?:final_answer:|changes_made:|Explanation:)|$)',
+            # More lenient
+            r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|Explanation:|$)',
         ]
         
         extracted_note = None
@@ -255,7 +254,7 @@ class MedicalGameInteraction(BaseInteraction):
             match = re.search(pattern, output, re.DOTALL | re.IGNORECASE)
             if match:
                 extracted_note = match.group(1).strip()
-                if extracted_note and len(extracted_note) > 20:  # Non-empty, reasonable length
+                if extracted_note and len(extracted_note) > 20:
                     break
         
         if extracted_note:
@@ -286,6 +285,7 @@ class MedicalGameInteraction(BaseInteraction):
         
         # Remove any remaining section markers that might have leaked
         sanitized = re.sub(r'final_answer:\s*["\']?(?:CORRECT|INCORRECT)["\']?', '', sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r'Explanation:\s*.*', '', sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r'changes_made:\s*\{.*?\}', '', sanitized, flags=re.DOTALL | re.IGNORECASE)
         sanitized = re.sub(r'changes_made:\s*$', '', sanitized, flags=re.IGNORECASE)
         

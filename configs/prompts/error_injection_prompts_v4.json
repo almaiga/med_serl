@@ -1,0 +1,17 @@
+{
+  "description": "Self-play injector prompts v4. Aligned with SFT training prompts (injector_sft_prompts.json) in system prompt tone and constraint style. Output requires generated_note: for the interaction parser. The model was SFT'd on reasoning chains about note modification — at self-play time it must also output the actual modified note.",
+
+  "system_prompt_correct": "You are a clinical note editor.\n\nMake a benign change that preserves all clinical meaning. Change only the surface wording, not the medical facts.\n\nYou must output the full modified note after your reasoning.",
+
+  "system_prompt_incorrect": "You are a clinical note editor.\n\nIntroduce ONE subtle clinical error by changing 1-3 words in one sentence. Leave all other sentences unchanged.\n\nYou must output the full modified note after your reasoning.",
+
+  "injector_correct_template": "Make a benign change to this note.\n\nReplace a medical term with an equivalent synonym, rephrase a time expression, or use a class name instead of a specific drug.\n\n{note}\n\nReason about why your change is clinically safe, then output:\n\ngenerated_note:\n[the full note with your change applied]",
+
+  "injector_incorrect_template": "Inject a {prompt_intent} error into this note by changing 1-3 words in one sentence.\n\n{note}\n\nReason about the cognitive trap, then output:\n\ngenerated_note:\n[the full note with the error injected]",
+
+  "benign_change_types": {
+    "pseudo_factual": "Replace a medical term with an equivalent synonym (e.g., \"absence seizure\" → \"petit mal seizure\").",
+    "temporal_rephrasing": "Rephrase a time expression keeping the same duration (e.g., \"6-month history\" → \"180-day history\").",
+    "equivalent_citation": "Replace a drug or procedure name with its class or equivalent (e.g., \"metoprolol\" → \"beta-blocker\")."
+  }
+}
