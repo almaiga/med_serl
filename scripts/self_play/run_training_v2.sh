@@ -188,6 +188,16 @@ cat > "$PIPELINE_SCRIPT" << HEREDOC
 set -e
 cd $PROJECT_ROOT
 
+# Activate verl conda environment (same as original run_training.sh)
+CONDA_BASE=\${CONDA_BASE:-/workspace/miniconda3}
+if [ -f "\$CONDA_BASE/etc/profile.d/conda.sh" ]; then
+    source "\$CONDA_BASE/etc/profile.d/conda.sh"
+    conda activate verl
+    echo "✓ Activated conda env: verl"
+else
+    echo "WARNING: conda not found at \$CONDA_BASE, using current environment"
+fi
+
 export MODEL_PATH="$MODEL_PATH"
 export MODEL_SIZE="$MODEL_SIZE"
 export MODEL_SHORT="$MODEL_SHORT"
