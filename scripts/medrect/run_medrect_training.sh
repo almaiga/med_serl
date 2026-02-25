@@ -28,7 +28,7 @@ cd "${PROJECT_ROOT}"
 
 # ---- Configuration (overridable via env) ----
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-8B}"
-MEDRECT_DATA="${MEDRECT_DATA:-data/medrect/medrect-en-train.json}"
+MEDRECT_DATA="${MEDRECT_DATA:-/workspace/medrect/data/medrect/medrect-en-train.json /workspace/medrect/data/medrect/medrect-ja-train.json}"
 PROMPT_CONFIG="configs/prompts/sft/medrect_detection_prompts.json"
 PREPARED_DATA="data_processed/medrect/medrect_sft_train.jsonl"
 
@@ -83,11 +83,15 @@ if screen -list | grep -q "${SCREEN_NAME}"; then
     exit 1
 fi
 
-# Check data file exists
-if [[ "${SKIP_PREP}" == false && ! -f "${MEDRECT_DATA}" ]]; then
-    echo "MEDRECT data not found: ${MEDRECT_DATA}"
-    echo "Set MEDRECT_DATA=/path/to/medrect-en-train.json"
-    exit 1
+# Check data files exist (MEDRECT_DATA may be space-separated)
+if [[ "${SKIP_PREP}" == false ]]; then
+    for _f in ${MEDRECT_DATA}; do
+        if [[ ! -f "${_f}" ]]; then
+            echo "MEDRECT data not found: ${_f}"
+            echo "Set MEDRECT_DATA=/path/to/medrect-en-train.json"
+            exit 1
+        fi
+    done
 fi
 
 # Check prompt config exists
