@@ -198,6 +198,15 @@ else
     echo "WARNING: conda not found at \$CONDA_BASE, using current environment"
 fi
 
+# Restore CUDA environment (screen subshell doesn't inherit these)
+export PATH="/usr/local/cuda/bin:\$PATH"
+export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:\${LD_LIBRARY_PATH:-}"
+# Ensure GPU 0 is visible (unset = all GPUs, empty string = no GPUs)
+if [ -z "\${CUDA_VISIBLE_DEVICES+x}" ] || [ "\$CUDA_VISIBLE_DEVICES" = "" ]; then
+    unset CUDA_VISIBLE_DEVICES
+fi
+echo "✓ CUDA env restored (LD_LIBRARY_PATH, PATH)"
+
 export MODEL_PATH="$MODEL_PATH"
 export MODEL_SIZE="$MODEL_SIZE"
 export MODEL_SHORT="$MODEL_SHORT"

@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "description": "MEDRECT error detection prompts (detection-only, no correction). Used for Stage 0 SFT to ground the model in medical error localization before MedPRM chain training and self-play RL.",
+
+  "system_prompt": "You are a medical expert reviewing clinical text for accuracy.\nThe text contains either no error or exactly one medical error.\nIdentify any medical error related to treatment, diagnosis, management, or causation.\n\nOutput Format:\n- If no error: 'CORRECT'\n- If error found: output only the sentence number (e.g. '7')\n\nCRITICAL: Output ONLY the result. Do NOT include explanations, analysis, or additional text.",
+
+  "user_template": "{sentences}",
+
+  "output_format": {
+    "no_error": "CORRECT",
+    "error_detected": "{error_sentence_id}",
+    "description": "Detection only — output is either CORRECT or an integer sentence number. No correction text."
+  },
+
+  "notes": {
+    "task": "Medical error detection (sentence-level localization)",
+    "data_source": "MEDRECT (medrect-en-train.json, medrect-ja-train.json)",
+    "reasoning": "When reasoning traces are available, they go inside <think>...</think> tags. The final answer (CORRECT or sentence number) goes outside.",
+    "paper_reference": "MEDRECT: LLM-as-Medical-Recitifier (2026)"
+  }
+}
