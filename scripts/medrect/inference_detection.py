@@ -132,7 +132,7 @@ def run_inference(
     use_thinking: bool = True,
     max_samples: Optional[int] = None,
     temperature: float = 0.7,
-    max_new_tokens: int = 1536,
+    max_new_tokens: int = 512,
     thinking_budget: int = 1024,
     batch_size: int = 8,
 ) -> List[Dict]:
@@ -289,13 +289,13 @@ def run_inference(
                     pred_sid=pred_sid,
                     detection_correct=detection_correct,
                     localization_correct=localization_correct,
-                    thinking=thinking[:500],
-                    raw_output=content[:500],
+                    thinking=thinking,
+                    raw_output=content,
                 )
             )
 
             if batch_start == 0 and i == 0:
-                print(f"\n{'='*50}\nDEBUG first sample\nGT={m['gt_label']}  Pred={pred_label}\n{content[:300]}\n{'='*50}\n")
+                print(f"\n{'='*50}\nDEBUG first sample\nGT={m['gt_label']}  Pred={pred_label}\n--- THINKING ---\n{thinking}\n--- ANSWER ---\n{content}\n{'='*50}\n")
 
     return results
 
@@ -379,7 +379,7 @@ def main():
     p.add_argument("--max_samples",     type=int, default=None)
     p.add_argument("--batch_size",      type=int, default=8)
     p.add_argument("--temperature",     type=float, default=0.7)
-    p.add_argument("--max_new_tokens",  type=int, default=1536)
+    p.add_argument("--max_new_tokens",  type=int, default=512)
     p.add_argument("--thinking_budget", type=int, default=1024)
     p.add_argument("--no_thinking",     action="store_true")
     p.add_argument("--output_dir",      default="results/detection")

@@ -20,7 +20,7 @@ set -euo pipefail
 #   BATCH_SIZE      — default: 8
 #   TEMPERATURE     — default: 0.7
 #   THINKING_BUDGET — default: 1024
-#   MAX_NEW_TOKENS  — default: 1536
+#   MAX_NEW_TOKENS  — default: 512
 #   MAX_SAMPLES     — limit samples (default: all)
 #   NO_THINKING     — set 1 to disable thinking mode
 # =============================================================================
@@ -60,7 +60,7 @@ DATASET="${DATASET:-all}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 TEMPERATURE="${TEMPERATURE:-0.7}"
 THINKING_BUDGET="${THINKING_BUDGET:-1024}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1536}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
 NO_THINKING="${NO_THINKING:-0}"
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
