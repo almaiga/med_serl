@@ -193,6 +193,9 @@ def run_inference(
             temperature=temperature if temperature > 0 else None,
             do_sample=temperature > 0,
             top_p=0.95 if temperature > 0 else None,
+            top_k=20 if (is_qwen and use_thinking) else None,
+            min_p=0.05 if (is_qwen and use_thinking) else None,
+            repetition_penalty=1.1 if (is_qwen and use_thinking) else 1.05,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
         )
@@ -232,14 +235,19 @@ def run_inference(
 
             input_ids2 = torch.cat(padded, dim=0)
             attn_mask2 = torch.cat(masks, dim=0)
+            # Answer stage: fixed params — output is just a number or "CORRECT"
+            answer_tokens = min(max_new_tokens, 128)
             with torch.no_grad():
                 outputs = model.generate(
                     input_ids=input_ids2,
                     attention_mask=attn_mask2,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature if temperature > 0 else None,
-                    do_sample=temperature > 0,
-                    top_p=0.95 if temperature > 0 else None,
+                    max_new_tokens=answer_tokens,
+                    temperature=0.6,
+                    do_sample=True,
+                    top_p=0.95,
+                    top_k=20,
+                    min_p=0.05,
+                    repetition_penalty=1.05,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
                 )
