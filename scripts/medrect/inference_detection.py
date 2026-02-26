@@ -203,18 +203,27 @@ def run_inference(
         with torch.no_grad():
             outputs = model.generate(**inputs, **gen_kwargs)
 
+        # Save original padded input length for position-based slicing
+        orig_padded_len = inputs.input_ids.shape[1]
+
         # ── Two-stage generation for Qwen thinking mode ──────────────────────
         needs_stage2 = [False] * len(prompts)
         stage2_input_len = 0
         input_ids2 = None
+        batch_final = []
         if is_qwen and use_thinking:
-            batch_final = []
             for i in range(len(prompts)):
-                out_ids = outputs[i, input_lens[i]:].tolist()
+                # NOTE: can't use  != pad_token_id filtering here because
+                # pad_token_id == IM_END_TOKEN_ID == 151645, and the prompt
+                # contains <|im_end|> tokens.  Use position-based slicing.
+                out_ids = outputs[i, orig_padded_len:].tolist()
+                # Right-strip pad/eos tokens
+                while out_ids and out_ids[-1] == tokenizer.pad_token_id:
+                    out_ids.pop()
+
                 if IM_END_TOKEN_ID not in out_ids:
                     needs_stage2[i] = True
                     if THINK_END_TOKEN_ID not in out_ids:
-                        # Thinking budget exhausted — inject early-stop prompt
                         early_stop = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
                         early_ids = tokenizer(early_stop, return_tensors="pt", add_special_tokens=False).input_ids.to(model.device)
                         new_input = torch.cat([outputs[i:i+1], early_ids], dim=-1)
@@ -259,45 +268,46 @@ def run_inference(
 
         for i, m in enumerate(meta):
             thinking = ""
+            content = ""
 
-            if is_qwen and use_thinking and input_ids2 is not None:
-                # Pick source: pre-stage2 for completed items (avoids stage2 garbage)
-                source = outputs[i] if needs_stage2[i] else input_ids2[i]
-                valid = source[source != tokenizer.pad_token_id]
-                gen_ids = valid[input_lens[i]:].tolist()
+            if is_qwen and use_thinking and batch_final:
+                # ── Extract thinking from batch_final (pre-stage2 data) ──
+                bf = batch_final[i].squeeze(0)
+                thinking_all = bf[orig_padded_len:].tolist()
+                # Right-strip pad/eos (safe — they sit after the real content)
+                while thinking_all and thinking_all[-1] == tokenizer.pad_token_id:
+                    thinking_all.pop()
 
-                # Decode with special tokens visible so </think> is text-searchable
-                raw = tokenizer.decode(gen_ids, skip_special_tokens=False)
-
-                # Split at </think> — the opening <think> is part of the prompt and
-                # already excluded by input_lens, so we only look for the closing tag
-                think_match = re.search(r'</think>', raw)
-                if think_match:
-                    thinking = raw[:think_match.start()].strip()
-                    content = raw[think_match.end():].strip()
+                # Split at </think> token (151668)
+                if THINK_END_TOKEN_ID in thinking_all:
+                    idx = thinking_all.index(THINK_END_TOKEN_ID)
+                    thinking = tokenizer.decode(thinking_all[:idx], skip_special_tokens=True).strip()
+                    after_think = thinking_all[idx + 1 :]
                 else:
-                    # Fallback: try token-based split
-                    try:
-                        idx = len(gen_ids) - gen_ids[::-1].index(THINK_END_TOKEN_ID)
-                        thinking = tokenizer.decode(gen_ids[:idx], skip_special_tokens=True).strip()
-                        content = tokenizer.decode(gen_ids[idx:], skip_special_tokens=True).strip()
-                    except ValueError:
-                        # No </think> at all — everything is thinking, empty answer
-                        thinking = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
-                        content = ""
+                    thinking = tokenizer.decode(thinking_all, skip_special_tokens=True).strip()
+                    after_think = []
 
-                # Clean up thinking: remove injected early-stop message
+                if needs_stage2[i]:
+                    # Answer = only the NEW tokens from stage 2
+                    answer_ids = outputs[i, stage2_input_len:].tolist()
+                    while answer_ids and answer_ids[-1] == tokenizer.pad_token_id:
+                        answer_ids.pop()
+                    content = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+                else:
+                    # Answer was already in stage 1, after </think>
+                    content = tokenizer.decode(after_think, skip_special_tokens=True).strip()
+
+                # Clean up injected early-stop message from thinking
                 thinking = re.sub(
                     r'\n*Considering the limited time by the user.*$', '',
                     thinking, flags=re.DOTALL
                 ).strip()
-                # Clean up content: strip special-token text artifacts (<|im_end|> etc.)
-                content = re.sub(r'<\|[^|]+\|>', '', content).strip()
 
             else:
                 # Non-Qwen or no-thinking: single-stage generation
-                valid = outputs[i][outputs[i] != tokenizer.pad_token_id]
-                out_ids = valid[input_lens[i]:].tolist()
+                out_ids = outputs[i, orig_padded_len:].tolist()
+                while out_ids and out_ids[-1] == tokenizer.pad_token_id:
+                    out_ids.pop()
                 raw = tokenizer.decode(out_ids, skip_special_tokens=False).strip()
                 thinking, content = split_thinking(raw)
                 if not thinking:
