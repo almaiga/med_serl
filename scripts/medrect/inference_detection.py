@@ -38,6 +38,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from inference_error_detection import (
     THINK_END_TOKEN_ID,
+    IM_END_TOKEN_ID,
     MODEL_TYPE_QWEN,
     detect_model_type,
     load_model_and_tokenizer,
@@ -72,12 +73,27 @@ def sentences_to_1indexed(raw: str) -> str:
 # Output parsing
 # ─────────────────────────────────────────────────────────────────────────────
 
+def split_thinking(content: str) -> Tuple[str, str]:
+    """Split plain-text <think>...</think> from the final answer.
+
+    Works for models like HuatuoGPT / DeepSeek-R1 that emit think tags as text.
+    Returns (thinking, answer_after_think).
+    """
+    m = re.search(r"<think>(.*?)</think>\s*", content, re.DOTALL)
+    if m:
+        return m.group(1).strip(), content[m.end():].strip()
+    return "", content
+
+
 def parse_output(content: str) -> Tuple[str, Optional[int]]:
     """Return (label, sentence_id).
 
     label        : "CORRECT" | "ERROR" | "UNKNOWN"
     sentence_id  : int if label is ERROR, else None
     """
+    # Strip plain-text <think> block so the answer is what remains
+    _, content = split_thinking(content)
+
     # Use first non-empty line; strip known prefixes
     answer = ""
     for line in content.split("\n"):
@@ -95,7 +111,8 @@ def parse_output(content: str) -> Tuple[str, Optional[int]]:
     if m:
         return "ERROR", int(m.group(1))
 
-    if re.search(r"error|incorrect|mistake|wrong", content, re.IGNORECASE):
+    # Fallback: only search the answer portion, not the thinking
+    if re.search(r"error|incorrect|mistake|wrong", answer, re.IGNORECASE):
         return "ERROR", None
 
     return "UNKNOWN", None
@@ -182,20 +199,74 @@ def run_inference(
         with torch.no_grad():
             outputs = model.generate(**inputs, **gen_kwargs)
 
+        # ── Two-stage generation for Qwen thinking mode ──────────────────────
+        if is_qwen and use_thinking:
+            batch_final = []
+            for i in range(len(prompts)):
+                out_ids = outputs[i, input_lens[i]:].tolist()
+                if IM_END_TOKEN_ID not in out_ids:
+                    if THINK_END_TOKEN_ID not in out_ids:
+                        # Thinking budget exhausted — inject early-stop prompt
+                        early_stop = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
+                        early_ids = tokenizer(early_stop, return_tensors="pt", add_special_tokens=False).input_ids.to(model.device)
+                        new_input = torch.cat([outputs[i:i+1], early_ids], dim=-1)
+                    else:
+                        new_input = outputs[i:i+1]
+                    batch_final.append(new_input)
+                else:
+                    batch_final.append(outputs[i:i+1])
+
+            # Pad and run second-stage generation
+            max_len = max(x.size(-1) for x in batch_final)
+            padded, masks = [], []
+            for x in batch_final:
+                pad_len = max_len - x.size(-1)
+                if pad_len > 0:
+                    pad = torch.full((1, pad_len), tokenizer.pad_token_id, dtype=x.dtype, device=x.device)
+                    padded.append(torch.cat([pad, x], dim=-1))
+                    masks.append(torch.cat([torch.zeros(1, pad_len, dtype=torch.long, device=x.device),
+                                            torch.ones(1, x.size(-1), dtype=torch.long, device=x.device)], dim=-1))
+                else:
+                    padded.append(x)
+                    masks.append(torch.ones_like(x, dtype=torch.long))
+
+            input_ids2 = torch.cat(padded, dim=0)
+            attn_mask2 = torch.cat(masks, dim=0)
+            with torch.no_grad():
+                outputs = model.generate(
+                    input_ids=input_ids2,
+                    attention_mask=attn_mask2,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature if temperature > 0 else None,
+                    do_sample=temperature > 0,
+                    top_p=0.95 if temperature > 0 else None,
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                )
+
         for i, m in enumerate(meta):
             valid = outputs[i][outputs[i] != tokenizer.pad_token_id]
             out_ids = valid[input_lens[i] :].tolist()
 
             thinking = ""
             if is_qwen and use_thinking:
+                # Qwen3 native thinking — split by token ID
                 try:
                     idx = len(out_ids) - out_ids[::-1].index(THINK_END_TOKEN_ID)
                     thinking = tokenizer.decode(out_ids[:idx], skip_special_tokens=True).strip()
                     content = tokenizer.decode(out_ids[idx:], skip_special_tokens=True).strip()
                 except ValueError:
-                    content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+                    # </think> token not found — model may use plain-text tags, try text split
+                    raw = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+                    thinking, content = split_thinking(raw)
+                    if not thinking:
+                        content = raw
             else:
-                content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+                # Generic models (e.g. HuatuoGPT) may emit plain-text <think> tags
+                raw = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+                thinking, content = split_thinking(raw)
+                if not thinking:
+                    content = raw
 
             pred_type, pred_sid = parse_output(content)
             pred_label = "CORRECT" if pred_type == "CORRECT" else (str(pred_sid) if pred_sid else "ERROR_UNKNOWN")

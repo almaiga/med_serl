@@ -23,14 +23,19 @@ echo "  FT   : ${FT_MODEL}"
 echo "============================================================"
 echo ""
 
-bash "${RUNNER}" "${BASE_MODEL}"
-echo ""
-bash "${RUNNER}" "${FT_MODEL}"
-echo ""
+run_and_wait() {
+    local name="$1"
+    local session="detect_${name}"
+    bash "${RUNNER}" "${name}"
+    echo "Waiting for ${session} to finish..."
+    while screen -list 2>/dev/null | grep -q "${session}"; do sleep 15; done
+    echo "${name} done."
+    echo ""
+}
+
+run_and_wait "${BASE_MODEL}"
+run_and_wait "${FT_MODEL}"
 
 echo "============================================================"
-echo "  Both sessions started."
-echo "  Attach  : screen -r detect_${BASE_MODEL}"
-echo "            screen -r detect_${FT_MODEL}"
-echo "  List    : screen -ls"
+echo "  All done."
 echo "============================================================"
