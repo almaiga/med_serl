@@ -235,19 +235,18 @@ def run_inference(
 
             input_ids2 = torch.cat(padded, dim=0)
             attn_mask2 = torch.cat(masks, dim=0)
-            # Answer stage: fixed params — output is just a number or "CORRECT"
-            answer_tokens = min(max_new_tokens, 128)
+            # Answer stage: output is just a number or "CORRECT" (1-3 tokens)
             with torch.no_grad():
                 outputs = model.generate(
                     input_ids=input_ids2,
                     attention_mask=attn_mask2,
-                    max_new_tokens=answer_tokens,
-                    temperature=0.6,
+                    max_new_tokens=16,
+                    temperature=0.3,
                     do_sample=True,
                     top_p=0.95,
                     top_k=20,
                     min_p=0.05,
-                    repetition_penalty=1.05,
+                    repetition_penalty=1.3,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
                 )
@@ -258,23 +257,25 @@ def run_inference(
 
             thinking = ""
             if is_qwen and use_thinking:
-                # Qwen3 native thinking — split by token ID
+                # Qwen3 native thinking — split by token ID first
                 try:
                     idx = len(out_ids) - out_ids[::-1].index(THINK_END_TOKEN_ID)
                     thinking = tokenizer.decode(out_ids[:idx], skip_special_tokens=True).strip()
                     content = tokenizer.decode(out_ids[idx:], skip_special_tokens=True).strip()
                 except ValueError:
-                    # </think> token not found — model may use plain-text tags, try text split
-                    raw = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+                    # </think> token not found — decode with special tokens preserved so
+                    # split_thinking() can match the plain-text <think>...</think> pair
+                    raw = tokenizer.decode(out_ids, skip_special_tokens=False).strip()
                     thinking, content = split_thinking(raw)
                     if not thinking:
-                        content = raw
+                        # Last resort: strip any leading <think> tag manually
+                        content = re.sub(r"^<\|?think\|?>\s*", "", raw, flags=re.IGNORECASE).strip()
             else:
                 # Generic models (e.g. HuatuoGPT) may emit plain-text <think> tags
-                raw = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+                raw = tokenizer.decode(out_ids, skip_special_tokens=False).strip()
                 thinking, content = split_thinking(raw)
                 if not thinking:
-                    content = raw
+                    content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
 
             pred_type, pred_sid = parse_output(content)
             pred_label = "CORRECT" if pred_type == "CORRECT" else (str(pred_sid) if pred_sid else "ERROR_UNKNOWN")
