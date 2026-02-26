@@ -1,146 +1,124 @@
 #!/usr/bin/env python3
 """
-Medical Error Detection + Localization Inference Script
+Medical Error Detection + Localization Inference
 
-Task: Given numbered clinical sentences, output CORRECT or the error sentence number.
-Reuses model loading and Qwen3 generation from inference_error_detection.py.
+Task  : given numbered clinical sentences, output CORRECT or the error sentence number.
+Reuses: load_model_and_tokenizer, detect_model_type, load_test_data, Qwen3 token
+        constants from scripts/inference_error_detection.py.
 
-Metrics:
-- Detection accuracy: correctly identifying error vs no-error
-- Localization accuracy: among detected errors, exact sentence number match
+Metrics
+-------
+- Detection  : precision / recall / F1  (error vs no-error)
+- Localization: exact sentence-number match among detected errors
 
-Usage:
-    # Test fine-tuned LoRA adapter
-    python scripts/medrect/inference_detection.py \
-        --model_path outputs/local_training/qwen3-8b-medrect-sft \
-        --dataset ms --max_samples 50
-
-    # Test base Qwen3 model
-    python scripts/medrect/inference_detection.py \
-        --model_path Qwen/Qwen3-8B \
-        --dataset all
-
-    # Quick test
-    python scripts/medrect/inference_detection.py \
-        --model_path Qwen/Qwen3-4B \
-        --max_samples 20 --batch_size 4
+Usage
+-----
+    python scripts/medrect/inference_detection.py \\
+        --model_path FreedomIntelligence/HuatuoGPT-o1-7B \\
+        --dataset all --batch_size 8 --temperature 0.7 \\
+        --thinking_budget 1024 --max_new_tokens 1536
 """
 
-import os
-import sys
 import json
+import os
 import re
+import sys
 import argparse
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import pandas as pd
 import torch
-from datetime import datetime
-from typing import List, Dict, Tuple, Optional
-from pathlib import Path
 from tqdm import tqdm
 
-# Add parent dir so we can import from scripts/
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# ── resolve project root and import shared helpers ────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from inference_error_detection import (
-    load_model_and_tokenizer,
-    detect_model_type,
-    load_test_data,
-    MODEL_TYPE_QWEN,
     THINK_END_TOKEN_ID,
-    IM_END_TOKEN_ID,
+    MODEL_TYPE_QWEN,
+    detect_model_type,
+    load_model_and_tokenizer,
+    load_test_data,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
 
 
-# ── prompt / data helpers ────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Data helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
-def load_prompt_config(config_path: Path = DEFAULT_PROMPT_CONFIG) -> Dict:
-    """Load detection prompt config from JSON."""
-    with open(config_path, "r") as f:
+def load_prompt_config(path: Path = DEFAULT_PROMPT_CONFIG) -> Dict:
+    with open(path) as f:
         return json.load(f)
 
 
-def convert_sentences_to_1indexed(sentences_str: str) -> str:
-    """Convert 0-indexed MEDEC sentences to 1-indexed.
+def sentences_to_1indexed(raw: str) -> str:
+    """Convert MEDEC 0-indexed sentences to 1-indexed.
 
-    Input:  "0 First sentence.\\n1 Second sentence."
-    Output: "1. First sentence.\\n2. Second sentence."
+    "0 First sentence.\\n1 Second." → "1. First sentence.\\n2. Second."
     """
-    lines = sentences_str.strip().split("\n")
-    converted = []
-    for line in lines:
+    lines = []
+    for line in raw.strip().split("\n"):
         m = re.match(r"^(\d+)\s+(.+)$", line.strip())
-        if m:
-            converted.append(f"{int(m.group(1)) + 1}. {m.group(2)}")
-        else:
-            converted.append(line)
-    return "\n".join(converted)
+        lines.append(f"{int(m.group(1)) + 1}. {m.group(2)}" if m else line)
+    return "\n".join(lines)
 
 
-# ── output parsing ───────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Output parsing
+# ─────────────────────────────────────────────────────────────────────────────
 
-def parse_detection_output(content: str) -> Tuple[str, Optional[int]]:
-    """Parse model output for detection task.
+def parse_output(content: str) -> Tuple[str, Optional[int]]:
+    """Return (label, sentence_id).
 
-    Returns (label, sentence_id):
-        label       – "CORRECT", "ERROR", or "UNKNOWN"
-        sentence_id – int if error detected, None otherwise
+    label        : "CORRECT" | "ERROR" | "UNKNOWN"
+    sentence_id  : int if label is ERROR, else None
     """
-    content = content.strip()
-
-    # Take the first non-empty line as the main answer
-    main_answer = ""
+    # Use first non-empty line; strip known prefixes
+    answer = ""
     for line in content.split("\n"):
         line = line.strip()
         if line:
-            main_answer = line
+            answer = re.sub(r"^(answer|label|output|result)\s*:\s*", "", line, flags=re.IGNORECASE)
             break
-    if not main_answer:
-        main_answer = content
 
-    # Strip common prefixes like "Answer:", "Label:", etc.
-    main_answer = re.sub(
-        r"^(answer|label|output|result)\s*:\s*", "", main_answer, flags=re.IGNORECASE
-    )
-
-    # Check for CORRECT (but not INCORRECT)
-    if re.search(r"\bcorrect\b", main_answer, re.IGNORECASE) and not re.search(
-        r"\bincorrect\b", main_answer, re.IGNORECASE
+    if re.search(r"\bcorrect\b", answer, re.IGNORECASE) and not re.search(
+        r"\bincorrect\b", answer, re.IGNORECASE
     ):
         return "CORRECT", None
 
-    # Try to extract a sentence number
-    num_match = re.search(r"\b(\d+)\b", main_answer)
-    if num_match:
-        return "ERROR", int(num_match.group(1))
+    m = re.search(r"\b(\d+)\b", answer)
+    if m:
+        return "ERROR", int(m.group(1))
 
-    # Fallback heuristics
     if re.search(r"error|incorrect|mistake|wrong", content, re.IGNORECASE):
         return "ERROR", None
 
     return "UNKNOWN", None
 
 
-# ── inference ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Inference
+# ─────────────────────────────────────────────────────────────────────────────
 
-def run_detection_inference(
+def run_inference(
     model,
     tokenizer,
     test_df: pd.DataFrame,
     model_type: str,
     prompt_config: Dict,
+    *,
     use_thinking: bool = True,
-    max_samples: int = None,
-    temperature: float = 0.3,
-    max_new_tokens: int = 256,
-    thinking_budget: int = 512,
-    batch_size: int = 1,
+    max_samples: Optional[int] = None,
+    temperature: float = 0.7,
+    max_new_tokens: int = 1536,
+    thinking_budget: int = 1024,
+    batch_size: int = 8,
 ) -> List[Dict]:
-    """Run detection + localization inference on MEDEC data."""
-    results: List[Dict] = []
-
     if max_samples:
         test_df = test_df.head(max_samples)
 
@@ -150,76 +128,49 @@ def run_detection_inference(
 
     system_prompt = prompt_config["system_prompt"]
     user_template = prompt_config["user_template"]
+    results: List[Dict] = []
 
-    num_batches = (len(test_df) + batch_size - 1) // batch_size
+    n = len(test_df)
+    for batch_start in tqdm(range(0, n, batch_size), desc="Inference"):
+        batch = test_df.iloc[batch_start : batch_start + batch_size]
+        prompts, meta = [], []
 
-    for batch_idx in tqdm(range(num_batches), desc="Inference"):
-        batch_start = batch_idx * batch_size
-        batch_end = min(batch_start + batch_size, len(test_df))
-        batch_df = test_df.iloc[batch_start:batch_end]
-
-        batch_prompts: List[str] = []
-        batch_metadata: List[Dict] = []
-
-        for _, row in batch_df.iterrows():
-            # ── ground truth ──
+        for _, row in batch.iterrows():
             error_flag = int(row["Error Flag"])
-            sentences_raw = str(row.get("Sentences", row.get("Text", "")))
-            sentences_1idx = convert_sentences_to_1indexed(sentences_raw)
+            sentences = sentences_to_1indexed(str(row.get("Sentences", row.get("Text", ""))))
 
-            error_sid_0 = row.get("Error Sentence ID")
-            if pd.notna(error_sid_0) and error_flag == 1:
-                gt_sentence_id = int(error_sid_0) + 1  # 0→1 indexed
-                gt_label = str(gt_sentence_id)
+            raw_sid = row.get("Error Sentence ID")
+            if error_flag == 1 and pd.notna(raw_sid):
+                gt_sid = int(raw_sid) + 1  # 0-indexed → 1-indexed
+                gt_label = str(gt_sid)
             else:
-                gt_sentence_id = None
-                gt_label = "CORRECT"
+                gt_sid, gt_label = None, "CORRECT"
 
-            batch_metadata.append(
-                {
-                    "text_id": str(row.get("Text ID", "")),
-                    "dataset": str(row.get("dataset", "")),
-                    "error_flag": error_flag,
-                    "gt_label": gt_label,
-                    "gt_sentence_id": gt_sentence_id,
-                    "error_type": str(row.get("Error Type", ""))
-                    if pd.notna(row.get("Error Type"))
-                    else "",
-                    "sentences_preview": sentences_1idx[:500],
-                }
+            meta.append(
+                dict(
+                    text_id=str(row.get("Text ID", "")),
+                    dataset=str(row.get("dataset", "")),
+                    error_flag=error_flag,
+                    gt_label=gt_label,
+                    gt_sid=gt_sid,
+                    error_type=str(row.get("Error Type", "")) if pd.notna(row.get("Error Type")) else "",
+                )
             )
 
-            # ── prompt ──
-            user_content = user_template.format(sentences=sentences_1idx)
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": user_template.format(sentences=sentences)},
             ]
-
+            prompt_kwargs = dict(tokenize=False, add_generation_prompt=True)
             if is_qwen and use_thinking:
-                prompt = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=True,
-                )
-            else:
-                prompt = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-            batch_prompts.append(prompt)
+                prompt_kwargs["enable_thinking"] = True
+            prompts.append(tokenizer.apply_chat_template(messages, **prompt_kwargs))
 
-        # ── tokenize ──
         inputs = tokenizer(
-            batch_prompts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=2048,
+            prompts, return_tensors="pt", padding=True, truncation=True, max_length=2048
         ).to(model.device)
-        input_lengths = inputs.attention_mask.sum(dim=1).tolist()
+        input_lens = inputs.attention_mask.sum(dim=1).tolist()
 
-        # ── generate ──
         gen_kwargs = dict(
             max_new_tokens=thinking_budget if (is_qwen and use_thinking) else max_new_tokens,
             temperature=temperature if temperature > 0 else None,
@@ -231,214 +182,151 @@ def run_detection_inference(
         with torch.no_grad():
             outputs = model.generate(**inputs, **gen_kwargs)
 
-        # ── parse outputs ──
-        for i, meta in enumerate(batch_metadata):
-            input_len = input_lengths[i]
-            valid_tokens = outputs[i][outputs[i] != tokenizer.pad_token_id]
-            output_ids = valid_tokens[input_len:].tolist()
+        for i, m in enumerate(meta):
+            valid = outputs[i][outputs[i] != tokenizer.pad_token_id]
+            out_ids = valid[input_lens[i] :].tolist()
 
-            thinking_content = ""
+            thinking = ""
             if is_qwen and use_thinking:
                 try:
-                    idx = len(output_ids) - output_ids[::-1].index(THINK_END_TOKEN_ID)
-                    thinking_content = tokenizer.decode(
-                        output_ids[:idx], skip_special_tokens=True
-                    ).strip("\n")
-                    content = tokenizer.decode(
-                        output_ids[idx:], skip_special_tokens=True
-                    ).strip("\n")
+                    idx = len(out_ids) - out_ids[::-1].index(THINK_END_TOKEN_ID)
+                    thinking = tokenizer.decode(out_ids[:idx], skip_special_tokens=True).strip()
+                    content = tokenizer.decode(out_ids[idx:], skip_special_tokens=True).strip()
                 except ValueError:
-                    content = tokenizer.decode(
-                        output_ids, skip_special_tokens=True
-                    ).strip("\n")
+                    content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
             else:
-                content = tokenizer.decode(
-                    output_ids, skip_special_tokens=True
-                ).strip("\n")
+                content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
 
-            pred_label_type, pred_sentence_id = parse_detection_output(content)
+            pred_type, pred_sid = parse_output(content)
+            pred_label = "CORRECT" if pred_type == "CORRECT" else (str(pred_sid) if pred_sid else "ERROR_UNKNOWN")
 
-            if pred_label_type == "CORRECT":
-                pred_label = "CORRECT"
-            elif pred_sentence_id is not None:
-                pred_label = str(pred_sentence_id)
-            else:
-                pred_label = "ERROR_UNKNOWN"
-
-            detection_correct = (
-                (meta["gt_label"] == "CORRECT" and pred_label == "CORRECT")
-                or (meta["gt_label"] != "CORRECT" and pred_label not in ("CORRECT", "UNKNOWN"))
+            detection_correct = (m["gt_label"] == "CORRECT" and pred_label == "CORRECT") or (
+                m["gt_label"] != "CORRECT" and pred_label not in ("CORRECT", "UNKNOWN")
             )
-
             localization_correct = (
-                meta["gt_sentence_id"] is not None
-                and pred_sentence_id is not None
-                and meta["gt_sentence_id"] == pred_sentence_id
+                m["gt_sid"] is not None and pred_sid is not None and m["gt_sid"] == pred_sid
             )
 
             results.append(
-                {
-                    "text_id": meta["text_id"],
-                    "dataset": meta["dataset"],
-                    "error_type": meta["error_type"],
-                    "gt_label": meta["gt_label"],
-                    "gt_sentence_id": meta["gt_sentence_id"],
-                    "pred_label": pred_label,
-                    "pred_sentence_id": pred_sentence_id,
-                    "detection_correct": detection_correct,
-                    "localization_correct": localization_correct,
-                    "thinking": thinking_content[:500] if thinking_content else "",
-                    "raw_output": content[:500],
-                }
+                dict(
+                    text_id=m["text_id"],
+                    dataset=m["dataset"],
+                    error_type=m["error_type"],
+                    gt_label=m["gt_label"],
+                    gt_sid=m["gt_sid"],
+                    pred_label=pred_label,
+                    pred_sid=pred_sid,
+                    detection_correct=detection_correct,
+                    localization_correct=localization_correct,
+                    thinking=thinking[:500],
+                    raw_output=content[:500],
+                )
             )
 
-            # Debug first sample
-            if batch_idx == 0 and i == 0:
-                print(f"\n{'='*60}")
-                print("DEBUG: First sample")
-                print(f"{'='*60}")
-                print(f"GT: {meta['gt_label']}, Pred: {pred_label}")
-                print(f"Raw output: {content[:300]}")
-                print(f"{'='*60}\n")
+            if batch_start == 0 and i == 0:
+                print(f"\n{'='*50}\nDEBUG first sample\nGT={m['gt_label']}  Pred={pred_label}\n{content[:300]}\n{'='*50}\n")
 
     return results
 
 
-# ── metrics ──────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Metrics
+# ─────────────────────────────────────────────────────────────────────────────
 
-def calculate_detection_metrics(results: List[Dict]) -> Dict:
-    """Calculate detection and localization metrics."""
+def compute_metrics(results: List[Dict]) -> Dict:
     total = len(results)
-    det_correct = sum(1 for r in results if r["detection_correct"])
-
-    error_cases = [r for r in results if r["gt_label"] != "CORRECT"]
+    error_cases   = [r for r in results if r["gt_label"] != "CORRECT"]
     correct_cases = [r for r in results if r["gt_label"] == "CORRECT"]
 
-    tp = sum(1 for r in error_cases if r["pred_label"] not in ("CORRECT", "UNKNOWN"))
-    fn = sum(1 for r in error_cases if r["pred_label"] in ("CORRECT", "UNKNOWN"))
+    tp = sum(1 for r in error_cases   if r["pred_label"] not in ("CORRECT", "UNKNOWN"))
+    fn = sum(1 for r in error_cases   if r["pred_label"] in  ("CORRECT", "UNKNOWN"))
     tn = sum(1 for r in correct_cases if r["pred_label"] == "CORRECT")
     fp = sum(1 for r in correct_cases if r["pred_label"] != "CORRECT")
 
-    precision = tp / (tp + fp) if (tp + fp) else 0
-    recall = tp / (tp + fn) if (tp + fn) else 0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0
+    prec = tp / (tp + fp) if (tp + fp) else 0
+    rec  = tp / (tp + fn) if (tp + fn) else 0
+    f1   = 2 * prec * rec / (prec + rec) if (prec + rec) else 0
 
-    detected_errors = [
-        r for r in error_cases if r["pred_label"] not in ("CORRECT", "UNKNOWN")
-    ]
-    loc_correct = sum(1 for r in detected_errors if r["localization_correct"])
+    detected = [r for r in error_cases if r["pred_label"] not in ("CORRECT", "UNKNOWN")]
+    loc_ok   = sum(1 for r in detected if r["localization_correct"])
 
-    # per error-type breakdown
-    by_type: Dict[str, Dict] = {}
+    by_type: Dict = {}
     for r in error_cases:
-        etype = r["error_type"] or "unknown"
-        if etype not in by_type:
-            by_type[etype] = {"total": 0, "detected": 0, "localized": 0}
-        by_type[etype]["total"] += 1
+        et = r["error_type"] or "unknown"
+        s  = by_type.setdefault(et, {"total": 0, "detected": 0, "localized": 0})
+        s["total"] += 1
         if r["pred_label"] not in ("CORRECT", "UNKNOWN"):
-            by_type[etype]["detected"] += 1
+            s["detected"] += 1
             if r["localization_correct"]:
-                by_type[etype]["localized"] += 1
+                s["localized"] += 1
 
-    return {
-        "total_samples": total,
-        "detection": {
-            "accuracy": det_correct / total if total else 0,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "tp": tp,
-            "fp": fp,
-            "tn": tn,
-            "fn": fn,
-        },
-        "localization": {
-            "total_errors": len(error_cases),
-            "detected_errors": len(detected_errors),
-            "correctly_localized": loc_correct,
-            "accuracy": loc_correct / len(detected_errors) if detected_errors else 0,
-        },
-        "by_error_type": by_type,
-    }
+    det_acc = sum(1 for r in results if r["detection_correct"]) / total if total else 0
+
+    return dict(
+        total_samples=total,
+        detection=dict(
+            accuracy=det_acc, precision=prec, recall=rec, f1=f1,
+            tp=tp, fp=fp, tn=tn, fn=fn,
+        ),
+        localization=dict(
+            total_errors=len(error_cases),
+            detected_errors=len(detected),
+            correctly_localized=loc_ok,
+            accuracy=loc_ok / len(detected) if detected else 0,
+        ),
+        by_error_type=by_type,
+    )
 
 
-def print_detection_metrics(metrics: Dict) -> None:
-    """Pretty-print detection + localization metrics."""
-    det = metrics["detection"]
-    loc = metrics["localization"]
-
-    print(f"\n{'='*60}")
-    print("RESULTS")
-    print(f"{'='*60}")
-    print(f"\nDetection (error vs no-error):")
-    print(f"  Accuracy:  {det['accuracy']:.3f}")
-    print(f"  Precision: {det['precision']:.3f}")
-    print(f"  Recall:    {det['recall']:.3f}")
-    print(f"  F1:        {det['f1']:.3f}")
+def print_metrics(m: Dict) -> None:
+    det, loc = m["detection"], m["localization"]
+    print(f"\n{'='*50}")
+    print("Detection (error vs no-error)")
+    print(f"  Accuracy : {det['accuracy']:.3f}")
+    print(f"  Precision: {det['precision']:.3f}  Recall: {det['recall']:.3f}  F1: {det['f1']:.3f}")
     print(f"  TP={det['tp']} FP={det['fp']} TN={det['tn']} FN={det['fn']}")
-
-    print(f"\nLocalization (exact sentence match):")
-    print(f"  Error cases: {loc['total_errors']}")
-    print(f"  Detected:    {loc['detected_errors']}")
-    print(f"  Correct loc: {loc['correctly_localized']}")
-    print(f"  Accuracy:    {loc['accuracy']:.3f}")
-
-    print(f"\nBy error type:")
-    for etype, st in sorted(
-        metrics["by_error_type"].items(), key=lambda x: -x[1]["total"]
-    ):
-        det_r = st["detected"] / st["total"] if st["total"] else 0
-        loc_r = st["localized"] / st["detected"] if st["detected"] else 0
-        print(f"  {etype}: {st['total']} total, det={det_r:.2f}, loc={loc_r:.2f}")
-    print(f"{'='*60}\n")
+    print(f"\nLocalization (exact sentence match)")
+    print(f"  Error cases: {loc['total_errors']}  Detected: {loc['detected_errors']}  Localized: {loc['correctly_localized']}")
+    print(f"  Accuracy : {loc['accuracy']:.3f}")
+    print(f"\nBy error type")
+    for et, s in sorted(m["by_error_type"].items(), key=lambda x: -x[1]["total"]):
+        dr = s["detected"] / s["total"] if s["total"] else 0
+        lr = s["localized"] / s["detected"] if s["detected"] else 0
+        print(f"  {et}: n={s['total']}  det={dr:.2f}  loc={lr:.2f}")
+    print(f"{'='*50}\n")
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Medical Error Detection + Localization"
-    )
-    parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument(
-        "--prompt_config", type=str, default=str(DEFAULT_PROMPT_CONFIG)
-    )
-    parser.add_argument(
-        "--dataset", type=str, default="all", choices=["ms", "uw", "all"]
-    )
-    parser.add_argument("--max_samples", type=int, default=None)
-    parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--temperature", type=float, default=0.3)
-    parser.add_argument("--max_new_tokens", type=int, default=256)
-    parser.add_argument("--thinking_budget", type=int, default=512)
-    parser.add_argument("--no_thinking", action="store_true")
-    parser.add_argument("--output_dir", type=str, default="results/detection")
-
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Medical Error Detection + Localization")
+    p.add_argument("--model_path",      required=True)
+    p.add_argument("--prompt_config",   default=str(DEFAULT_PROMPT_CONFIG))
+    p.add_argument("--dataset",         default="all", choices=["ms", "uw", "all"])
+    p.add_argument("--max_samples",     type=int, default=None)
+    p.add_argument("--batch_size",      type=int, default=8)
+    p.add_argument("--temperature",     type=float, default=0.7)
+    p.add_argument("--max_new_tokens",  type=int, default=1536)
+    p.add_argument("--thinking_budget", type=int, default=1024)
+    p.add_argument("--no_thinking",     action="store_true")
+    p.add_argument("--output_dir",      default="results/detection")
+    args = p.parse_args()
 
     model_type = detect_model_type(args.model_path)
 
-    print(f"\n{'='*60}")
-    print("Medical Error Detection + Localization")
-    print(f"{'='*60}")
-    print(f"Model:    {args.model_path}")
-    print(f"Type:     {model_type}")
-    print(f"Dataset:  {args.dataset}")
-    print(f"Thinking: {not args.no_thinking}")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*50}")
+    print(f"Model   : {args.model_path}  ({model_type})")
+    print(f"Dataset : {args.dataset}  |  Thinking: {not args.no_thinking}")
+    print(f"{'='*50}\n")
 
-    # load
     model, tokenizer = load_model_and_tokenizer(args.model_path, model_type)
-    prompt_config = load_prompt_config(Path(args.prompt_config))
-    test_df = load_test_data(args.dataset)
+    prompt_config    = load_prompt_config(Path(args.prompt_config))
+    test_df          = load_test_data(args.dataset)
 
-    # run
-    results = run_detection_inference(
-        model,
-        tokenizer,
-        test_df,
-        model_type,
-        prompt_config,
+    results = run_inference(
+        model, tokenizer, test_df, model_type, prompt_config,
         use_thinking=not args.no_thinking,
         max_samples=args.max_samples,
         temperature=args.temperature,
@@ -447,35 +335,27 @@ def main():
         batch_size=args.batch_size,
     )
 
-    # metrics
-    metrics = calculate_detection_metrics(results)
-    print_detection_metrics(metrics)
+    metrics = compute_metrics(results)
+    print_metrics(metrics)
 
-    # save
     os.makedirs(args.output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_tag = args.model_path.replace("/", "_")
 
-    results_file = f"{args.output_dir}/{model_tag}_{args.dataset}_{ts}.jsonl"
+    results_file = f"{args.output_dir}/{args.dataset}_{ts}.jsonl"
     with open(results_file, "w") as f:
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    print(f"Results: {results_file}")
 
-    summary_file = f"{args.output_dir}/{model_tag}_{args.dataset}_{ts}_summary.json"
+    summary_file = f"{args.output_dir}/{args.dataset}_{ts}_summary.json"
     with open(summary_file, "w") as f:
         json.dump(
-            {
-                "model_path": args.model_path,
-                "dataset": args.dataset,
-                "timestamp": ts,
-                "prompt_config": args.prompt_config,
-                "metrics": metrics,
-            },
-            f,
-            indent=2,
+            dict(model_path=args.model_path, dataset=args.dataset,
+                 timestamp=ts, prompt_config=args.prompt_config, metrics=metrics),
+            f, indent=2,
         )
-    print(f"Summary: {summary_file}")
+
+    print(f"Results : {results_file}")
+    print(f"Summary : {summary_file}")
 
 
 if __name__ == "__main__":
