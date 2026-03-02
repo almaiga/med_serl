@@ -393,12 +393,14 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
         )
 
         # Agentic score (async — avoids threading issues from sync wrapper)
-        agentic_score = await async_compute_score(
+        agentic_result = await async_compute_score(
             data_source=ex["data_source"],
             solution_str=resp,
             ground_truth=ex["ground_truth"],
             extra_info=ex["extra_info"],
         )
+        # Extract score from dict (veRL Reward Loop returns {"score": float})
+        agentic_score = agentic_result["score"] if isinstance(agentic_result, dict) else agentic_result
 
         elapsed = time.time() - t0
         label, pred_sid = parse_assessor_answer(resp)

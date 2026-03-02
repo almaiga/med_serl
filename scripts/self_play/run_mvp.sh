@@ -3,7 +3,7 @@
 # MedSeRL — Agentic UMLS Judge MVP
 #
 # Launches:
-#   1. A vLLM judge server on port 8001 (Qwen3-4B for entity extraction + adjudication)
+#   1. A vLLM judge server on port 8002 (Qwen3-4B for entity extraction + adjudication)
 #   2. The test harness against 50 self-play examples
 #
 # Prerequisites:
@@ -33,7 +33,7 @@ cd "$PROJECT_ROOT"
 
 # Defaults (override via env vars)
 JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-4B}"
-JUDGE_PORT="${JUDGE_PORT:-8001}"
+JUDGE_PORT="${JUDGE_PORT:-8002}"
 JUDGE_GPU="${JUDGE_GPU:-0}"
 N_EXAMPLES="${N_EXAMPLES:-50}"
 DRY_RUN=false
@@ -114,9 +114,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Check if a server is already running on the port
+# Pre-flight: verify the port isn't occupied by nginx or another non-vLLM server
 if curl -s "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
-    echo "Judge server already running on port $JUDGE_PORT — reusing."
+    # Port responds — check if POST /v1/chat/completions actually works
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST "http://localhost:${JUDGE_PORT}/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d '{"model":"'"$JUDGE_MODEL"'","messages":[{"role":"user","content":"test"}],"max_tokens":1}' \
+        --max-time 15 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "405" ]; then
+        echo "ERROR: Port $JUDGE_PORT is occupied by a non-vLLM server (got HTTP 405 from nginx)."
+        echo "       Kill it first: fuser -k ${JUDGE_PORT}/tcp"
+        echo "       Or use a different port: JUDGE_PORT=8003 bash $0 $*"
+        exit 1
+    elif [ "$HTTP_CODE" = "000" ]; then
+        echo "WARNING: Port $JUDGE_PORT health-check succeeded but POST failed. Will try starting a new server."
+    else
+        echo "Judge server already running on port $JUDGE_PORT (POST returned $HTTP_CODE) — reusing."
+    fi
 else
     echo ""
     echo "Starting vLLM judge server on port $JUDGE_PORT (GPU $JUDGE_GPU)..."
@@ -126,7 +141,7 @@ else
         --max-model-len 4096 \
         --dtype auto \
         --trust-remote-code \
-        --disable-log-requests \
+        --enable-log-requests \
         > "$PROJECT_ROOT/outputs/logs/judge_server.log" 2>&1 &
     JUDGE_PID=$!
     echo "Judge server PID: $JUDGE_PID"

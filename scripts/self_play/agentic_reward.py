@@ -505,14 +505,14 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
             error_sentence, error_sentence_id, mode, note_id, etc.
 
     Returns:
-        float: Hybrid reward score.
+        dict: {"score": float} for veRL Reward Loop compatibility.
     """
     # Step A: Always compute the rule-based score (fast, synchronous)
     rule_score = rule_compute_score(data_source, solution_str, ground_truth, extra_info)
 
     # If UMLS weight is 0, short-circuit
     if UMLS_WEIGHT <= 0:
-        return rule_score
+        return {"score": rule_score}
 
     extra_info = extra_info or {}
 
@@ -557,7 +557,7 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         extra_info=extra_info,
     )
 
-    return final_score
+    return {"score": final_score}
 
 
 # =============================================================================
@@ -567,12 +567,13 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
 async def async_compute_score(data_source, solution_str, ground_truth, extra_info=None):
     """Async version of compute_score for verl's async Reward Loop.
 
-    Use this when verl supports native async reward functions.
+    verl auto-detects async functions and loads them accordingly.
+    Returns dict {"score": float} per veRL Reward Loop API.
     """
     rule_score = rule_compute_score(data_source, solution_str, ground_truth, extra_info)
 
     if UMLS_WEIGHT <= 0:
-        return rule_score
+        return {"score": rule_score}
 
     extra_info = extra_info or {}
 
@@ -598,7 +599,7 @@ async def async_compute_score(data_source, solution_str, ground_truth, extra_inf
         extra_info=extra_info,
     )
 
-    return final_score
+    return {"score": final_score}
 
 
 # =============================================================================
