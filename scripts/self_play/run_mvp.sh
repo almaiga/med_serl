@@ -55,6 +55,7 @@ done
 
 export JUDGE_VLLM_URL="http://localhost:${JUDGE_PORT}/v1/chat/completions"
 export JUDGE_MODEL="$JUDGE_MODEL"
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 echo "============================================="
 echo "  MedSeRL — Agentic UMLS Judge MVP"
