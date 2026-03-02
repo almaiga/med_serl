@@ -78,6 +78,86 @@ from scripts.self_play.umls_async import (
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_json_array(text: str) -> Optional[list]:
+    """Robustly extract a JSON array from LLM output.
+
+    Handles markdown fences, thinking tags, and extra text around JSON.
+    Returns parsed list or None if not found.
+    """
+    # Strip markdown fences
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```", "", text)
+    text = text.strip()
+
+    # Try direct parse first
+    try:
+        result = json.loads(text)
+        if isinstance(result, list):
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Find first [...] block using bracket matching
+    start = text.find("[")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "[":
+            depth += 1
+        elif text[i] == "]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    result = json.loads(text[start:i + 1])
+                    if isinstance(result, list):
+                        return result
+                except (json.JSONDecodeError, ValueError):
+                    return None
+                break
+    return None
+
+
+def _extract_json_object(text: str) -> Optional[dict]:
+    """Robustly extract a JSON object from LLM output.
+
+    Handles markdown fences, thinking tags, and extra text around JSON.
+    Returns parsed dict or None if not found.
+    """
+    # Strip markdown fences
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```", "", text)
+    text = text.strip()
+
+    # Try direct parse first
+    try:
+        result = json.loads(text)
+        if isinstance(result, dict):
+            return result
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Find first {...} block using bracket matching
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    result = json.loads(text[start:i + 1])
+                    if isinstance(result, dict):
+                        return result
+                except (json.JSONDecodeError, ValueError):
+                    return None
+                break
+    return None
+
 # =============================================================================
 # Configuration (from environment)
 # =============================================================================
@@ -85,7 +165,7 @@ logger = logging.getLogger(__name__)
 # Fallback vLLM judge server endpoint (standalone/testing mode only)
 # In native GenRM mode, reward_router_address is injected by veRL.
 JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "http://localhost:8002/v1/chat/completions")
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-4B")
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
 
 # Hybrid scoring weights (must sum to 1.0)
 RULE_WEIGHT = float(os.getenv("RULE_WEIGHT", "0.6"))
@@ -148,16 +228,27 @@ async def _llm_generate_genrm(messages: List[Dict[str, str]], params: dict) -> s
     loop = asyncio.get_event_loop()
 
     # Tokenize the chat messages using the reward model's tokenizer
+    # Disable thinking mode for structured JSON output
     try:
         prompt_ids = await loop.run_in_executor(
             None,
             lambda: _reward_model_tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True
+                messages, tokenize=True, add_generation_prompt=True,
+                enable_thinking=False,
             ),
         )
-    except Exception as e:
-        logger.warning(f"Tokenization failed, falling back to standalone: {e}")
-        return await _llm_generate_standalone(messages, params)
+    except TypeError:
+        # Older tokenizers may not support enable_thinking kwarg
+        try:
+            prompt_ids = await loop.run_in_executor(
+                None,
+                lambda: _reward_model_tokenizer.apply_chat_template(
+                    messages, tokenize=True, add_generation_prompt=True,
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"Tokenization failed, falling back to standalone: {e}")
+            return await _llm_generate_standalone(messages, params)
 
     payload = {
         "input_ids": prompt_ids,
@@ -203,6 +294,8 @@ async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict)
         "temperature": params.get("temperature", 0.1),
         "max_tokens": params.get("max_tokens", 512),
         "top_p": params.get("top_p", 0.95),
+        # Disable Qwen3 thinking mode — we need structured JSON, not <think> tags
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     try:
         async with session.post(
@@ -214,9 +307,11 @@ async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict)
                 logger.warning(f"Standalone vLLM returned {resp.status}: {body[:200]}")
                 return ""
             data = await resp.json()
-            return data["choices"][0]["message"]["content"].strip()
+            content = data["choices"][0]["message"]["content"].strip()
+            logger.debug(f"LLM raw response ({len(content)} chars): {content[:300]}")
+            return content
     except Exception as e:
-        logger.debug(f"Standalone LLM call failed: {e}")
+        logger.warning(f"Standalone LLM call failed: {e}")
         return ""
 
 
@@ -240,24 +335,20 @@ async def _extract_entities(sentence: str) -> List[Dict[str, str]]:
     try:
         content = await _llm_generate(messages, params)
         if not content:
+            logger.warning(f"Entity extraction: LLM returned empty for: {sentence[:80]}")
             return []
 
         # Strip thinking tags if present
         _, content = strip_thinking(content)
 
-        # Strip markdown fences
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-
-        entities = json.loads(content)
-        if not isinstance(entities, list):
+        # Robust JSON extraction — find the first [...] in the response
+        entities = _extract_json_array(content)
+        if entities is None:
+            logger.warning(f"Entity extraction: no JSON array found in: {content[:300]}")
             return []
         return entities[:MAX_ENTITIES]
-    except json.JSONDecodeError:
-        logger.debug(f"Entity extraction returned invalid JSON: {content[:200]}")
-        return []
     except Exception as e:
-        logger.debug(f"Entity extraction failed: {e}")
+        logger.warning(f"Entity extraction failed: {e}")
         return []
 
 
@@ -324,17 +415,16 @@ async def _adjudicate(
     try:
         content = await _llm_generate(messages, params)
         if not content:
+            logger.warning("Adjudication: LLM returned empty")
             return default_result
 
         # Strip thinking tags
         _, content = strip_thinking(content)
 
-        # Strip markdown fences
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-
-        verdict = json.loads(content)
-        if not isinstance(verdict, dict):
+        # Robust JSON extraction — find the first {...} in the response
+        verdict = _extract_json_object(content)
+        if verdict is None:
+            logger.warning(f"Adjudication: no JSON object found in: {content[:300]}")
             return default_result
 
         # Validate required fields
@@ -460,27 +550,67 @@ async def _judge_pipeline(
 
     mode = extra_info.get("mode", "")
 
-    # For benign notes, the judge has less to verify — skip the full pipeline
-    # and just check if the assessor correctly said CORRECT
+    # For benign notes: if model says CORRECT, it's right → fast path.
+    # But if model claims an error (false positive), verify the claim:
+    #   run the pipeline on the sentence the model flagged to check whether
+    #   it actually contains an error. This catches hallucinated errors.
     if mode == "benign":
-        label, _ = parse_assessor_answer(solution_str)
+        label, pred_sid = parse_assessor_answer(solution_str)
         if label == "CORRECT":
             trace["umls_score"] = 1.0
             trace["skipped"] = True
             trace["skip_reason"] = "benign_correct"
-        else:
-            trace["umls_score"] = 0.0
-            trace["skipped"] = True
-            trace["skip_reason"] = "benign_false_positive"
+            return trace["umls_score"], trace
+
+        # Model claims error on a benign note — verify the specific sentence
+        trace["skip_reason"] = "benign_false_positive_verified"
+        correct_note = extra_info.get("correct_note", "")
+        if pred_sid is not None and correct_note:
+            # Extract the sentence the model flagged
+            from scripts.self_play.utils import parse_numbered_sentences
+            sents = parse_numbered_sentences(correct_note)
+            if not sents:
+                raw = split_sentences(correct_note)
+                sents = {i + 1: s for i, s in enumerate(raw)}
+            flagged_sent = sents.get(pred_sid, "")
+            if flagged_sent:
+                # Run extraction + UMLS on the flagged sentence
+                entities = await _extract_entities(flagged_sent)
+                trace["step1_entities"] = entities
+                trace["flagged_sentence"] = flagged_sent
+                evidence = await _retrieve_evidence(entities)
+                trace["step2_evidence"] = evidence
+                # If UMLS confirms the entities are valid medical terms
+                # and the sentence is clinically sound, the model's claim
+                # is a false positive → score 0
+                trace["umls_score"] = 0.0
+                trace["skipped"] = False
+                return trace["umls_score"], trace
+
+        # Couldn't verify — default false positive penalty
+        trace["umls_score"] = 0.0
+        trace["skipped"] = True
         return trace["umls_score"], trace
 
-    # Identify the changed sentence pair
+    # Identify the changed sentence pair (ground truth error)
     original_sent, modified_sent = _identify_changed_sentences(extra_info)
 
     if not original_sent and not modified_sent:
         trace["skipped"] = True
         trace["skip_reason"] = "no_sentence_pair"
         return 0.0, trace
+
+    # Parse what the model actually claimed
+    label, pred_sid = parse_assessor_answer(solution_str)
+    gt_sid = None
+    try:
+        gt_sid = int(ground_truth) if ground_truth and ground_truth != "CORRECT" else None
+    except (ValueError, TypeError):
+        pass
+
+    trace["model_label"] = label
+    trace["model_predicted_sid"] = pred_sid
+    trace["ground_truth_sid"] = gt_sid
 
     # Step 1: Extract entities from BOTH original and modified sentences.
     # The judge needs evidence for terms in both versions to properly
@@ -512,9 +642,24 @@ async def _judge_pipeline(
     evidence = await _retrieve_evidence(all_entities)
     trace["step2_evidence"] = evidence
 
-    # Step 3: Adjudicate
-    label, pred_sid = parse_assessor_answer(solution_str)
-    assessor_prediction = f"{label}" + (f" (sentence {pred_sid})" if pred_sid else "")
+    # Step 3: Adjudicate — include whether model identified the right sentence
+    location_match = ""
+    if label == "CORRECT":
+        # Model said note is correct but there IS an error — wrong
+        assessor_prediction = "CORRECT (model claims no error)"
+        location_match = "missed_error"
+    elif pred_sid is not None and gt_sid is not None:
+        if pred_sid == gt_sid:
+            assessor_prediction = f"ERROR at sentence {pred_sid} (correct location)"
+            location_match = "exact"
+        else:
+            assessor_prediction = f"ERROR at sentence {pred_sid} (ground truth: sentence {gt_sid})"
+            location_match = "wrong_location"
+    else:
+        assessor_prediction = f"{label}" + (f" (sentence {pred_sid})" if pred_sid else "")
+        location_match = "partial"
+
+    trace["location_match"] = location_match
 
     verdict = await _adjudicate(
         original_sentence=original_sent,
@@ -524,7 +669,7 @@ async def _judge_pipeline(
     )
     trace["step3_verdict"] = verdict
 
-    # Convert verdict to a score
+    # Convert verdict to a score, factoring in location accuracy
     if verdict["verdict"] == "PASS":
         umls_score = verdict["score"]
     elif verdict["verdict"] == "FAIL":

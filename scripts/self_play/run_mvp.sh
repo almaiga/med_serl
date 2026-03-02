@@ -38,7 +38,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Defaults (override via env vars)
-JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-4B}"
+JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-8002}"
 JUDGE_GPU="${JUDGE_GPU:-0}"
 N_EXAMPLES="${N_EXAMPLES:-50}"

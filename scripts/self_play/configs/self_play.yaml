@@ -171,7 +171,7 @@ reward_model:
   enable: true  # Enable GenRM — veRL launches judge model server
   model:
     input_tokenizer: null  # null = same as policy model
-    path: "Qwen/Qwen3-4B"  # Judge model (same as actor for MVP)
+    path: "Qwen/Qwen3-8B"  # Judge model (larger than actor for better medical reasoning)
     external_lib: null
     trust_remote_code: true
     fsdp_config:
