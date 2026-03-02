@@ -144,17 +144,17 @@ else
     CUDA_VISIBLE_DEVICES="$JUDGE_GPU" python -m vllm.entrypoints.openai.api_server \
         --model "$JUDGE_MODEL" \
         --port "$JUDGE_PORT" \
-        --max-model-len 4096 \
         --dtype auto \
+        --enforce-eager \
+        --gpu-memory-utilization 0.5 \
         --trust-remote-code \
-        --enable-log-requests \
         > "$PROJECT_ROOT/outputs/logs/judge_server.log" 2>&1 &
     JUDGE_PID=$!
     echo "Judge server PID: $JUDGE_PID"
-    echo "Waiting for server to be ready..."
+    echo "Waiting for server to be ready (up to 10 min — first run downloads model)..."
 
-    # Wait up to 120s for the server
-    for i in $(seq 1 60); do
+    # Wait up to 600s for the server (model download + KV cache init can take 5+ min cold)
+    for i in $(seq 1 300); do
         if curl -s "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
             echo "Judge server ready! (waited ${i}x2s)"
             break
@@ -167,7 +167,7 @@ else
     done
 
     if ! curl -s "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
-        echo "ERROR: Judge server failed to start after 120s."
+        echo "ERROR: Judge server failed to start after 600s."
         echo "Check outputs/logs/judge_server.log for errors."
         exit 1
     fi
