@@ -307,6 +307,7 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
         _retrieve_evidence,
         _adjudicate,
         _identify_changed_sentences,
+        cleanup as agentic_cleanup,
         JUDGE_URL,
         JUDGE_MODEL,
         RULE_WEIGHT,
@@ -323,18 +324,56 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
     print(f"  UMLS Weight:  {UMLS_WEIGHT}")
     print(f"  Examples:     {len(examples)}")
 
-    # Pre-flight: check judge server
+    # Pre-flight: check judge server + verify POST endpoint
     import aiohttp
     try:
         async with aiohttp.ClientSession() as session:
+            # Check /v1/models is reachable
             async with session.get(
                 JUDGE_URL.replace("/chat/completions", "/models"),
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status == 200:
-                    print("  Judge server: ONLINE")
+                    models_data = await resp.json()
+                    model_ids = [m.get("id", "?") for m in models_data.get("data", [])]
+                    print(f"  Judge server: ONLINE (models: {model_ids})")
                 else:
-                    print(f"  Judge server: returned {resp.status} (may still work)")
+                    print(f"  Judge server: /v1/models returned {resp.status}")
+
+            # Verify POST to /v1/chat/completions works (minimal probe)
+            probe_payload = {
+                "model": JUDGE_MODEL,
+                "messages": [{"role": "user", "content": "test"}],
+                "max_tokens": 1,
+            }
+            async with session.post(
+                JUDGE_URL,
+                json=probe_payload,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status == 200:
+                    print(f"  POST {JUDGE_URL}: OK")
+                elif resp.status == 405:
+                    body = await resp.text()
+                    print(f"  POST {JUDGE_URL}: 405 Method Not Allowed")
+                    print(f"    Response: {body[:200]}")
+                    print("  >>> Your vLLM server may not support /v1/chat/completions.")
+                    print("  >>> Restart it with: python -m vllm.entrypoints.openai.api_server")
+                    print("  >>> Or set JUDGE_VLLM_URL to the correct endpoint.")
+                    # Try /v1/completions as fallback
+                    alt_url = JUDGE_URL.replace("/chat/completions", "/completions")
+                    async with session.post(
+                        alt_url,
+                        json={"model": JUDGE_MODEL, "prompt": "test", "max_tokens": 1},
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as alt_resp:
+                        if alt_resp.status == 200:
+                            print(f"  >>> /v1/completions works! Set JUDGE_VLLM_URL={alt_url}")
+                        else:
+                            print(f"  >>> /v1/completions also returned {alt_resp.status}")
+                else:
+                    body = await resp.text()
+                    print(f"  POST {JUDGE_URL}: {resp.status} — {body[:200]}")
     except Exception as e:
         print(f"  Judge server: UNREACHABLE ({e})")
         print("  WARNING: Judge LLM calls will fail. Run with --dry-run instead.")
@@ -353,8 +392,8 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
             extra_info=ex["extra_info"],
         )
 
-        # Agentic score (sync wrapper — what verl actually calls)
-        agentic_score = agentic_compute_score(
+        # Agentic score (async — avoids threading issues from sync wrapper)
+        agentic_score = await async_compute_score(
             data_source=ex["data_source"],
             solution_str=resp,
             ground_truth=ex["ground_truth"],
@@ -419,6 +458,9 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
             f.write(json.dumps(r, default=str) + "\n")
     print(f"\n  Results saved to {output_path}")
 
+    # Cleanup aiohttp session
+    await agentic_cleanup()
+
     return {"status": "ok", "n_tested": n, "results": results}
 
 
@@ -428,7 +470,7 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
 
 async def test_extraction_only(examples: List[Dict]) -> None:
     """Test just Step 1 (entity extraction) on a few examples."""
-    from scripts.self_play.agentic_reward import _extract_entities, _identify_changed_sentences
+    from scripts.self_play.agentic_reward import _extract_entities, _identify_changed_sentences, cleanup as agentic_cleanup
 
     print("\n" + "=" * 70)
     print("EXTRACTION TEST — Step 1 Only")
@@ -448,6 +490,8 @@ async def test_extraction_only(examples: List[Dict]) -> None:
 
         entities = await _extract_entities(mod)
         print(f"    Entities:  {json.dumps(entities, indent=2)[:300]}")
+
+    await agentic_cleanup()
 
 
 # =============================================================================

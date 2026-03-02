@@ -132,7 +132,8 @@ async def _extract_entities(sentence: str) -> List[Dict[str, str]]:
             timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
         ) as resp:
             if resp.status != 200:
-                logger.warning(f"Judge LLM extraction returned {resp.status}")
+                body = await resp.text()
+                logger.warning(f"Judge LLM extraction returned {resp.status}: {body[:200]}")
                 return []
             data = await resp.json()
             content = data["choices"][0]["message"]["content"].strip()
@@ -230,7 +231,8 @@ async def _adjudicate(
             timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
         ) as resp:
             if resp.status != 200:
-                logger.warning(f"Judge LLM adjudication returned {resp.status}")
+                body = await resp.text()
+                logger.warning(f"Judge LLM adjudication returned {resp.status}: {body[:200]}")
                 return default_result
             data = await resp.json()
             content = data["choices"][0]["message"]["content"].strip()
