@@ -3,19 +3,20 @@
 Following verl documentation format:
 https://verl.readthedocs.io/en/latest/preparation/reward_function.html
 
-Medical Error Detection Self-Play Game (adapted from SeRL paper arXiv:2506.07468):
+Medical Error Detection + Localization Self-Play Game (adapted from SeRL paper arXiv:2506.07468):
 - Single model plays both roles (Injector and Assessor)
 - Injector: Modifies clinical note (benign edit OR error injection)
-- Assessor: Classifies modified note as CORRECT or INCORRECT
+- Assessor: Outputs CORRECT (no error) or an integer sentence number (error location)
 
-Zero-sum rewards (following SeRL Algorithm 1):
-- Assessor correct → Assessor wins: RA=-1.0, RD=+1.0
-- Assessor wrong → Injector wins: RA=+1.0, RD=-1.0
-- Format bonus: +0.2 for following output format
+3-tier rewards:
+- Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
+- Detection only (error detected but wrong sentence number): +0.3
+- Miss (wrong classification or unparseable): -1.0
+- Format bonus: +0.2 for valid output format (CORRECT or bare integer)
 
 Note: In our implementation, each example is assessed independently.
 The "Injector" already produced its output (the modified note in training data).
-The model acts as "Assessor" and classifies - this is what we reward.
+The model acts as "Assessor" and classifies/localizes - this is what we reward.
 """
 
 import json
@@ -23,10 +24,12 @@ import os
 import re
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from collections import defaultdict
 import threading
 from difflib import SequenceMatcher
+
+from scripts.self_play.utils import parse_assessor_answer, strip_thinking
 
 
 # Global log file path - creates new file per training run
@@ -35,23 +38,26 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / f"interactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
 SUMMARY_FILE = LOG_DIR / f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
-# Reward values (following SeRL paper's zero-sum formulation)
-REWARD_WIN = 1.0
-REWARD_LOSE = -1.0
-FORMAT_BONUS = 0.2
+# Reward values (3-tier)
+REWARD_EXACT = 1.0     # Exact match (correct label + sentence)
+REWARD_PARTIAL = 0.3   # Detected error but wrong sentence number
+REWARD_MISS = -1.0     # Missed, false positive, or invalid
+FORMAT_BONUS = 0.2     # Bonus for parseable output format
 
 # Global statistics tracker (thread-safe)
 _stats_lock = threading.Lock()
 _stats = {
     "total_interactions": 0,
-    "correct_classifications": 0,
-    "wrong_classifications": 0,
+    "exact_match": 0,
+    "partial_match": 0,
+    "miss": 0,
     "invalid_format": 0,
     # By mode
-    "benign_correct": 0,
-    "benign_wrong": 0,
-    "error_correct": 0,
-    "error_wrong": 0,
+    "benign_correct": 0,     # CORRECT on benign note
+    "benign_false_pos": 0,   # flagged sentence on benign note
+    "error_exact": 0,        # correct sentence number
+    "error_partial": 0,      # detected error, wrong sentence
+    "error_missed": 0,       # said CORRECT on error note
     # Rewards
     "total_reward": 0.0,
     "benign_reward": 0.0,
@@ -61,18 +67,13 @@ _stats = {
     "error_count": 0,
     # Token metrics
     "total_response_chars": 0,
-    "total_response_tokens_approx": 0,  # Rough estimate: chars / 4
+    "total_response_tokens_approx": 0,
     "min_response_chars": float('inf'),
     "max_response_chars": 0,
-    "truncated_responses": 0,  # Responses that appear cut off
+    "truncated_responses": 0,
     "responses_with_think_tags": 0,
     "responses_missing_closing_think": 0,
-    # Note similarity metrics (Injector modifications)
-    "total_similarity_benign": 0.0,
-    "benign_similarity_count": 0,
-    "total_similarity_error": 0.0,
-    "error_similarity_count": 0,
-    # ===== PHASE SEPARATION METRICS =====
+    # Phase separation metrics
     "phases_separated_count": 0,
     "injector_produced_note_count": 0,
     "assessor_actually_ran_count": 0,
@@ -90,8 +91,9 @@ def get_summary_stats() -> Dict[str, Any]:
         if total == 0:
             return {"message": "No interactions yet"}
         
-        correct = _stats["correct_classifications"]
-        wrong = _stats["wrong_classifications"]
+        exact = _stats["exact_match"]
+        partial = _stats["partial_match"]
+        miss = _stats["miss"]
         invalid = _stats["invalid_format"]
         
         benign_total = _stats["benign_count"]
@@ -110,9 +112,9 @@ def get_summary_stats() -> Dict[str, Any]:
         
         return {
             "total_interactions": total,
-            "accuracy": correct / total if total > 0 else 0,
-            "win_rate_assessor": correct / total if total > 0 else 0,  # Assessor wins when correct
-            "win_rate_injector": wrong / total if total > 0 else 0,   # Injector wins when wrong
+            "exact_match_rate": exact / total if total > 0 else 0,
+            "partial_match_rate": partial / total if total > 0 else 0,
+            "miss_rate": miss / total if total > 0 else 0,
             "invalid_format_rate": invalid / total if total > 0 else 0,
             
             # Average rewards
@@ -120,19 +122,28 @@ def get_summary_stats() -> Dict[str, Any]:
             "avg_reward_benign": _stats["benign_reward"] / benign_total if benign_total > 0 else 0,
             "avg_reward_error": _stats["error_reward"] / error_total if error_total > 0 else 0,
             
-            # By mode breakdown
+            # Benign breakdown
+            "benign_correct": _stats["benign_correct"],
+            "benign_false_pos": _stats["benign_false_pos"],
             "benign_accuracy": _stats["benign_correct"] / benign_total if benign_total > 0 else 0,
-            "error_accuracy": _stats["error_correct"] / error_total if error_total > 0 else 0,
             
-            # Raw counts
+            # Error breakdown
+            "error_exact": _stats["error_exact"],
+            "error_partial": _stats["error_partial"],
+            "error_missed": _stats["error_missed"],
+            "error_localize_accuracy": _stats["error_exact"] / error_total if error_total > 0 else 0,
+            "error_detect_rate": (_stats["error_exact"] + _stats["error_partial"]) / error_total if error_total > 0 else 0,
+            
+            # Counts
             "benign_count": benign_total,
             "error_count": error_total,
-            "correct_classifications": correct,
-            "wrong_classifications": wrong,
+            "exact_match": exact,
+            "partial_match": partial,
+            "miss": miss,
             
-            # Token/Generation metrics
+            # Token metrics
             "avg_response_chars": total_chars / total if total > 0 else 0,
-            "avg_response_tokens_approx": (total_chars / 4) / total if total > 0 else 0,  # ~4 chars per token
+            "avg_response_tokens_approx": (total_chars / 4) / total if total > 0 else 0,
             "min_response_chars": min_chars,
             "max_response_chars": max_chars,
             "truncation_rate": truncated / total if total > 0 else 0,
@@ -140,19 +151,11 @@ def get_summary_stats() -> Dict[str, Any]:
             "responses_with_think_tags": _stats["responses_with_think_tags"],
             "responses_missing_closing_think": _stats["responses_missing_closing_think"],
             
-            # Note similarity metrics
-            "avg_similarity_benign": _stats["total_similarity_benign"] / max(_stats["benign_similarity_count"], 1),
-            "similarity_benign_count": _stats["benign_similarity_count"],
-            "avg_similarity_error": _stats["total_similarity_error"] / max(_stats["error_similarity_count"], 1),
-            "similarity_error_count": _stats["error_similarity_count"],
-            
-            # ===== PHASE SEPARATION METRICS =====
+            # Phase separation
             "phases_separated_rate": phases_sep / total if total > 0 else 0,
             "phases_separated_count": phases_sep,
             "injector_produced_note_rate": injector_notes / total if total > 0 else 0,
-            "injector_produced_note_count": injector_notes,
             "assessor_actually_ran_rate": assessor_ran / total if total > 0 else 0,
-            "assessor_actually_ran_count": assessor_ran,
             "injector_truncated_count": _stats["injector_truncated_count"],
             "assessor_truncated_count": _stats["assessor_truncated_count"],
             "avg_injector_chars": _stats["injector_total_chars"] / total if total > 0 else 0,
@@ -171,118 +174,35 @@ def save_summary():
         pass
 
 
-def parse_final_answer(response: str) -> Optional[str]:
-    """Extract final_answer from model response.
+def parse_final_answer(response: str) -> Tuple[str, Optional[int]]:
+    """Extract assessor answer from model response.
     
-    Expected format: final_answer: "CORRECT" or "INCORRECT"
-    """
-    if not response:
-        return None
-        
-    pattern = r'final_answer:\s*["\']?(CORRECT|INCORRECT)["\']?'
-    match = re.search(pattern, response, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
+    Uses shared parse_assessor_answer from utils.py which handles:
+    - "CORRECT" → ("CORRECT", None)
+    - Bare integer "3" → ("ERROR", 3)
+    - "final_answer: 5" → ("ERROR", 5)
+    - Invalid → ("UNKNOWN", None)
     
-    # Fallback: check for words anywhere in output
-    upper = response.upper()
-    if "INCORRECT" in upper:
-        return "INCORRECT"
-    elif "CORRECT" in upper:
-        return "CORRECT"
-    
-    return None
-
-
-def compute_similarity(text1: str, text2: str) -> float:
-    """Compute similarity ratio between two texts using SequenceMatcher.
-    
-    Args:
-        text1: First text (e.g., original note)
-        text2: Second text (e.g., generated/modified note)
-        
     Returns:
-        float: Similarity ratio (0.0=completely different, 1.0=identical)
-    """
-    if not text1 or not text2:
-        return 0.0
-    
-    # Normalize whitespace for fair comparison
-    text1_norm = ' '.join(text1.split())
-    text2_norm = ' '.join(text2.split())
-    
-    return SequenceMatcher(None, text1_norm, text2_norm).ratio()
-
-
-def extract_generated_note(response: str) -> Optional[str]:
-    """Extract the generated_note section from Injector's response.
-    
-    CRITICAL: This extracts only the note content, stripping:
-    - <think>...</think> (Hidden CoT)
-    - final_answer: "CORRECT/INCORRECT"
-    - changes_made: {...}
-    
-    Expected format:
-    generated_note:
-    [the modified note]
-    
-    final_answer: ...
+        (label, sentence_id) where label is CORRECT/ERROR/UNKNOWN
     """
     if not response:
-        return None
-    
-    # Step 1: Remove <think> tags (Hidden CoT - not visible to Assessor)
-    clean = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
-    
-    # Step 2: Try multiple patterns to extract generated_note
-    patterns = [
-        r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)',
-        r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|$)',
-    ]
-    
-    extracted = None
-    for pattern in patterns:
-        match = re.search(pattern, clean, re.DOTALL | re.IGNORECASE)
-        if match:
-            extracted = match.group(1).strip()
-            if extracted:
-                break
-    
-    if not extracted:
-        return None
-    
-    # Step 3: Sanitize - remove any leaked answer hints
-    # (safety check in case regex captured too much)
-    extracted = re.sub(r'final_answer:\s*["\']?(?:CORRECT|INCORRECT)["\']?', '', extracted, flags=re.IGNORECASE)
-    extracted = re.sub(r'changes_made:\s*\{.*?\}', '', extracted, flags=re.DOTALL | re.IGNORECASE)
-    extracted = re.sub(r'\n\s*"?(CORRECT|INCORRECT)"?\s*$', '', extracted, flags=re.IGNORECASE)
-    
-    return extracted.strip() if extracted else None
+        return ("UNKNOWN", None)
+    return parse_assessor_answer(response)
 
 
 def check_format_compliance(response: str) -> bool:
     """Check if response follows required format.
     
-    For Injector: generated_note: + final_answer: + changes_made:
-    For Assessor: final_answer: + Explanation:
+    Valid formats:
+    - "CORRECT" (bare word, optionally with CoT before)
+    - A bare integer like "3" or "12"
+    - With optional <think>...</think> block before the answer
     """
     if not response:
         return False
-        
-    has_final_answer = bool(re.search(
-        r'final_answer:\s*["\']?(CORRECT|INCORRECT)["\']?',
-        response,
-        re.IGNORECASE
-    ))
-    
-    # Check for either generated_note (Injector) or Explanation (Assessor)
-    has_structure = bool(re.search(
-        r'(generated_note:|Explanation:|changes_made:)\s*\S+',
-        response,
-        re.IGNORECASE
-    ))
-    
-    return has_final_answer and has_structure
+    label, _ = parse_assessor_answer(response)
+    return label != "UNKNOWN"
 
 
 def make_serializable(obj: Any) -> Any:
@@ -353,69 +273,76 @@ def detect_truncation(response: str) -> dict:
 
 
 def compute_score(data_source, solution_str, ground_truth, extra_info=None):
-    """Compute reward score for medical error detection self-play.
+    """Compute 3-tier reward score for medical error detection + localization.
     
     This is called by verl's RewardManager after rollout.
     
-    Following SeRL paper (arXiv:2506.07468) Algorithm 1:
-    - The model acts as Assessor, classifying the note
-    - If Assessor is correct: Assessor wins (reward = +1.0)
-    - If Assessor is wrong: Injector wins (reward = -1.0)
+    3-tier reward (adapted from SeRL paper arXiv:2506.07468):
+    - Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
+    - Detection only (error detected but wrong sentence number): +0.3
+    - Miss (wrong classification or unparseable): -1.0
+    - Format bonus: +0.2 for valid output format
     
     Args:
         data_source (str): Dataset identifier (e.g., 'medec_selfplay')
         solution_str (str): The model's generated response
-        ground_truth (str): "CORRECT" or "INCORRECT" from data
-        extra_info (dict): Additional information from dataset including:
-            - correct_note: The original correct clinical note
-            - incorrect_note: The error version (for error mode)
-            - mode: "benign" or "error_injection"
-            - note_id: Unique identifier
+        ground_truth (str): "CORRECT" or str(sentence_id) from data
+        extra_info (dict): Additional information from dataset
         
     Returns:
-        float: Reward score (RD for Assessor perspective)
-    
-    NOTE: In multi-turn mode, MedicalGameInteraction handles the rewards.
-    This function is used for single-turn training or fallback.
+        float: Reward score (Assessor perspective)
     """
     global _stats
     
     # Ensure we have valid inputs
     solution_str = solution_str or ""
-    ground_truth = ground_truth or ""
+    ground_truth = str(ground_truth) if ground_truth else ""
     extra_info = make_serializable(extra_info) if extra_info else {}
     mode = extra_info.get("mode", "unknown")
     
     # Detect truncation and get token metrics
     truncation_info = detect_truncation(solution_str)
     
-    # Parse model's classification
-    model_answer = parse_final_answer(solution_str)
-    
-    # Extract generated note (for logging/analysis)
-    generated_note = extract_generated_note(solution_str)
-    
-    # Calculate similarity between original and generated note
-    original_note = extra_info.get("correct_note", "")
-    similarity = compute_similarity(original_note, generated_note or "")
+    # Parse model's output using shared parser
+    label, pred_sid = parse_final_answer(solution_str)
     
     # Check format compliance
     has_valid_format = check_format_compliance(solution_str)
     format_bonus = FORMAT_BONUS if has_valid_format else 0.0
     
-    # Compute reward based on classification accuracy
-    # This is RD (Defender/Assessor reward) in SeRL terminology
-    if model_answer == ground_truth:
-        # Assessor correctly classified the note - Assessor wins
-        reward = REWARD_WIN + format_bonus
-        outcome = "correct"
-    elif model_answer in ["CORRECT", "INCORRECT"]:
-        # Assessor classified but was wrong - Injector wins
-        reward = REWARD_LOSE + format_bonus
-        outcome = "wrong"
+    # --- 3-tier reward computation ---
+    gt_is_correct = (ground_truth == "CORRECT")
+    
+    if gt_is_correct and label == "CORRECT":
+        # Exact match: note is correct, assessor says CORRECT
+        reward = REWARD_EXACT + format_bonus
+        outcome = "exact_match"
+    elif gt_is_correct and label != "CORRECT":
+        # False positive: note is correct, assessor flagged a sentence
+        reward = REWARD_MISS + format_bonus
+        outcome = "miss"
+    elif not gt_is_correct and label == "CORRECT":
+        # Missed error: note has error, assessor said CORRECT
+        reward = REWARD_MISS + format_bonus
+        outcome = "miss"
+    elif not gt_is_correct and label == "ERROR":
+        # Detected error - check sentence number
+        pred_str = str(pred_sid) if pred_sid else ""
+        if pred_str == ground_truth:
+            # Exact sentence match
+            reward = REWARD_EXACT + format_bonus
+            outcome = "exact_match"
+        elif pred_sid is not None:
+            # Detected error but wrong sentence number → partial credit
+            reward = REWARD_PARTIAL + format_bonus
+            outcome = "partial_match"
+        else:
+            # Detected error but no sentence number
+            reward = REWARD_PARTIAL
+            outcome = "partial_match"
     else:
-        # Model failed to produce valid classification
-        reward = REWARD_LOSE  # No format bonus for invalid output
+        # UNKNOWN / unparseable
+        reward = REWARD_MISS
         outcome = "invalid_format"
     
     # Update global statistics (thread-safe)
@@ -438,59 +365,48 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         if truncation_info["missing_closing_think"]:
             _stats["responses_missing_closing_think"] += 1
         
-        # Track similarity metrics by mode
-        if generated_note and original_note:
-            if mode == "benign":
-                _stats["total_similarity_benign"] += similarity
-                _stats["benign_similarity_count"] += 1
-            else:
-                _stats["total_similarity_error"] += similarity
-                _stats["error_similarity_count"] += 1
-        
-        if outcome == "correct":
-            _stats["correct_classifications"] += 1
-            if mode == "benign":
-                _stats["benign_correct"] += 1
-            else:
-                _stats["error_correct"] += 1
-        elif outcome == "wrong":
-            _stats["wrong_classifications"] += 1
-            if mode == "benign":
-                _stats["benign_wrong"] += 1
-            else:
-                _stats["error_wrong"] += 1
+        # Outcome tracking
+        if outcome == "exact_match":
+            _stats["exact_match"] += 1
+        elif outcome == "partial_match":
+            _stats["partial_match"] += 1
+        elif outcome == "miss":
+            _stats["miss"] += 1
         else:
             _stats["invalid_format"] += 1
         
+        # Mode-specific
         if mode == "benign":
             _stats["benign_count"] += 1
             _stats["benign_reward"] += reward
+            if outcome == "exact_match":
+                _stats["benign_correct"] += 1
+            else:
+                _stats["benign_false_pos"] += 1
         else:
             _stats["error_count"] += 1
             _stats["error_reward"] += reward
+            if outcome == "exact_match":
+                _stats["error_exact"] += 1
+            elif outcome == "partial_match":
+                _stats["error_partial"] += 1
+            else:
+                _stats["error_missed"] += 1
         
         # Save summary every 100 interactions
         if _stats["total_interactions"] % 100 == 0:
             save_summary()
     
     # =========================================================================
-    # MULTI-TURN RESPONSE PARSING
-    # In multi-turn mode, solution_str contains BOTH turns concatenated:
-    # [Turn 1: Injector response] + [Turn 2: Assessor response]
-    # We need to split them to analyze each phase separately.
+    # MULTI-TURN RESPONSE PARSING (for concatenated rollouts)
     # =========================================================================
-    
-    # Try to find the boundary between Injector and Assessor responses
-    # The Assessor prompt typically starts with "Classify this note:" or similar
     injector_response = solution_str
     assessor_response = ""
     
-    # Look for common Assessor prompt markers that indicate turn boundary
+    # Try to find the boundary between turns
     assessor_markers = [
-        r'<\|im_start\|>user\s*\nClassify this note:',  # Qwen format
-        r'<\|im_start\|>user\s*\n.*?Respond in the required format:',
-        r'\nuser\s*\nClassify this note:',
-        r'Classify this note:\s*\n',
+        r'<\|im_start\|>user\s*\n',
+        r'\nuser\s*\n',
     ]
     
     turn_boundary = None
@@ -504,34 +420,25 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         injector_response = solution_str[:turn_boundary].strip()
         assessor_response = solution_str[turn_boundary:].strip()
     else:
-        # Fallback: If we can't find boundary, check if response has two assistant blocks
-        # Pattern: ends with </think> ... generated_note: ... then later has final_answer from assessor
-        assistant_blocks = re.findall(r'<\|im_start\|>assistant(.*?)(?=<\|im_end\|>|<\|im_start\|>|$)', 
-                                       solution_str, re.DOTALL)
+        assistant_blocks = re.findall(
+            r'<\|im_start\|>assistant(.*?)(?=<\|im_end\|>|<\|im_start\|>|$)', 
+            solution_str, re.DOTALL
+        )
         if len(assistant_blocks) >= 2:
             injector_response = assistant_blocks[0].strip()
             assessor_response = assistant_blocks[-1].strip()
     
-    # Re-analyze with separated responses
     injector_truncation = detect_truncation(injector_response)
     assessor_truncation = detect_truncation(assessor_response) if assessor_response else {
         "is_truncated": False, "has_think_tag": False, "missing_closing_think": False,
         "response_chars": 0, "response_tokens_approx": 0
     }
     
-    # Re-extract generated note from Injector response only
-    generated_note_from_injector = extract_generated_note(injector_response)
-    injector_produced_note = bool(generated_note_from_injector)
+    assessor_actually_ran = len(assessor_response) > 10
     
-    # Check if Assessor actually ran (has its own response)
-    assessor_actually_ran = len(assessor_response) > 50
-    
-    # Update phase separation statistics
     with _stats_lock:
-        if turn_boundary is not None or len(assessor_response) > 0:
+        if turn_boundary is not None or assessor_actually_ran:
             _stats["phases_separated_count"] += 1
-        if injector_produced_note:
-            _stats["injector_produced_note_count"] += 1
         if assessor_actually_ran:
             _stats["assessor_actually_ran_count"] += 1
         if injector_truncation.get("is_truncated", False):
@@ -541,67 +448,42 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         _stats["injector_total_chars"] += injector_truncation.get("response_chars", 0)
         _stats["assessor_total_chars"] += assessor_truncation.get("response_chars", 0)
     
-    # Build comprehensive log entry for failure analysis
+    # Build log entry
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "data_source": str(data_source),
         
-        # ===== GAME OUTCOME (from Assessor perspective) =====
-        "ground_truth": str(ground_truth),
-        "model_answer": model_answer,
+        # Game outcome
+        "ground_truth": ground_truth,
+        "assessor_label": label,
+        "assessor_pred_sid": pred_sid,
         "outcome": outcome,
         "reward": float(reward),
-        "reward_injector": -float(reward) if outcome != "invalid_format" else 0.0,
         "has_valid_format": has_valid_format,
         
-        # ===== MODE INFO =====
+        # Mode info
         "mode": mode,
         "note_id": extra_info.get("note_id", ""),
+        "error_type": extra_info.get("error_type", ""),
         
-        # ===== PHASE SEPARATION FLAGS =====
-        "phases_separated": turn_boundary is not None or len(assessor_response) > 0,
-        "injector_produced_note": injector_produced_note,
-        "assessor_actually_ran": assessor_actually_ran,
-        
-        # ===== INJECTOR PHASE METRICS =====
-        "injector_response_chars": injector_truncation["response_chars"],
-        "injector_tokens_approx": injector_truncation["response_tokens_approx"],
-        "injector_is_truncated": injector_truncation["is_truncated"],
-        "injector_has_think_tag": injector_truncation["has_think_tag"],
-        "injector_missing_closing_think": injector_truncation["missing_closing_think"],
-        
-        # ===== ASSESSOR PHASE METRICS =====
-        "assessor_response_chars": assessor_truncation["response_chars"],
-        "assessor_tokens_approx": assessor_truncation["response_tokens_approx"],
-        "assessor_is_truncated": assessor_truncation["is_truncated"],
-        "assessor_has_think_tag": assessor_truncation["has_think_tag"],
-        
-        # ===== NOTE SIMILARITY (Injector modifications) =====
-        "note_similarity": float(similarity),
-        "has_generated_note": injector_produced_note,
-        
-        # Legacy fields for compatibility
+        # Token metrics
         "response_chars": truncation_info["response_chars"],
         "response_tokens_approx": truncation_info["response_tokens_approx"],
         "is_truncated": truncation_info["is_truncated"],
         "has_think_tag": truncation_info["has_think_tag"],
-        "missing_closing_think": truncation_info["missing_closing_think"],
         
-        # ===== ORIGINAL CLINICAL NOTES =====
-        "original_correct_note": extra_info.get("correct_note", "")[:1000],
-        "original_incorrect_note": extra_info.get("incorrect_note", "")[:1000],
-        "error_type": extra_info.get("error_type", ""),
-        "error_sentence": extra_info.get("error_sentence", ""),
-        "corrected_sentence": extra_info.get("corrected_sentence", ""),
+        # Phase separation
+        "phases_separated": turn_boundary is not None or assessor_actually_ran,
+        "assessor_actually_ran": assessor_actually_ran,
+        "injector_response_chars": injector_truncation["response_chars"],
+        "assessor_response_chars": assessor_truncation["response_chars"],
         
-        # ===== MODEL OUTPUTS - SEPARATED BY PHASE =====
-        "generated_note": (generated_note_from_injector or generated_note or "")[:1500],
-        "injector_response": injector_response[:4000],  # Full Injector response
-        "assessor_response": assessor_response[:2000],  # Full Assessor response
-        "model_response_full": solution_str[:8000],     # Full concatenated (for debugging)
+        # Truncated responses for debugging
+        "injector_response": injector_response[:4000],
+        "assessor_response": assessor_response[:2000],
+        "model_response_full": solution_str[:8000],
     }
     
-    # Append to log file
     try:
         with open(LOG_FILE, 'a') as f:
             f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
@@ -620,12 +502,12 @@ def print_summary():
     """Print summary statistics to stdout."""
     summary = get_summary_stats()
     print("\n" + "="*70)
-    print("SELF-PLAY TRAINING SUMMARY")
+    print("SELF-PLAY TRAINING SUMMARY (3-Tier Rewards)")
     print("="*70)
     print(f"Total Interactions: {summary.get('total_interactions', 0)}")
-    print(f"Overall Accuracy: {summary.get('accuracy', 0):.2%}")
-    print(f"Assessor Win Rate: {summary.get('win_rate_assessor', 0):.2%}")
-    print(f"Injector Win Rate: {summary.get('win_rate_injector', 0):.2%}")
+    print(f"Exact Match Rate: {summary.get('exact_match_rate', 0):.2%}")
+    print(f"Partial Match Rate: {summary.get('partial_match_rate', 0):.2%}")
+    print(f"Miss Rate: {summary.get('miss_rate', 0):.2%}")
     print(f"Invalid Format Rate: {summary.get('invalid_format_rate', 0):.2%}")
     print("-"*70)
     print(f"Avg Reward (Overall): {summary.get('avg_reward', 0):.3f}")
@@ -633,35 +515,24 @@ def print_summary():
     print(f"Avg Reward (Error): {summary.get('avg_reward_error', 0):.3f}")
     print("-"*70)
     print(f"Benign Accuracy: {summary.get('benign_accuracy', 0):.2%} ({summary.get('benign_count', 0)} samples)")
-    print(f"Error Accuracy: {summary.get('error_accuracy', 0):.2%} ({summary.get('error_count', 0)} samples)")
+    print(f"  Correct: {summary.get('benign_correct', 0)} | False Positive: {summary.get('benign_false_pos', 0)}")
+    print("-"*70)
+    print(f"Error Detection Rate: {summary.get('error_detect_rate', 0):.2%} ({summary.get('error_count', 0)} samples)")
+    print(f"Error Localization Accuracy: {summary.get('error_localize_accuracy', 0):.2%}")
+    print(f"  Exact: {summary.get('error_exact', 0)} | Partial: {summary.get('error_partial', 0)} | Missed: {summary.get('error_missed', 0)}")
     print("-"*70)
     print("PHASE SEPARATION (Multi-Turn):")
-    print(f"  Phases Separated: {summary.get('phases_separated_rate', 0):.2%} ({summary.get('phases_separated_count', 0)} samples)")
-    print(f"  Injector Produced Note: {summary.get('injector_produced_note_rate', 0):.2%} ({summary.get('injector_produced_note_count', 0)} samples)")
-    print(f"  Assessor Actually Ran: {summary.get('assessor_actually_ran_rate', 0):.2%} ({summary.get('assessor_actually_ran_count', 0)} samples)")
-    print(f"  Avg Injector Response: {summary.get('avg_injector_chars', 0):.0f} chars")
-    print(f"  Avg Assessor Response: {summary.get('avg_assessor_chars', 0):.0f} chars")
+    print(f"  Phases Separated: {summary.get('phases_separated_rate', 0):.2%}")
+    print(f"  Assessor Actually Ran: {summary.get('assessor_actually_ran_rate', 0):.2%}")
     print(f"  Injector Truncated: {summary.get('injector_truncated_count', 0)}")
     print(f"  Assessor Truncated: {summary.get('assessor_truncated_count', 0)}")
     print("-"*70)
     print("TOKEN/GENERATION METRICS:")
     print(f"  Avg Response Length: {summary.get('avg_response_chars', 0):.0f} chars (~{summary.get('avg_response_tokens_approx', 0):.0f} tokens)")
-    print(f"  Min Response: {summary.get('min_response_chars', 0)} chars")
-    print(f"  Max Response: {summary.get('max_response_chars', 0)} chars")
     print(f"  Truncation Rate: {summary.get('truncation_rate', 0):.2%} ({summary.get('truncated_responses', 0)} truncated)")
     print(f"  Responses with <think>: {summary.get('responses_with_think_tags', 0)}")
-    print(f"  Missing </think>: {summary.get('responses_missing_closing_think', 0)}")
-    print("-"*70)
-    print("NOTE SIMILARITY (Original vs Generated):")
-    benign_sim_count = summary.get('similarity_benign_count', 0)
-    error_sim_count = summary.get('similarity_error_count', 0)
-    if benign_sim_count > 0:
-        print(f"  Benign mode: {summary.get('avg_similarity_benign', 0):.1%} similarity ({benign_sim_count} samples)")
-    if error_sim_count > 0:
-        print(f"  Error mode: {summary.get('avg_similarity_error', 0):.1%} similarity ({error_sim_count} samples)")
     print("="*70 + "\n")
     
-    # Save final summary
     save_summary()
 
 

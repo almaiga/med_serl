@@ -1,30 +1,35 @@
-"""Test script for Medical Game Tool."""
+"""Test script for Medical Game Tool (sentence-level localization)."""
 
 import sys
 sys.path.insert(0, '/Users/josmaiga/Documents/GitHub/med_serl')
 
 from scripts.self_play.tools.medical_game_tool import MedicalGameTool, GameMode
+from scripts.self_play.utils import number_sentences
 
-# Sample data from MEDEC
+# Sample data from MEDEC (with pre-numbered sentences and error_sentence_id)
+correct_note = "A 26-year-old immigrant from Mexico presents to your clinic for a physical. He tells you that several weeks ago, he noticed a lesion on his penis which went away after several weeks. It was nontender and did not bother him. He currently does not have any complaints. His temperature is 97.9 F (36.6 C), blood pressure is 139/91 mmHg, pulse is 87/min, respirations are 14/min, and oxygen saturation is 98% on room air. Physical exam is unremarkable and shows no evidence of any rash. A VDRL and FTA-ABS test are both positive. Penicillin is prescribed."
+sentences = number_sentences(correct_note)
+
 sample_note_data = {
     "note_id": "ms-train-1591",
-    "correct_note": "A 26-year-old immigrant from Mexico presents to your clinic for a physical. He tells you that several weeks ago, he noticed a lesion on his penis which went away after several weeks. It was nontender and did not bother him. He currently does not have any complaints. His temperature is 97.9 F (36.6 C), blood pressure is 139/91 mmHg, pulse is 87/min, respirations are 14/min, and oxygen saturation is 98% on room air. Physical exam is unremarkable and shows no evidence of any rash. A VDRL and FTA-ABS test are both positive. Penicillin is prescribed.",
-    "incorrect_note": "A 26-year-old immigrant from Mexico presents to your clinic for a physical. He tells you that several weeks ago, he noticed a lesion on his penis which went away after several weeks. It was nontender and did not bother him. He currently does not have any complaints. His temperature is 97.9 F (36.6 C), blood pressure is 139/91 mmHg, pulse is 87/min, respirations are 14/min, and oxygen saturation is 98% on room air. Physical exam is unremarkable and shows no evidence of any rash. A VDRL and FTA-ABS test are both positive. Azithromycin and ceftriaxone are prescribed.",
+    "correct_note": correct_note,
+    "sentences": sentences,
     "error_type": "management",
     "error_sentence": "Azithromycin and ceftriaxone are prescribed.",
-    "corrected_sentence": "Penicillin is prescribed."
+    "corrected_sentence": "Penicillin is prescribed.",
+    "error_sentence_id": 7,
 }
 
 # Initialize tool
 config = {
     "benign_ratio": 0.5,
-    "injection_prompts_path": "/Users/josmaiga/Documents/GitHub/med_serl/configs/prompts/error_injection_prompts_v2.json",
-    "detection_prompts_path": "/Users/josmaiga/Documents/GitHub/med_serl/configs/prompts/error_detection_prompts.json",
+    "injection_prompts_path": "/Users/josmaiga/Documents/GitHub/med_serl/configs/prompts/error_injection_prompts_v4.json",
+    "detection_prompts_path": "/Users/josmaiga/Documents/GitHub/med_serl/configs/prompts/detection_localization_prompts.json",
 }
 
 tool = MedicalGameTool(config)
 
-print("=== Testing Game Tool ===\n")
+print("=== Testing Game Tool (Sentence-Level) ===\n")
 
 # Test game initialization
 session_id = "test_session_1"
@@ -32,35 +37,34 @@ result = tool(session_id=session_id, action="", turn=0, extra_info=sample_note_d
 
 print(f"Turn 0 (Init):")
 print(f"  Mode: {tool.game_states[session_id].mode.value}")
-print(f"  Ground truth: {tool.game_states[session_id].ground_truth}")
+gt = tool.game_states[session_id].ground_truth
+print(f"  Ground truth: {gt}")
 print(f"  Done: {result['done']}")
 print(f"  System prompt (first 100 chars): {result['observation']['system'][:100]}...")
 print(f"  User prompt (first 200 chars): {result['observation']['user'][:200]}...")
 
-# Simulate Injector response
-mock_injector_response = """<think>I need to make a surface edit to preserve meaning</think>
+# Verify ground_truth is either "CORRECT" or a sentence number string (not "INCORRECT")
+assert gt == "CORRECT" or gt.isdigit(), f"Expected CORRECT or sentence number, got: {gt}"
+print(f"  Ground truth format OK: {gt}")
 
-generated_note:
-A 26-year-old immigrant from Mexico comes to your clinic for a physical. He tells you that several weeks ago, he noticed a lesion on his penis which went away after several weeks. It was nontender and did not bother him. He currently does not have any complaints. His temperature is 97.9 F (36.6 C), blood pressure is 139/91 mmHg, pulse is 87/min, respirations are 14/min, and oxygen saturation is 98% on room air. Physical exam is unremarkable and shows no evidence of any rash. A VDRL and FTA-ABS test are both positive. Penicillin is prescribed.
+# Simulate Injector response (compact format)
+mock_injector_response = """<think>I will make a surface edit to sentence 1.</think>
 
-final_answer: "CORRECT"
-
-changes_made:
-{"original_sentence": "presents to your clinic", "modified_sentence": "comes to your clinic", "words_changed": "presents → comes"}"""
+1. A 26-year-old immigrant from Mexico comes to your clinic for a physical."""
 
 result2 = tool(session_id=session_id, action=mock_injector_response, turn=1, extra_info=None)
 
 print(f"\nTurn 1 (After Injector):")
 print(f"  Done: {result2['done']}")
-print(f"  Generated note extracted: {tool.game_states[session_id].generated_note[:100] if tool.game_states[session_id].generated_note else 'None'}...")
-print(f"  Assessor system prompt: {result2['observation']['system'][:100]}...")
-print(f"  Assessor user prompt: {result2['observation']['user'][:100]}...")
+state = tool.game_states[session_id]
+print(f"  Changed sentence ID: {state.changed_sid}")
+print(f"  Modified sentences (first 100 chars): {state.modified_sentences[:100] if state.modified_sentences else 'None'}...")
+print(f"  Assessor prompt (first 100 chars): {result2['observation']['user'][:100]}...")
 
-# Simulate Assessor response
+# Simulate Assessor response (sentence number output)
 mock_assessor_response = """<think>Checking for clinical errors...</think>
 
-final_answer: "CORRECT"
-Explanation: The clinical note contains appropriate diagnosis and treatment for syphilis."""
+CORRECT"""
 
 result3 = tool(session_id=session_id, action=mock_assessor_response, turn=2, extra_info=None)
 
@@ -69,5 +73,6 @@ print(f"  Done: {result3['done']}")
 print(f"  Game result keys: {list(result3['game_result'].keys())}")
 print(f"  Mode: {result3['game_result']['mode']}")
 print(f"  Ground truth: {result3['game_result']['ground_truth']}")
+print(f"  Assessor label: {result3['game_result'].get('assessor_label', 'N/A')}")
 
 print("\n=== Game Tool Test Complete! ===")

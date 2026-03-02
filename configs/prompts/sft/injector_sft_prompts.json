@@ -1,21 +1,30 @@
 {
-  "description": "SFT training prompts for injector scenarios (optimized for Qwen3-4B/8B). Keep system prompts short and direct — small models follow concise instructions better.",
+  "description": "SFT training prompts for injector scenarios. Uses pre-numbered {sentences} input and outputs a single modified sentence in compact format (N. <modified sentence>). Aligned with error_injection_prompts_v4.json used in self-play RL.",
 
   "injector_error": {
-    "description": "Injector error: given a correct note, introduce a subtle clinical error",
-    "system_prompt": "You are a clinical note editor.\n\nIntroduce ONE subtle clinical error by changing 1-3 words in one sentence. Leave all other sentences unchanged.\n\nRespond with:\nfinal_answer: \"INCORRECT\"\nExplanation: [one sentence]",
-    "user_template": "Inject a {error_type} error into this note by changing 1-3 words in one sentence.\n\n{note}\n\nReason about the cognitive trap, then specify the change."
+    "description": "Injector error: given numbered sentences, introduce a subtle clinical error in one sentence",
+    "system_prompt": "You are a clinical note editor.\n\nIntroduce ONE subtle clinical error by changing 1-3 words in one sentence. Leave all other sentences unchanged.\n\nOutput format: the changed sentence number and modified text on a single line.\nExample: 5. Patient was prescribed aspirin for bacterial infection.",
+    "user_template": "Inject a {error_type} error into one sentence of this note by changing 1-3 words.\n\n{sentences}\n\nReason about the cognitive trap, then output the changed sentence in the format:\nN. <modified sentence>"
   },
 
   "injector_benign": {
-    "description": "Injector benign: given a note, make a safe change of a specified type",
-    "system_prompt": "You are a clinical note editor.\n\nMake a benign change that preserves all clinical meaning. Change only the surface wording, not the medical facts.\n\nRespond with:\nfinal_answer: \"CORRECT\"\nExplanation: [one sentence]",
-    "user_template": "Make a {change_type} change to this note.\n\n{change_type_description}\n\n{note}\n\nState what you will change, reason about why it is clinically safe, then specify the modification.",
+    "description": "Injector benign: given numbered sentences, make a safe surface change to one sentence",
+    "system_prompt": "You are a clinical note editor.\n\nMake a benign change that preserves all clinical meaning. Change only the surface wording of ONE sentence, not the medical facts.\n\nOutput format: the changed sentence number and modified text on a single line.\nExample: 3. Patient was diagnosed with petit mal seizure.",
+    "user_template": "Make a {change_type} change to one sentence in this note.\n\n{change_type_description}\n\n{sentences}\n\nReason about why your change is clinically safe, then output the changed sentence in the format:\nN. <modified sentence>",
 
     "change_type_descriptions": {
       "pseudo_factual": "Replace a medical term with an equivalent synonym (e.g., \"absence seizure\" → \"petit mal seizure\").",
       "temporal_rephrasing": "Rephrase a time expression keeping the same duration (e.g., \"6-month history\" → \"180-day history\").",
       "equivalent_citation": "Replace a drug or procedure name with its class or equivalent (e.g., \"metoprolol\" → \"beta-blocker\")."
     }
+  },
+
+  "output_format": {
+    "description": "Injector outputs a single line: the 1-indexed sentence number followed by the modified sentence text.",
+    "pattern": "^(\\d+)\\.\\s+(.+)$",
+    "examples": [
+      "3. Patient was diagnosed with petit mal seizure.",
+      "7. Prescribed a beta-blocker for rate control."
+    ]
   }
 }

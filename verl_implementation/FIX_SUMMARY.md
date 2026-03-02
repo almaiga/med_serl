@@ -80,7 +80,7 @@ def create_error_example(pair, ...):
 
 ```python
 # NEW: Load actual prompts at preprocessing time
-injection_prompts = load_prompts("configs/prompts/error_injection_prompts_v2.json")
+injection_prompts = load_prompts("configs/prompts/error_injection_prompts_v4.json")
 
 # Benign mode
 system_prompt = injection_prompts["system_prompt_correct"]
@@ -121,7 +121,7 @@ interaction:
   - name: "medical_game"
     class_name: "scripts.self_play.interactions.medical_game_interaction.MedicalGameInteraction"
     config:
-      detection_prompts_path: "configs/prompts/error_detection_prompts.json"
+      detection_prompts_path: "configs/prompts/detection_localization_prompts.json"
 ```
 
 **Result**: Proper 2-turn game with CoT stripping between phases
@@ -172,7 +172,7 @@ MedicalGameInteraction.generate_response()
     ↓
     • Strip <think>...</think> tags
     • Extract generated_note:
-    • Load Assessor prompt from error_detection_prompts.json
+    • Load Assessor prompt from detection_localization_prompts.json
     • Return assessor_prompt (turn=2, continue)
     ↓
 ┌─────────────────────────────────────────┐

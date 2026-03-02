@@ -40,7 +40,7 @@ echo "Training on $MAX_PAIRS note pairs (set MAX_PAIRS env var to change)"
 python3 scripts/self_play/preprocess_medec.py \
     --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
     --output data_processed/self_play/train.parquet \
-    --injection-prompts configs/prompts/error_injection_prompts_v3.json \
+    --injection-prompts configs/prompts/error_injection_prompts_v4.json \
     --max-pairs $MAX_PAIRS
 
 # Also preprocess validation data if exists
@@ -49,7 +49,7 @@ if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
     python3 scripts/self_play/preprocess_medec.py \
         --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
         --output "$VAL_FILE" \
-        --injection-prompts configs/prompts/error_injection_prompts_v3.json \
+        --injection-prompts configs/prompts/error_injection_prompts_v4.json \
         --max-pairs 50
 else
     echo "Warning: No separate validation file, using training file for validation"

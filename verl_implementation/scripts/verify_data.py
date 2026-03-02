@@ -48,16 +48,24 @@ def verify_parquet(file_path: str):
         print(f"  - First message role: {prompt[0]['role']}")
         print(f"  - First message preview: {prompt[0]['content'][:100]}...")
     
-    # Check balance of CORRECT vs INCORRECT
+    # Check balance of CORRECT vs ERROR (sentence-level localization)
     ground_truths = [row['reward_model']['ground_truth'] for _, row in df.iterrows()]
     correct_count = ground_truths.count('CORRECT')
-    incorrect_count = ground_truths.count('INCORRECT')
+    # Ground truth for errors is now a sentence number (e.g. "3"), not "INCORRECT"
+    # Count anything that's not "CORRECT" as an error ground truth
+    error_count = sum(1 for gt in ground_truths if gt != 'CORRECT')
+    sentence_id_count = sum(1 for gt in ground_truths if gt != 'CORRECT' and gt.isdigit())
+    legacy_incorrect = ground_truths.count('INCORRECT')
     
     print(f"\n--- Label Distribution ---")
     print(f"CORRECT: {correct_count} ({correct_count/len(ground_truths)*100:.1f}%)")
-    print(f"INCORRECT: {incorrect_count} ({incorrect_count/len(ground_truths)*100:.1f}%)")
+    print(f"ERROR (sentence-level): {error_count} ({error_count/len(ground_truths)*100:.1f}%)")
+    if sentence_id_count:
+        print(f"  - With sentence ID: {sentence_id_count}")
+    if legacy_incorrect:
+        print(f"  - Legacy INCORRECT: {legacy_incorrect}")
     
-    if abs(correct_count - incorrect_count) > len(ground_truths) * 0.1:
+    if abs(correct_count - error_count) > len(ground_truths) * 0.1:
         print(f"⚠️  Warning: Labels are imbalanced")
     else:
         print(f"✓ Labels are balanced")

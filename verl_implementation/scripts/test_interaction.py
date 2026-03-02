@@ -27,7 +27,7 @@ async def test_benign_correct():
     
     config = {
         "name": "medical_game",
-        "detection_prompts_path": "configs/prompts/error_detection_prompts.json"
+        "detection_prompts_path": "configs/prompts/detection_localization_prompts.json"
     }
     
     interaction = MedicalGameInteraction(config)
@@ -106,7 +106,7 @@ async def test_benign_incorrect():
     
     config = {
         "name": "medical_game",
-        "detection_prompts_path": "configs/prompts/error_detection_prompts.json"
+        "detection_prompts_path": "configs/prompts/detection_localization_prompts.json"
     }
     
     interaction = MedicalGameInteraction(config)
@@ -165,13 +165,13 @@ async def test_error_correct():
     
     config = {
         "name": "medical_game",
-        "detection_prompts_path": "configs/prompts/error_detection_prompts.json"
+        "detection_prompts_path": "configs/prompts/detection_localization_prompts.json"
     }
     
     interaction = MedicalGameInteraction(config)
     
     instance_id = await interaction.start_interaction(
-        ground_truth="INCORRECT",
+        ground_truth="3",
         mode="error_injection"
     )
     
@@ -224,7 +224,7 @@ async def test_invalid_format():
     
     config = {
         "name": "medical_game",
-        "detection_prompts_path": "configs/prompts/error_detection_prompts.json"
+        "detection_prompts_path": "configs/prompts/detection_localization_prompts.json"
     }
     
     interaction = MedicalGameInteraction(config)

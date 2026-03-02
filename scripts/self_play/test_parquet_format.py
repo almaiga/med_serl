@@ -4,7 +4,7 @@
 Run this before training to verify:
 1. Parquet file loads correctly
 2. 'prompt' field is a native list (NOT JSON string)
-3. ground_truth is "CORRECT" or "INCORRECT"
+3. ground_truth is "CORRECT" or a sentence number (e.g., "3", "7")
 4. Prompts contain actual clinical content
 """
 
@@ -54,10 +54,10 @@ def test_parquet_format(parquet_path: str = "data_processed/self_play/train.parq
     reward_model = example.get("reward_model", {})
     ground_truth = reward_model.get("ground_truth") if isinstance(reward_model, dict) else None
     
-    if ground_truth in ["CORRECT", "INCORRECT"]:
+    if ground_truth == "CORRECT" or (ground_truth and ground_truth.isdigit()):
         print(f"✅ PASS: ground_truth is '{ground_truth}'")
     else:
-        print(f"❌ FAIL: ground_truth is '{ground_truth}' - expected 'CORRECT' or 'INCORRECT'")
+        print(f"❌ FAIL: ground_truth is '{ground_truth}' - expected 'CORRECT' or a sentence number")
         return False
     
     # Check mode

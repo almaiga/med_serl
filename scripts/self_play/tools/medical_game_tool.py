@@ -1,8 +1,8 @@
-"""Medical Error Detection Game Tool for verl multi-turn rollout.
+"""Medical Error Detection + Localization Game Tool for verl multi-turn rollout.
 
 This tool orchestrates the two-turn self-play game:
-1. Turn 1 (Injector): Model receives a note and generates output
-2. Turn 2 (Assessor): Model classifies the generated note
+1. Turn 1 (Injector): Model receives numbered sentences and outputs "N. <modified sentence>"
+2. Turn 2 (Assessor): Model receives the modified note and outputs CORRECT or a sentence number
 
 Prompts are loaded from config files, not hardcoded.
 """
@@ -24,9 +24,15 @@ except ImportError:
         def __call__(self, *args, **kwargs):
             raise NotImplementedError
 
-import sys
-sys.path.append("scripts/self_play")
-from cot_parser import extract_public_response, parse_injector_output
+from scripts.self_play.utils import (
+    number_sentences,
+    parse_assessor_answer,
+    reconstruct_note,
+)
+from scripts.self_play.cot_parser import (
+    parse_injector_output,
+    extract_note_for_assessor,
+)
 
 
 class GameMode(Enum):
@@ -40,10 +46,13 @@ class GameState:
     mode: GameMode
     turn: int = 0
     note_data: dict = field(default_factory=dict)
+    sentences: str = ""                       # Pre-numbered sentences fed to injector
     injector_output: Optional[str] = None
     injector_parsed: Optional[Any] = None
-    generated_note: Optional[str] = None
-    ground_truth: Optional[str] = None  # "CORRECT" or "INCORRECT"
+    modified_sentences: Optional[str] = None  # Full note after injector's change
+    changed_sid: Optional[int] = None         # Sentence ID the injector changed
+    # Ground truth: "CORRECT" (benign) or str(sentence_id) (error)
+    ground_truth: Optional[str] = None
     game_complete: bool = False
 
 
@@ -52,8 +61,8 @@ class PromptLoader:
     
     def __init__(
         self,
-        injection_prompts_path: str = "configs/prompts/error_injection_prompts_v2.json",
-        detection_prompts_path: str = "configs/prompts/error_detection_prompts.json",
+        injection_prompts_path: str = "configs/prompts/error_injection_prompts_v4.json",
+        detection_prompts_path: str = "configs/prompts/detection_localization_prompts.json",
     ):
         self.injection_prompts = self._load_json(injection_prompts_path)
         self.detection_prompts = self._load_json(detection_prompts_path)
@@ -70,14 +79,27 @@ class PromptLoader:
             return self.injection_prompts["system_prompt_incorrect"]
     
     def get_injector_user_prompt(self, mode: GameMode, note_data: dict) -> str:
-        """Get user prompt for Injector based on mode."""
+        """Get user prompt for Injector based on mode.
+
+        Expects note_data to contain 'sentences' (pre-numbered).
+        For benign mode, also picks a random change type.
+        """
+        sentences = note_data.get("sentences", "")
+
         if mode == GameMode.BENIGN:
             template = self.injection_prompts["injector_correct_template"]
-            return template.format(note=note_data["correct_note"])
+            change_types = self.injection_prompts.get("benign_change_types", {})
+            change_type = random.choice(list(change_types.keys())) if change_types else "pseudo_factual"
+            change_desc = change_types.get(change_type, "Replace a medical term with an equivalent synonym.")
+            return template.format(
+                sentences=sentences,
+                change_type=change_type,
+                change_type_description=change_desc,
+            )
         else:
             template = self.injection_prompts["injector_incorrect_template"]
             return template.format(
-                note=note_data["correct_note"],
+                sentences=sentences,
                 prompt_intent=note_data.get("error_type", "clinical error"),
             )
     
@@ -85,14 +107,14 @@ class PromptLoader:
         """Get system prompt for Assessor."""
         return self.detection_prompts["system_prompt"]
     
-    def get_assessor_user_prompt(self, note: str) -> str:
-        """Get user prompt for Assessor."""
+    def get_assessor_user_prompt(self, sentences: str) -> str:
+        """Get user prompt for Assessor. Uses {sentences} template."""
         template = self.detection_prompts["user_template"]
-        return template.format(note=note)
+        return template.format(sentences=sentences)
 
 
 class MedicalGameTool(BaseTool):
-    """Two-turn medical error detection game tool."""
+    """Two-turn medical error detection + localization game tool."""
     
     def __init__(self, config: dict):
         super().__init__(config)
@@ -102,34 +124,52 @@ class MedicalGameTool(BaseTool):
         self.prompt_loader = PromptLoader(
             injection_prompts_path=config.get(
                 "injection_prompts_path",
-                "configs/prompts/error_injection_prompts_v2.json"
+                "configs/prompts/error_injection_prompts_v4.json"
             ),
             detection_prompts_path=config.get(
                 "detection_prompts_path",
-                "configs/prompts/error_detection_prompts.json"
+                "configs/prompts/detection_localization_prompts.json"
             ),
         )
         
         self.game_states: dict[str, GameState] = {}
     
     def initialize_game(self, session_id: str, extra_info: dict) -> tuple[str, str]:
-        """Initialize a new game, return (system_prompt, user_prompt)."""
-        
+        """Initialize a new game, return (system_prompt, user_prompt).
+
+        extra_info should contain:
+        - sentences: pre-numbered sentences string (from preprocessing)
+        - error_sentence_id (optional): for error mode, the sentence number
+        - error_type (optional): type of error to inject
+        """
         # Random mode selection
         mode = GameMode.BENIGN if random.random() < self.benign_ratio else GameMode.ERROR_INJECTION
-        
-        # Create game state
+
+        # Use pre-numbered sentences from preprocessing, or number on the fly
+        sentences = extra_info.get("sentences", "")
+        if not sentences and extra_info.get("correct_note"):
+            sentences = number_sentences(extra_info["correct_note"])
+
+        # Ground truth: "CORRECT" for benign, sentence number for error
+        if mode == GameMode.BENIGN:
+            ground_truth = "CORRECT"
+        else:
+            error_sid = extra_info.get("error_sentence_id")
+            ground_truth = str(error_sid) if error_sid else "INCORRECT"
+
         state = GameState(
             mode=mode,
             turn=1,
             note_data=extra_info,
-            ground_truth="CORRECT" if mode == GameMode.BENIGN else "INCORRECT",
+            sentences=sentences,
+            ground_truth=ground_truth,
         )
         self.game_states[session_id] = state
         
         # Get prompts from config files
+        note_data_with_sentences = {**extra_info, "sentences": sentences}
         system_prompt = self.prompt_loader.get_injector_system_prompt(mode)
-        user_prompt = self.prompt_loader.get_injector_user_prompt(mode, extra_info)
+        user_prompt = self.prompt_loader.get_injector_user_prompt(mode, note_data_with_sentences)
         
         return system_prompt, user_prompt
     
@@ -138,10 +178,11 @@ class MedicalGameTool(BaseTool):
         session_id: str, 
         response: str
     ) -> tuple[str, str, bool]:
-        """Process Injector's response, return Assessor prompt or game end.
+        """Process Injector's compact output and prepare Assessor prompt.
         
-        CRITICAL: Only the generated_note text is passed to Assessor.
-        All CoT reasoning, final_answer, and changes_made are stripped.
+        The injector outputs "N. <modified sentence>".
+        We reconstruct the full note by replacing that sentence in the original,
+        then pass the full modified note to the Assessor.
         
         Returns:
             (system_prompt, user_prompt, is_terminal)
@@ -149,31 +190,28 @@ class MedicalGameTool(BaseTool):
         state = self.game_states[session_id]
         state.injector_output = response
         
-        # Parse the full output (for logging/analysis)
+        # Parse compact output: "N. <modified sentence>"
         parsed = parse_injector_output(response)
         state.injector_parsed = parsed
         
-        # Extract ONLY the generated note - use the new sanitized extraction
-        # This strips: <think>, final_answer, changes_made
-        from scripts.self_play.cot_parser import extract_note_for_assessor
-        sanitized_note = extract_note_for_assessor(response)
-        
-        if sanitized_note:
-            state.generated_note = sanitized_note
-        elif parsed.generated_note:
-            # Fallback to parsed note (already stripped of CoT)
-            state.generated_note = parsed.generated_note
+        if parsed.parse_success:
+            state.changed_sid = parsed.changed_sentence_id
+            # Reconstruct the full note with the change applied
+            modified = reconstruct_note(
+                state.sentences, parsed.changed_sentence_id, parsed.modified_text
+            )
+            state.modified_sentences = modified
         else:
-            # No valid note extracted - will be penalized
-            state.generated_note = ""
+            # Fallback: try extract_note_for_assessor (handles edge cases)
+            fallback = extract_note_for_assessor(response, state.sentences)
+            state.modified_sentences = fallback if fallback else state.sentences
         
         # Move to turn 2 (Assessor)
         state.turn = 2
         
-        # Get Assessor prompts from config files
-        # The assessor sees ONLY the sanitized note - no hints about CORRECT/INCORRECT
+        # Assessor prompt uses the modified numbered sentences
         system_prompt = self.prompt_loader.get_assessor_system_prompt()
-        user_prompt = self.prompt_loader.get_assessor_user_prompt(state.generated_note)
+        user_prompt = self.prompt_loader.get_assessor_user_prompt(state.modified_sentences)
         
         return system_prompt, user_prompt, False
     
@@ -185,10 +223,12 @@ class MedicalGameTool(BaseTool):
         """Process Assessor's response and complete the game.
         
         Returns:
-            Game result dict for reward computation
+            Game result dict for reward computation, including localization info.
         """
         state = self.game_states[session_id]
         state.game_complete = True
+
+        label, pred_sid = parse_assessor_answer(response)
         
         return {
             "session_id": session_id,
@@ -196,7 +236,11 @@ class MedicalGameTool(BaseTool):
             "ground_truth": state.ground_truth,
             "injector_output": state.injector_output,
             "assessor_output": response,
-            "generated_note": state.generated_note,
+            "assessor_label": label,         # "CORRECT", "ERROR", or "UNKNOWN"
+            "assessor_pred_sid": pred_sid,   # predicted sentence ID or None
+            "changed_sid": state.changed_sid,
+            "modified_sentences": state.modified_sentences,
+            "sentences": state.sentences,
             "note_data": state.note_data,
         }
     

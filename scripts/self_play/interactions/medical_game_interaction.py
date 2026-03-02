@@ -1,10 +1,16 @@
-"""Medical Error Detection Game Interaction for verl multi-turn RL training.
+"""Medical Error Detection + Localization Game Interaction for verl multi-turn RL training.
 
 This interaction orchestrates the two-turn self-play game:
-1. Turn 1 (Injector): Model receives a note and generates a modified version
-2. Turn 2 (Assessor): Model classifies the modified note as CORRECT or INCORRECT
+1. Turn 1 (Injector): Model receives numbered sentences and outputs "N. <modified sentence>"
+2. Turn 2 (Assessor): Model receives the modified numbered note and outputs CORRECT or a sentence number
 
-The Assessor sees ONLY the modified note (CoT is stripped from Injector output).
+The Assessor sees the full modified note (CoT is stripped from Injector output).
+
+Rewards are 3-tier:
+- Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
+- Detection only (error detected but wrong sentence number): +0.3
+- Miss (wrong or unparseable): -1.0
+- Format bonus: +0.2 for valid output format
 """
 
 import json
@@ -13,44 +19,55 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 from uuid import uuid4
 
+from scripts.self_play.utils import (
+    number_sentences,
+    parse_assessor_answer,
+    reconstruct_note,
+)
+from scripts.self_play.cot_parser import (
+    parse_injector_output,
+    extract_note_for_assessor,
+)
+
 # Import verl's BaseInteraction
 try:
     from verl.interactions.base import BaseInteraction
 except ImportError:
-    # Fallback for development/testing
     class BaseInteraction:
         def __init__(self, config: dict):
             self.config = config
             self.name = config.get("name", "interaction_agent")
 
+# Reward constants
+REWARD_EXACT = 1.0      # Exact match (correct label + sentence)
+REWARD_PARTIAL = 0.3    # Detected error but wrong sentence number
+REWARD_MISS = -1.0      # Missed or wrong classification
+FORMAT_BONUS = 0.2      # Bonus for parseable output format
+
 
 class MedicalGameInteraction(BaseInteraction):
-    """Two-turn medical error detection game interaction.
+    """Two-turn medical error detection + localization game interaction.
     
     Phase 1: Injector modifies a clinical note (benign or error injection)
-    Phase 2: Assessor classifies the modified note (CORRECT or INCORRECT)
+             Output: "N. <modified sentence>"
+    Phase 2: Assessor classifies the modified note
+             Output: "CORRECT" or "<sentence_number>"
     
-    Rewards are zero-sum:
-    - Assessor correct: Assessor +1.0, Injector -1.0
-    - Assessor wrong: Assessor -1.0, Injector +1.0
-    - Format bonus: +0.2 for following output format
-    
-    verl Compliance:
-    - Implements BaseInteraction interface from verl.interactions.base
-    - Sets self.name as required by verl interaction registry
-    - Async methods: start_interaction, generate_response, calculate_score, finalize_interaction
+    Rewards are 3-tier:
+    - Exact match: +1.0 + format_bonus
+    - Partial (detected error, wrong sentence): +0.3 + format_bonus
+    - Miss: -1.0 (no format bonus for invalid format)
     """
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # REQUIRED by verl: Set name for interaction registry
         self.name: str = config.get("name", "medical_game")
         self._instance_dict = {}
         
-        # Load prompts from config files
+        # Load detection+localization prompts
         self.detection_prompts = self._load_prompts(
             config.get("detection_prompts_path", 
-                      "configs/prompts/error_detection_prompts.json")
+                      "configs/prompts/detection_localization_prompts.json")
         )
         
     def _load_prompts(self, path: str) -> dict:
@@ -64,48 +81,48 @@ class MedicalGameInteraction(BaseInteraction):
         ground_truth: Optional[str] = None,
         mode: Optional[str] = None,
         note_data: Optional[dict] = None,
+        sentences: Optional[str] = None,
         correct_note: Optional[str] = None,
         note_id: Optional[str] = None,
         error_type: Optional[str] = None,
+        error_sentence_id: Optional[int] = None,
         **kwargs
     ) -> str:
         """Initialize interaction session.
         
-        Called by verl with interaction_kwargs from the dataset.
-        See: https://verl.readthedocs.io/en/latest/sglang_multiturn/interaction_system.html
-        
         Args:
             instance_id: Unique session ID (auto-generated if None)
-            ground_truth: "CORRECT" or "INCORRECT" 
+            ground_truth: "CORRECT" or str(sentence_id)
             mode: "benign" or "error_injection"
-            note_data: Dict containing note information (legacy)
-            correct_note: The original correct note text
-            note_id: Unique identifier for this note
-            error_type: Type of error (for error_injection mode)
-            **kwargs: Additional kwargs passed from interaction_kwargs
-            
-        Returns:
-            instance_id for this session
+            sentences: Pre-numbered sentences string
+            correct_note: The original correct note text (fallback if sentences missing)
+            error_sentence_id: 1-indexed sentence number with the error
         """
         if instance_id is None:
             instance_id = str(uuid4())
         
-        # Build note_data from kwargs if not provided directly
+        # Build sentences if not provided
+        if not sentences and correct_note:
+            sentences = number_sentences(correct_note)
+        
         if note_data is None:
             note_data = {
                 "correct_note": correct_note or "",
                 "note_id": note_id or "",
                 "error_type": error_type or "",
+                "error_sentence_id": error_sentence_id,
             }
         
         self._instance_dict[instance_id] = {
             "ground_truth": ground_truth or kwargs.get("ground_truth"),
             "mode": mode or kwargs.get("mode"),
             "note_data": note_data,
+            "sentences": sentences or "",
             "injector_output": None,
-            "generated_note": None,
+            "modified_sentences": None,
+            "changed_sid": None,
             "assessor_output": None,
-            "turn": 0,  # Track which turn we're on (incremented in generate_response)
+            "turn": 0,
         }
         
         return instance_id
@@ -116,23 +133,16 @@ class MedicalGameInteraction(BaseInteraction):
         messages: List[Dict[str, Any]], 
         **kwargs
     ) -> Tuple[bool, str, float, Dict[str, Any]]:
-        """Process model response and generate next prompt or terminate.
-        
-        Returns:
-            (should_terminate, response_content, score, metadata)
-        """
+        """Process model response and generate next prompt or terminate."""
         instance = self._instance_dict[instance_id]
         current_turn = instance["turn"]
-        instance["turn"] += 1  # Increment turn counter AFTER checking
-        
+        instance["turn"] += 1
+
         if current_turn == 0:
-            # Phase 1: Process Injector output (first assistant response)
             return await self._process_injector_turn(instance_id, messages)
         elif current_turn == 1:
-            # Phase 2: Process Assessor output and compute final reward
             return await self._process_assessor_turn(instance_id, messages)
         else:
-            # Should not reach here
             return True, "Error: Invalid turn number", 0.0, {}
     
     async def _process_injector_turn(
@@ -142,8 +152,8 @@ class MedicalGameInteraction(BaseInteraction):
     ) -> Tuple[bool, str, float, Dict[str, Any]]:
         """Process Phase 1 (Injector) output and prepare Phase 2 (Assessor) prompt.
         
-        Extracts the generated note from Injector output, strips hidden CoT,
-        and constructs the Assessor's classification prompt.
+        Parses compact "N. <modified sentence>" output, reconstructs the full
+        note, and passes it to the Assessor.
         """
         instance = self._instance_dict[instance_id]
         
@@ -156,21 +166,26 @@ class MedicalGameInteraction(BaseInteraction):
         
         instance["injector_output"] = injector_output
         
-        # Parse the generated note (strip CoT)
-        generated_note = self._extract_generated_note(injector_output)
-        instance["generated_note"] = generated_note
+        # Parse compact output
+        parsed = parse_injector_output(injector_output)
         
-        # Check if we got a valid note
-        if not generated_note:
-            # Penalize for invalid format
-            return True, "Invalid output format. Expected 'generated_note:' section.", -1.0, {}
+        if parsed.parse_success:
+            instance["changed_sid"] = parsed.changed_sentence_id
+            modified = reconstruct_note(
+                instance["sentences"], parsed.changed_sentence_id, parsed.modified_text
+            )
+            instance["modified_sentences"] = modified
+        else:
+            # Fallback: pass original sentences (injector failed to modify)
+            instance["modified_sentences"] = extract_note_for_assessor(
+                injector_output, instance["sentences"]
+            )
+            if not instance["modified_sentences"]:
+                return True, "Invalid output format. Expected 'N. <modified sentence>'.", -1.0, {}
         
-        # Construct Assessor prompt using the detection prompts
-        assessor_prompt = self._construct_assessor_prompt(generated_note)
+        # Construct Assessor prompt
+        assessor_prompt = self._construct_assessor_prompt(instance["modified_sentences"])
         
-        # Don't increment turn here - it's already incremented in generate_response
-        
-        # Return False (don't terminate), assessor_prompt, 0 score (intermediate)
         return False, assessor_prompt, 0.0, {"phase": "injector_complete"}
     
     async def _process_assessor_turn(
@@ -178,7 +193,7 @@ class MedicalGameInteraction(BaseInteraction):
         instance_id: str,
         messages: List[Dict[str, Any]]
     ) -> Tuple[bool, str, float, Dict[str, Any]]:
-        """Process Phase 2 (Assessor) output and compute final zero-sum reward."""
+        """Process Phase 2 (Assessor) output and compute 3-tier reward."""
         instance = self._instance_dict[instance_id]
         
         # Extract Assessor's response
@@ -190,216 +205,93 @@ class MedicalGameInteraction(BaseInteraction):
         
         instance["assessor_output"] = assessor_output
         
-        # Parse Assessor's classification
-        assessor_answer = self._parse_assessor_answer(assessor_output)
+        # Parse Assessor's answer
+        label, pred_sid = parse_assessor_answer(assessor_output)
         ground_truth = instance["ground_truth"]
         
         # Check format compliance
-        has_valid_format = self._check_assessor_format(assessor_output)
-        format_bonus = 0.2 if has_valid_format else 0.0
+        has_valid_format = label != "UNKNOWN"
+        format_bonus = FORMAT_BONUS if has_valid_format else 0.0
         
-        # Compute zero-sum reward
-        if assessor_answer == ground_truth:
-            # Assessor wins
-            assessor_reward = 1.0 + format_bonus
-            feedback = f"Correct! The note was {ground_truth}."
-        elif assessor_answer in ["CORRECT", "INCORRECT"]:
-            # Assessor classified but was wrong (Injector wins)
-            assessor_reward = -1.0 + format_bonus
-            feedback = f"Incorrect. The note was {ground_truth}, but you classified it as {assessor_answer}."
-        else:
-            # Invalid format - penalize heavily
-            assessor_reward = -1.0
-            feedback = f"Invalid response format. Expected 'final_answer: \"CORRECT\"' or '\"INCORRECT\"'."
+        # 3-tier reward
+        assessor_reward, feedback = self._compute_reward(
+            label, pred_sid, ground_truth, format_bonus
+        )
         
-        # Game complete
         return True, feedback, assessor_reward, {
             "phase": "game_complete",
-            "assessor_answer": assessor_answer,
+            "assessor_label": label,
+            "assessor_pred_sid": pred_sid,
             "ground_truth": ground_truth,
             "has_valid_format": has_valid_format,
         }
     
-    def _extract_generated_note(self, injector_output: str) -> str:
-        """Extract ONLY the generated note from Injector output.
+    def _compute_reward(
+        self,
+        label: str,
+        pred_sid: Optional[int],
+        ground_truth: str,
+        format_bonus: float,
+    ) -> Tuple[float, str]:
+        """Compute 3-tier reward for the Assessor.
         
-        CRITICAL FOR HIDDEN COT (SeRL paper design):
-        Strips ALL of the following so Assessor cannot see:
-        - <think>...</think> tags (CoT reasoning)
-        - final_answer: "CORRECT" or "INCORRECT" (if present)
-        - changes_made: {...} (metadata about what was changed)
-        - Explanation: ... (if present)
-        
-        The Assessor should see ONLY the modified clinical note text,
-        with no hints about whether it contains errors.
-        
-        Supports:
-        - v2 format: generated_note: ... final_answer: ... changes_made: ...
-        - v3 format: <think>...</think> generated_note: ...
-        - v4/SFT format: <think>...</think>\n\ngenerated_note: ... (may also have final_answer after)
+        Returns (reward, feedback_message).
         """
-        # Step 1: Remove <think> tags and their content (Hidden CoT)
-        output = re.sub(r'<think>.*?</think>', '', injector_output, flags=re.DOTALL)
-        
-        # Step 2: Extract text after "generated_note:" stopping at known markers
-        patterns = [
-            # Stop at final_answer, changes_made, or Explanation
-            r'generated_note:\s*\n(.*?)(?=\n\s*(?:final_answer:|changes_made:|Explanation:)|$)',
-            # More lenient
-            r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|Explanation:|$)',
-        ]
-        
-        extracted_note = None
-        for pattern in patterns:
-            match = re.search(pattern, output, re.DOTALL | re.IGNORECASE)
-            if match:
-                extracted_note = match.group(1).strip()
-                if extracted_note and len(extracted_note) > 20:
-                    break
-        
-        if extracted_note:
-            # Step 3: CRITICAL - Sanitize to remove any leaked information
-            sanitized = self._sanitize_note_for_assessor(extracted_note)
-            return sanitized
-        
-        # Fallback: If no generated_note: marker, use all text after stripping think tags
-        # This handles edge cases where model doesn't follow format exactly
-        clean_output = output.strip()
-        if clean_output and len(clean_output) > 50:  # Has substantial content
-            sanitized = self._sanitize_note_for_assessor(clean_output)
-            if sanitized and len(sanitized) > 50:
-                return sanitized
-        
-        # No valid extraction - return empty string (will trigger format penalty)
-        return ""
+        gt_is_correct = (ground_truth == "CORRECT")
+
+        # Case 1: Note is correct and assessor says CORRECT → exact match
+        if gt_is_correct and label == "CORRECT":
+            return REWARD_EXACT + format_bonus, "Correct! The note has no errors."
+
+        # Case 2: Note is correct but assessor says error → false positive
+        if gt_is_correct and label != "CORRECT":
+            return REWARD_MISS + format_bonus, f"Incorrect. The note was CORRECT, but you flagged sentence {pred_sid}."
+
+        # Case 3: Note has error, assessor says CORRECT → missed error
+        if not gt_is_correct and label == "CORRECT":
+            return REWARD_MISS + format_bonus, f"Incorrect. There was an error at sentence {ground_truth}, but you said CORRECT."
+
+        # Case 4: Note has error, assessor detected error
+        if not gt_is_correct and label == "ERROR":
+            pred_str = str(pred_sid) if pred_sid else "?"
+            if pred_str == ground_truth:
+                # Exact sentence match
+                return REWARD_EXACT + format_bonus, f"Correct! Error at sentence {ground_truth}."
+            elif pred_sid is not None:
+                # Detected error but wrong sentence number → partial credit
+                return REWARD_PARTIAL + format_bonus, f"Partially correct. Error at sentence {ground_truth}, you said {pred_str}."
+            else:
+                # Detected error but couldn't determine sentence → partial (lower)
+                return REWARD_PARTIAL, f"Detected error but no sentence number. Error was at sentence {ground_truth}."
+
+        # Fallback: UNKNOWN or unparseable
+        return REWARD_MISS, f"Invalid response format. Expected 'CORRECT' or a sentence number."
     
-    def _sanitize_note_for_assessor(self, note: str) -> str:
-        """Remove any remaining leaked information from extracted note.
-        
-        This is a safety check to ensure no answer hints reach the Assessor.
-        """
-        if not note:
-            return ""
-        
-        sanitized = note
-        
-        # Remove any remaining section markers that might have leaked
-        sanitized = re.sub(r'final_answer:\s*["\']?(?:CORRECT|INCORRECT)["\']?', '', sanitized, flags=re.IGNORECASE)
-        sanitized = re.sub(r'Explanation:\s*.*', '', sanitized, flags=re.IGNORECASE)
-        sanitized = re.sub(r'changes_made:\s*\{.*?\}', '', sanitized, flags=re.DOTALL | re.IGNORECASE)
-        sanitized = re.sub(r'changes_made:\s*$', '', sanitized, flags=re.IGNORECASE)
-        
-        # Remove any stray answer keywords at the end (common leak pattern)
-        sanitized = re.sub(r'\n\s*"?(CORRECT|INCORRECT)"?\s*$', '', sanitized, flags=re.IGNORECASE)
-        
-        # Validate: Check for forbidden keywords that would leak the answer
-        # If found after sanitization, something went wrong
-        forbidden_patterns = [
-            r'\bfinal_answer\b',
-            r'\bchanges_made\b',
-            r'\berror_type\b.*:',
-            r'\bwords_changed\b',
-            r'\boriginal_sentence\b',
-            r'\bmodified_sentence\b',
-        ]
-        
-        for pattern in forbidden_patterns:
-            if re.search(pattern, sanitized, re.IGNORECASE):
-                # Log warning but continue - strip the problematic content
-                sanitized = re.sub(pattern + r'.*', '', sanitized, flags=re.IGNORECASE | re.DOTALL)
-        
-        return sanitized.strip()
-    
-    def _construct_assessor_prompt(self, generated_note: str) -> str:
-        """Construct the Assessor's classification prompt.
-        
-        Uses the detection_prompts from error_detection_prompts.json.
-        """
-        user_template = self.detection_prompts.get("user_template", "")
-        return user_template.format(note=generated_note)
-    
-    def _parse_assessor_answer(self, assessor_output: str) -> str:
-        """Parse Assessor's final_answer from output.
-        
-        Expected format:
-        final_answer: "CORRECT"
-        or
-        final_answer: "INCORRECT"
-        """
-        # Look for final_answer: "CORRECT" or "INCORRECT"
-        match = re.search(
-            r'final_answer:\s*["\']?(CORRECT|INCORRECT)["\']?',
-            assessor_output,
-            re.IGNORECASE
-        )
-        
-        if match:
-            return match.group(1).upper()
-        
-        # Fallback: check for the words anywhere in output
-        output_upper = assessor_output.upper()
-        if "INCORRECT" in output_upper:
-            return "INCORRECT"
-        elif "CORRECT" in output_upper:
-            return "CORRECT"
-        
-        return "UNKNOWN"
-    
-    def _check_assessor_format(self, assessor_output: str) -> bool:
-        """Check if Assessor output follows the required format.
-        
-        Required:
-        - final_answer: "CORRECT" or "INCORRECT"
-        - Explanation: [some text]
-        """
-        has_final_answer = bool(re.search(
-            r'final_answer:\s*["\']?(CORRECT|INCORRECT)["\']?',
-            assessor_output,
-            re.IGNORECASE
-        ))
-        
-        has_explanation = bool(re.search(
-            r'Explanation:\s*\S+',
-            assessor_output,
-            re.IGNORECASE
-        ))
-        
-        return has_final_answer and has_explanation
+    def _construct_assessor_prompt(self, modified_sentences: str) -> str:
+        """Construct the Assessor's classification prompt using {sentences} template."""
+        user_template = self.detection_prompts.get("user_template", "{sentences}")
+        return user_template.format(sentences=modified_sentences)
     
     async def calculate_score(
         self, 
         instance_id: str, 
         **kwargs
     ) -> float:
-        """Calculate final score for the interaction.
-        
-        This is called by verl to get the reward for RL training.
-        The actual reward computation happens in _process_assessor_turn.
-        """
+        """Calculate final score for the interaction."""
         instance = self._instance_dict.get(instance_id, {})
         
-        # If we haven't completed the game, return 0
         if instance.get("turn", 1) != 2:
             return 0.0
         
-        # The reward was already computed in _process_assessor_turn
-        # We can reconstruct it here for consistency
-        assessor_answer = self._parse_assessor_answer(
-            instance.get("assessor_output", "")
-        )
+        assessor_output = instance.get("assessor_output", "")
+        label, pred_sid = parse_assessor_answer(assessor_output)
         ground_truth = instance.get("ground_truth", "")
         
-        has_valid_format = self._check_assessor_format(
-            instance.get("assessor_output", "")
-        )
-        format_bonus = 0.2 if has_valid_format else 0.0
+        has_valid_format = label != "UNKNOWN"
+        format_bonus = FORMAT_BONUS if has_valid_format else 0.0
         
-        if assessor_answer == ground_truth:
-            return 1.0 + format_bonus
-        elif assessor_answer in ["CORRECT", "INCORRECT"]:
-            return -1.0 + format_bonus
-        else:
-            return -1.0
+        reward, _ = self._compute_reward(label, pred_sid, ground_truth, format_bonus)
+        return reward
     
     async def finalize_interaction(
         self, 

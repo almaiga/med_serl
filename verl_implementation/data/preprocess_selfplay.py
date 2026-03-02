@@ -7,7 +7,10 @@ two-phase self-play game (Injector → Assessor).
 
 For each pair (correct_note, incorrect_note), generates 2 examples:
 1. Benign mode: Injector makes surface edits, Assessor classifies → CORRECT
-2. Error mode: Injector injects error, Assessor classifies → INCORRECT
+2. Error mode: Injector injects error, Assessor classifies → sentence number
+
+Notes are pre-numbered (1-indexed) so the model can reference sentence numbers.
+Ground truth is "CORRECT" or str(sentence_id).
 
 Usage:
     python preprocess_selfplay.py --input /path/to/rl_train.jsonl --output_dir ~/data/selfplay
@@ -15,9 +18,15 @@ Usage:
 
 import json
 import argparse
+import sys
+import random
 from pathlib import Path
 from typing import List, Dict
 import pandas as pd
+
+# Add project root to path for shared utils
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.self_play.utils import number_sentences, find_error_sentence_id
 
 
 def load_prompts(prompt_file: str) -> dict:
@@ -33,12 +42,27 @@ def create_benign_example(
 ) -> dict:
     """Create a benign modification example (ground_truth = CORRECT).
     
-    Injector receives only the correct_note and makes surface edits.
+    Injector receives pre-numbered sentences and makes surface edits.
+    A random benign change type is selected from the prompt config.
     """
     system_prompt = injection_prompts["system_prompt_correct"]
     user_template = injection_prompts["injector_correct_template"]
+
+    # Pre-number the sentences
+    sentences = number_sentences(pair["correct_note"])
+
+    # Pick a random benign change type
+    change_types = injection_prompts.get("benign_change_types", {})
+    change_type = random.choice(list(change_types.keys())) if change_types else "pseudo_factual"
+    change_desc = change_types.get(change_type, "Replace a medical term with an equivalent synonym.")
+
+    user_prompt = user_template.format(
+        sentences=sentences,
+        change_type=change_type,
+        change_type_description=change_desc,
+    )
     
-    user_prompt = user_template.format(note=pair["correct_note"])
+    note_id = pair.get("note_id", f"selfplay-{idx}")
     
     return {
         "data_source": "medec_selfplay",
@@ -49,21 +73,24 @@ def create_benign_example(
         "ability": "medical_error_detection",
         "reward_model": {
             "style": "rule",
-            "ground_truth": "CORRECT"  # Fixed: was using note_id
+            "ground_truth": "CORRECT"
         },
         "interaction_kwargs": {
             "name": "medical_game",
             "ground_truth": "CORRECT",
             "mode": "benign",
+            "sentences": sentences,
             "note_data": {
                 "correct_note": pair["correct_note"],
-                "note_id": pair.get("note_id", f"selfplay-{idx}-benign")
+                "note_id": f"{note_id}-benign"
             }
         },
         "extra_info": {
-            "note_id": pair.get("note_id", f"selfplay-{idx}-benign"),
+            "note_id": f"{note_id}-benign",
             "split": pair.get("split", "train"),
-            "mode": "benign"
+            "mode": "benign",
+            "sentences": sentences,
+            "change_type": change_type,
         }
     }
 
@@ -73,20 +100,31 @@ def create_error_example(
     injection_prompts: dict,
     idx: int
 ) -> dict:
-    """Create an error injection example (ground_truth = INCORRECT).
+    """Create an error injection example (ground_truth = sentence number).
     
-    Injector receives the pair data to guide error injection.
+    Injector receives pre-numbered sentences and error_type to guide injection.
+    Ground truth is the 1-indexed sentence number containing the error.
     """
     system_prompt = injection_prompts["system_prompt_incorrect"]
     user_template = injection_prompts["injector_incorrect_template"]
-    
-    # Use error_type to guide the injection
     error_type = pair.get("error_type", "clinical error")
+
+    # Pre-number the sentences (use incorrect_note so error_sentence can be located)
+    sentences = number_sentences(pair["incorrect_note"])
+
+    # Find error sentence ID by matching error_sentence text
+    error_sentence_text = pair.get("error_sentence", "")
+    error_sentence_id = find_error_sentence_id(pair["incorrect_note"], error_sentence_text)
     
+    # Ground truth is the sentence number (as string), not "INCORRECT"
+    ground_truth = str(error_sentence_id) if error_sentence_id else "INCORRECT"
+
     user_prompt = user_template.format(
-        note=pair["correct_note"],
-        prompt_intent=error_type
+        sentences=sentences,
+        prompt_intent=error_type,
     )
+    
+    note_id = pair.get("note_id", f"selfplay-{idx}")
     
     return {
         "data_source": "medec_selfplay",
@@ -97,26 +135,31 @@ def create_error_example(
         "ability": "medical_error_detection",
         "reward_model": {
             "style": "rule",
-            "ground_truth": "INCORRECT"  # Fixed: was using note_id
+            "ground_truth": ground_truth,
         },
         "interaction_kwargs": {
             "name": "medical_game",
-            "ground_truth": "INCORRECT",
+            "ground_truth": ground_truth,
             "mode": "error_injection",
+            "sentences": sentences,
+            "error_type": error_type,
+            "error_sentence_id": error_sentence_id,
             "note_data": {
                 "correct_note": pair["correct_note"],
                 "incorrect_note": pair["incorrect_note"],
                 "error_type": pair.get("error_type", ""),
                 "error_sentence": pair.get("error_sentence", ""),
                 "corrected_sentence": pair.get("corrected_sentence", ""),
-                "note_id": pair.get("note_id", f"selfplay-{idx}-error")
+                "note_id": f"{note_id}-error"
             }
         },
         "extra_info": {
-            "note_id": pair.get("note_id", f"selfplay-{idx}-error"),
+            "note_id": f"{note_id}-error",
             "split": pair.get("split", "train"),
             "mode": "error_injection",
-            "error_type": pair.get("error_type", "")
+            "sentences": sentences,
+            "error_type": pair.get("error_type", ""),
+            "error_sentence_id": error_sentence_id,
         }
     }
 
@@ -178,7 +221,7 @@ def main():
     parser.add_argument(
         "--injection_prompts",
         type=str,
-        default="configs/prompts/error_injection_prompts_v2.json",
+        default="configs/prompts/error_injection_prompts_v4.json",
         help="Path to injection prompts JSON"
     )
     parser.add_argument(

@@ -138,7 +138,7 @@ changes_made:
 def test_interaction_class_extraction():
     """Test the MedicalGameInteraction class extraction method."""
     
-    config = {"detection_prompts_path": "configs/prompts/error_detection_prompts.json"}
+    config = {"detection_prompts_path": "configs/prompts/detection_localization_prompts.json"}
     interaction = MedicalGameInteraction(config)
     
     injector_output = """<think>Making a benign edit</think>

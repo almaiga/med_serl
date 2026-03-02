@@ -20,6 +20,7 @@ import inspect
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -27,6 +28,10 @@ from datasets import Dataset
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, EarlyStoppingCallback
 from trl import SFTConfig, SFTTrainer
+
+# Add project root to path for shared utils
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.self_play.utils import number_sentences, find_error_sentence_id
 
 
 # Model configurations
@@ -123,18 +128,19 @@ def load_inference_prompts() -> Dict[str, str]:
     """Load prompts from the same config file used for inference.
     
     This ensures training and inference use identical prompts.
+    The template uses {sentences} (pre-numbered note).
     """
-    prompt_file = PROJECT_ROOT / "configs" / "prompts" / "error_detection_prompts.json"
+    prompt_file = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
     
     if prompt_file.exists():
         with open(prompt_file, 'r') as f:
             prompts = json.load(f)
         return prompts
     else:
-        # Fallback prompts matching inference defaults
+        # Fallback that matches the detection_localization_prompts.json format
         return {
-            "system_prompt": "You are a medical note classifier.\n\nClassify each note as CORRECT or INCORRECT.\n\nCORRECT = No medical errors\nINCORRECT = Contains medical error (wrong diagnosis, treatment, or management)\n\nYou must respond with EXACTLY this format:\nfinal_answer: \"CORRECT\"\nExplanation: [one sentence]\n\nOR\n\nfinal_answer: \"INCORRECT\"\nExplanation: [one sentence why it's wrong]",
-            "user_template": "Classify this note:\n\n{note}\n\nRespond in the required format:"
+            "system_prompt": "You are a medical expert reviewing clinical text for accuracy.\nThe text contains either no error or exactly one medical error.\nIdentify any medical error related to treatment, diagnosis, management, or causation.\n\nOutput Format:\n- If no error: 'CORRECT'\n- If error found: output only the sentence number (e.g. '7')\n\nCRITICAL: Output ONLY the result. Do NOT include explanations, analysis, or additional text.",
+            "user_template": "{sentences}"
         }
 
 
@@ -166,19 +172,18 @@ def load_injector_prompts() -> Dict:
         )
 
 
-def build_user_prompt(input_note: str, scenario: str, error_type: Optional[str] = None,
-                      error_sentence: Optional[str] = None, corrected_sentence: Optional[str] = None) -> str:
-    """Build user prompt - same format as inference.
+def build_user_prompt(sentences: str) -> str:
+    """Build user prompt for assessor — same format as inference.
+    
+    Input: pre-numbered sentences string (1. First.\n2. Second.).
+    Uses {sentences} template from detection_localization_prompts.json.
     
     NOTE: We do NOT include ground truth hints during training.
     The model must learn to reason without being given the answer.
     """
     prompts = load_inference_prompts()
-    user_template = prompts.get("user_template", "Classify this note:\n\n{note}\n\nRespond in the required format:")
-    
-    # Use the same template for both correct and incorrect notes
-    # No hints about whether the note is correct or incorrect!
-    return user_template.format(note=input_note)
+    user_template = prompts.get("user_template", "{sentences}")
+    return user_template.format(sentences=sentences)
 
 
 # =============================================================================
@@ -189,9 +194,12 @@ def format_for_sft(example: Dict, tokenizer, include_thinking: bool = True) -> D
     """Format Med-PRM chain example for SFT training.
     
     Role-aware formatting:
-    - Assessor: "Classify this note" → reasoning → CORRECT/INCORRECT
-    - Injector error: "Introduce a subtle error" → cognitive trap analysis → change
-    - Injector benign: "Make a safe change" → semantic equivalence reasoning → change
+    - Assessor: numbered sentences → reasoning → CORRECT or sentence number
+    - Injector error: numbered sentences → cognitive trap analysis → N. <modified sentence>
+    - Injector benign: numbered sentences → equivalence reasoning → N. <modified sentence>
+    
+    All inputs use pre-numbered sentences (1-indexed).
+    All outputs use compact format matching the self-play pipeline.
     """
     input_note = example.get("input_note", "")
     reasoning_chain = example.get("reasoning_chain", "")
@@ -201,43 +209,43 @@ def format_for_sft(example: Dict, tokenizer, include_thinking: bool = True) -> D
     error_sentence = example.get("error_sentence")
     corrected_sentence = example.get("corrected_sentence")
     
+    # Pre-number the input note (if not already numbered)
+    sentences = number_sentences(input_note) if input_note else ""
+    
     # Build role-specific messages
     if role == "injector" and scenario == "error":
         injector_prompts = load_injector_prompts()
         system_prompt = injector_prompts["injector_error"]["system_prompt"]
         user_template = injector_prompts["injector_error"]["user_template"]
         user_prompt = user_template.format(
-            note=input_note,
+            sentences=sentences,
             error_type=error_type or "any"
         )
     elif role == "injector" and scenario == "benign":
         injector_prompts = load_injector_prompts()
         benign_cfg = injector_prompts["injector_benign"]
         system_prompt = benign_cfg["system_prompt"]
-        # Get change_type from the chain data (stored during generation)
         change_type = example.get("change_type", "pseudo_factual")
-        # Look up the description for this change type
         type_descriptions = benign_cfg.get("change_type_descriptions", {})
         change_type_desc = type_descriptions.get(
             change_type,
             f"Make a {change_type} change that preserves clinical meaning."
         )
         user_prompt = benign_cfg["user_template"].format(
-            note=input_note,
+            sentences=sentences,
             change_type=change_type,
             change_type_description=change_type_desc
         )
     else:
         # Assessor scenarios (correct + incorrect) — use detection prompt
         system_prompt = get_system_prompt()
-        user_prompt = build_user_prompt(
-            input_note, scenario, error_type, error_sentence, corrected_sentence
-        )
+        user_prompt = build_user_prompt(sentences)
     
-    # Split reasoning_chain: reasoning goes inside <think>, final_answer outside
-    # Per Qwen3 best practices: <think>\nreasoning\n</think>\n\nfinal_answer
+    # ── Extract reasoning and build compact final answer ──
+    # The MedPRM chains contain detailed reasoning + final_answer.
+    # We put reasoning inside <think>, and the COMPACT answer outside.
     
-    # Extract the final_answer portion (final_answer: "X"\nExplanation: Y)
+    # Extract reasoning portion (everything before final_answer:)
     final_answer_match = re.search(
         r'(final_answer:.*)$',
         reasoning_chain,
@@ -245,26 +253,58 @@ def format_for_sft(example: Dict, tokenizer, include_thinking: bool = True) -> D
     )
     
     if final_answer_match:
-        # Split into reasoning (before final_answer) and answer (final_answer onwards)
         reasoning_only = reasoning_chain[:final_answer_match.start()].strip()
-        final_answer_part = final_answer_match.group(1).strip()
+        raw_final = final_answer_match.group(1).strip()
     else:
-        # Fallback: no final_answer found, use entire chain as reasoning
         reasoning_only = reasoning_chain.strip()
-        final_answer_part = ""
+        raw_final = ""
     
-    # Format per Qwen3 best practices: <think>\nreasoning\n</think>\n\nfinal_answer
-    if include_thinking:
-        if final_answer_part:
-            # Proper Qwen3 format with answer OUTSIDE think tags
-            assistant_content = f"<think>\n{reasoning_only}\n</think>\n\n{final_answer_part}"
+    # Build the COMPACT final answer (outside </think>)
+    # This must match what the model outputs at inference / self-play
+    if role == "assessor":
+        if scenario == "correct":
+            compact_answer = "CORRECT"
         else:
-            # Fallback to old behavior if no final_answer found
+            # Find the error sentence ID from the note
+            error_sid = None
+            if error_sentence and input_note:
+                error_sid = find_error_sentence_id(input_note, error_sentence)
+            if error_sid is not None:
+                compact_answer = str(error_sid)
+            else:
+                # Fallback: try to extract from the chain's [LOCATION] section
+                loc_match = re.search(r'\[LOCATION\]\s*\n\s*"?(.+?)"?\s*$', reasoning_chain, re.MULTILINE)
+                if loc_match and input_note:
+                    error_sid = find_error_sentence_id(input_note, loc_match.group(1))
+                    compact_answer = str(error_sid) if error_sid else "INCORRECT"
+                else:
+                    compact_answer = "INCORRECT"  # Last resort fallback
+    elif role == "injector":
+        # For injector: extract changed sentence ID + modified text → "N. <text>"
+        # Try to find the error sentence in the incorrect note
+        error_sid = None
+        if error_sentence and input_note:
+            error_sid = find_error_sentence_id(input_note, error_sentence)
+        
+        if error_sid is not None and error_sentence:
+            compact_answer = f"{error_sid}. {error_sentence}"
+        elif corrected_sentence and error_sentence:
+            # Benign: the "modified" is the corrected_sentence
+            compact_answer = raw_final  # Use original final_answer as fallback
+        else:
+            compact_answer = raw_final  # Fallback
+    else:
+        compact_answer = raw_final
+    
+    # Format per Qwen3 best practices: <think>\nreasoning\n</think>\n\ncompact_answer
+    if include_thinking:
+        if compact_answer:
+            assistant_content = f"<think>\n{reasoning_only}\n</think>\n\n{compact_answer}"
+        else:
             assistant_content = f"<think>\n{reasoning_chain}\n</think>"
     else:
-        # For non-thinking mode, output empty think tags per Qwen3 recommendation
-        if final_answer_part:
-            assistant_content = f"<think>\n\n</think>\n\n{final_answer_part}"
+        if compact_answer:
+            assistant_content = f"<think>\n\n</think>\n\n{compact_answer}"
         else:
             assistant_content = reasoning_chain
     

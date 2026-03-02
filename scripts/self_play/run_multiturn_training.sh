@@ -63,7 +63,7 @@ echo "Prompts no longer include final_answer (Injector outputs only generated_no
 python3 scripts/self_play/preprocess_medec.py \
     --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
     --output "$DATA_DIR/train.parquet" \
-    --injection-prompts configs/prompts/error_injection_prompts_v2.json \
+    --injection-prompts configs/prompts/error_injection_prompts_v4.json \
     --max-pairs 50
 
 # Validation data
@@ -72,7 +72,7 @@ if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
     python3 scripts/self_play/preprocess_medec.py \
         --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
         --output "$VAL_FILE" \
-        --injection-prompts configs/prompts/error_injection_prompts_v2.json \
+        --injection-prompts configs/prompts/error_injection_prompts_v4.json \
         --max-pairs 50
 else
     echo "Warning: No separate validation file, using training file"

@@ -11,6 +11,7 @@ import json
 import os
 import asyncio
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict, field
@@ -22,6 +23,10 @@ import time
 from openai import AsyncOpenAI, RateLimitError, APIError
 from dotenv import load_dotenv
 from tqdm.asyncio import tqdm as tqdm_async
+
+# Add project root to path for shared utils
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.self_play.utils import number_sentences, find_error_sentence_id
 
 load_dotenv()
 
@@ -439,20 +444,62 @@ class MedPRMGenerator:
         return prompts
     
     def _format_prompt(self, template: str, pair: Dict) -> str:
-        """Format prompt template with pair data, handling missing keys gracefully."""
+        """Format prompt template with pair data, pre-numbering notes as sentences.
+        
+        Handles both old ({correct_note}, {incorrect_note}) and new ({sentences},
+        {correct_sentences}, {incorrect_sentences}) template variables.
+        """
+        correct_note = pair.get('correct_note', '')
+        incorrect_note = pair.get('incorrect_note', '')
+        error_sentence = pair.get('error_sentence', '')
+        
+        # Pre-number sentences
+        correct_sentences = number_sentences(correct_note) if correct_note else ''
+        incorrect_sentences = number_sentences(incorrect_note) if incorrect_note else ''
+        
+        # For assessor templates that use {sentences}: use correct or incorrect
+        # depending on what the template needs
+        sentences = incorrect_sentences if incorrect_note else correct_sentences
+        
+        # Find error sentence ID for the template
+        error_sentence_id = ''
+        if error_sentence and incorrect_note:
+            sid = find_error_sentence_id(incorrect_note, error_sentence)
+            error_sentence_id = str(sid) if sid else ''
+        
         return template.format(
-            correct_note=pair.get('correct_note', ''),
-            incorrect_note=pair.get('incorrect_note', ''),
+            correct_note=correct_note,
+            incorrect_note=incorrect_note,
+            sentences=sentences,
+            correct_sentences=correct_sentences,
+            incorrect_sentences=incorrect_sentences,
             error_type=pair.get('error_type', ''),
             error_sentence=pair.get('error_sentence', ''),
+            error_sentence_id=error_sentence_id,
             corrected_sentence=pair.get('corrected_sentence', '')
         )
 
     def _format_benign_prompt(self, template: str, record: Dict) -> str:
-        """Format prompt template with benign change record data (different schema)."""
+        """Format prompt template with benign change record data, pre-numbering notes."""
+        original_note = record.get('original_note', '')
+        modified_note = record.get('modified_note', '')
+        
+        original_sentences = number_sentences(original_note) if original_note else ''
+        modified_sentences = number_sentences(modified_note) if modified_note else ''
+        
+        # Try to find which sentence was changed
+        changed_sentence_id = ''
+        if original_note and modified_note:
+            from scripts.self_play.utils import diff_sentences
+            sid = diff_sentences(original_sentences, modified_sentences)
+            changed_sentence_id = str(sid) if sid else ''
+        
         return template.format(
-            original_note=record.get('original_note', ''),
-            modified_note=record.get('modified_note', ''),
+            original_note=original_note,
+            modified_note=modified_note,
+            original_sentences=original_sentences,
+            modified_sentences=modified_sentences,
+            changed_sentence_id=changed_sentence_id,
             change_type=record.get('change_type', ''),
             original_term=record.get('original_term', ''),
             replacement_term=record.get('replacement_term', '')

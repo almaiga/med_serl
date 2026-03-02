@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Medical Error Detection Inference Script
+Medical Error Detection + Localization Inference Script
 
 Tests different model versions on MEDEC test data:
 - Qwen3 models (Qwen/Qwen3-4B, etc.)
 - MedGemma models (google/medgemma-4b-it, google/medgemma-4b-pt)
 - Fine-tuned models (from SFT/GRPO)
 
-Uses CoT prompting with few-shot examples for error detection.
+Uses CoT prompting for error detection + sentence-level localization.
+Input: pre-numbered sentences. Output: CORRECT or sentence number.
 Supports both Qwen3 thinking format and standard generation.
 """
 
 import os
 import json
 import re
+import sys
 import argparse
 import pandas as pd
 import torch
@@ -22,6 +24,10 @@ from typing import List, Dict, Tuple
 from pathlib import Path
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
+
+# Add project root to path for shared utils
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.self_play.utils import number_sentences, parse_assessor_answer
 
 # Try to import PEFT for LoRA support
 try:
@@ -44,7 +50,7 @@ def load_prompts(prompt_file: str = None) -> Dict[str, str]:
     if prompt_file is None:
         # Default path relative to script location
         script_dir = Path(__file__).parent.parent
-        prompt_file = script_dir / "configs" / "prompts" / "error_detection_prompts.json"
+        prompt_file = script_dir / "configs" / "prompts" / "detection_localization_prompts.json"
     
     prompt_path = Path(prompt_file)
     if not prompt_path.exists():
@@ -222,10 +228,12 @@ def build_error_detection_prompt(
     model_type: str = MODEL_TYPE_QWEN
 ) -> Tuple[List[Dict[str, str]], bool]:
     """
-    Build prompt for error detection with CoT.
+    Build prompt for error detection + localization.
+    
+    Pre-numbers the note into 1-indexed sentences, then uses {sentences} template.
     
     Args:
-        note: Medical note to analyze
+        note: Medical note to analyze (raw text)
         prompts: Dictionary containing 'system_prompt' and 'user_template'
         use_cot: Whether to enable chain-of-thought reasoning
         model_type: Type of model being used
@@ -235,8 +243,11 @@ def build_error_detection_prompt(
     system_prompt = prompts['system_prompt']
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Format the user query using the template
-    query = prompts['user_template'].format(note=note)
+    # Pre-number the note into 1-indexed sentences
+    sentences = number_sentences(note)
+    
+    # Format the user query using the template with {sentences}
+    query = prompts['user_template'].format(sentences=sentences)
     messages.append({"role": "user", "content": query})
     
     # Return enable_thinking flag for Qwen3's native CoT (only for Qwen models)
@@ -274,56 +285,49 @@ def parse_qwen3_output(tokenizer, input_ids, generated_ids) -> Tuple[str, str]:
     return thinking_content, content
 
 
-def parse_response(thinking: str, content: str) -> Tuple[str, str, str]:
+def parse_response(thinking: str, content: str) -> Tuple[str, str, str, int]:
     """
-    Parse model response to extract thinking, label, and explanation.
+    Parse model response to extract thinking, label, explanation, and sentence ID.
+    
+    Uses the shared parse_assessor_answer() for consistent parsing across
+    the entire pipeline (SFT, self-play, inference).
+    
+    Output labels:
+    - "CORRECT" — no error detected
+    - "INCORRECT" — error detected (for backward compatibility with MEDEC eval)
+    
+    Also extracts the predicted sentence number when available.
     
     Args:
         thinking: The thinking content (from <think> block)
         content: The final response content
     
-    Returns: (thinking, label, explanation)
+    Returns: (thinking, label, explanation, predicted_sentence_id)
+             predicted_sentence_id is None when label is CORRECT or parsing failed.
     """
-    label = "Unknown"
-    explanation = ""
+    # Use shared parser for consistent behavior
+    label_type, pred_sid = parse_assessor_answer(content)
     
-    # Extract label and explanation from the content
-    lines = content.split('\n')
-    for i, line in enumerate(lines):
-        line_lower = line.lower().strip()
-        
-        # Look for label
-        if 'label:' in line_lower or 'answer:' in line_lower:
-            label_text = line.split(':', 1)[1].strip()
-            # Normalize label
-            if 'correct' in label_text.lower() and 'incorrect' not in label_text.lower():
-                label = 'CORRECT'
-            elif 'incorrect' in label_text.lower():
-                label = 'INCORRECT'
-        
-        # Look for explanation
-        if 'explanation:' in line_lower:
-            explanation = line.split(':', 1)[1].strip()
-            # Get rest of explanation if multi-line
-            if i + 1 < len(lines):
-                remaining = '\n'.join(lines[i+1:]).strip()
-                if remaining:
-                    explanation = explanation + " " + remaining
-            break
-    
-    # If no structured format, try to infer from text
-    if label == "Unknown":
+    if label_type == "CORRECT":
+        label = "CORRECT"
+        explanation = content.strip()
+    elif label_type == "ERROR":
+        label = "INCORRECT"  # Map to MEDEC format for evaluation
+        if pred_sid is not None:
+            explanation = f"Error at sentence {pred_sid}"
+        else:
+            explanation = content.strip()
+    else:
+        # UNKNOWN — try fallback heuristics
+        label = "Unknown"
+        explanation = content.strip()
         content_lower = content.lower()
-        if 'no error' in content_lower or 'is correct' in content_lower or 'correct' in content_lower:
+        if 'no error' in content_lower or 'is correct' in content_lower:
             label = 'CORRECT'
         elif 'error' in content_lower or 'incorrect' in content_lower or 'mistake' in content_lower:
             label = 'INCORRECT'
     
-    # If still no explanation, use the whole content
-    if not explanation:
-        explanation = content
-    
-    return thinking, label, explanation
+    return thinking, label, explanation, pred_sid
 
 
 def run_inference(
@@ -575,7 +579,7 @@ def run_inference(
                 ).strip("\n")
                 
                 # Parse response
-                thinking, predicted_label, explanation = parse_response(thinking_content, content)
+                thinking, predicted_label, explanation, pred_sid = parse_response(thinking_content, content)
 
                 # Store result - ensure all values are JSON serializable with proper NaN handling
                 gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
@@ -589,6 +593,7 @@ def run_inference(
                     'ground_truth_label': gt_label,
                     'error_type': str(metadata['error_type']) if metadata['error_type'] else '',
                     'predicted_label': predicted_label,
+                    'predicted_sentence_id': pred_sid,
                     'explanation': explanation if explanation else '',
                     'thinking': thinking if thinking else '',
                     'correct': bool(correct),
@@ -622,7 +627,7 @@ def run_inference(
                 thinking_content = ""
                 
                 # Parse response
-                thinking, predicted_label, explanation = parse_response(thinking_content, content)
+                thinking, predicted_label, explanation, pred_sid = parse_response(thinking_content, content)
                 
                 # Store result - ensure all values are JSON serializable with proper NaN handling
                 gt_label = "INCORRECT" if metadata['ground_truth'] == 1 else "CORRECT"
@@ -636,6 +641,7 @@ def run_inference(
                     'ground_truth_label': gt_label,
                     'error_type': str(metadata['error_type']) if metadata['error_type'] else '',
                     'predicted_label': predicted_label,
+                    'predicted_sentence_id': pred_sid,
                     'explanation': explanation if explanation else '',
                     'thinking': thinking if thinking else '',
                     'correct': bool(correct),
@@ -653,7 +659,7 @@ def run_inference(
 
 
 def calculate_metrics(results: List[Dict]) -> Dict:
-    """Calculate accuracy, precision, recall, F1."""
+    """Calculate accuracy, precision, recall, F1, and localization stats."""
     total = len(results)
     correct = sum(1 for r in results if r['correct'])
     
@@ -668,6 +674,14 @@ def calculate_metrics(results: List[Dict]) -> Dict:
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
     f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
     
+    # Localization stats: among true-positive detections, how many
+    # produced a specific sentence ID (vs. just flagging "error")?
+    tp_results = [r for r in results
+                  if r['predicted_label'] == 'INCORRECT'
+                  and r['ground_truth_label'] == 'INCORRECT']
+    localized = sum(1 for r in tp_results if r.get('predicted_sentence_id') is not None)
+    localization_rate = localized / len(tp_results) if tp_results else 0
+    
     return {
         'total_samples': total,
         'correct': correct,
@@ -680,6 +694,11 @@ def calculate_metrics(results: List[Dict]) -> Dict:
             'false_positive': fp,
             'true_negative': tn,
             'false_negative': fn
+        },
+        'localization': {
+            'true_positives_with_sentence_id': localized,
+            'true_positives_total': len(tp_results),
+            'localization_rate': localization_rate
         }
     }
 
@@ -793,6 +812,10 @@ def main():
     print(f"  FP: {metrics['confusion_matrix']['false_positive']}")
     print(f"  TN: {metrics['confusion_matrix']['true_negative']}")
     print(f"  FN: {metrics['confusion_matrix']['false_negative']}")
+    loc = metrics['localization']
+    print(f"\nLocalization (sentence-level):")
+    print(f"  TPs with sentence ID: {loc['true_positives_with_sentence_id']}/{loc['true_positives_total']}")
+    print(f"  Localization rate: {loc['localization_rate']:.3f}")
     print(f"{'='*60}\n")
     
     # Save results

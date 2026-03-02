@@ -2,6 +2,14 @@
 
 Handles extraction of public responses (stripping hidden CoT) and
 parsing structured outputs from Injector and Assessor roles.
+
+Injector output format (v4):
+    <think>...</think>  (optional)
+    N. <modified sentence text>
+
+Assessor output format:
+    <think>...</think>  (optional)
+    CORRECT  or  <sentence_number>
 """
 
 import re
@@ -9,15 +17,21 @@ import json
 from typing import Optional
 from dataclasses import dataclass
 
+from scripts.self_play.utils import (
+    strip_thinking,
+    parse_assessor_answer,
+    parse_injector_compact,
+    reconstruct_note,
+)
+
 
 @dataclass
 class InjectorOutput:
     """Parsed output from the Injector role."""
     raw_response: str
-    thinking: Optional[str]  # Hidden CoT (not shown to Assessor)
-    generated_note: Optional[str]
-    final_answer: Optional[str]  # "CORRECT" or "INCORRECT"
-    changes_made: Optional[dict]
+    thinking: Optional[str]       # Hidden CoT (not shown to Assessor)
+    changed_sentence_id: Optional[int]   # 1-indexed sentence that was modified
+    modified_text: Optional[str]         # New text for that sentence
     parse_success: bool
 
 
@@ -26,8 +40,8 @@ class AssessorOutput:
     """Parsed output from the Assessor role."""
     raw_response: str
     thinking: Optional[str]
-    final_answer: Optional[str]  # "CORRECT" or "INCORRECT"
-    explanation: Optional[str]
+    label: str                    # "CORRECT", "ERROR", or "UNKNOWN"
+    sentence_id: Optional[int]   # 1-indexed sentence number if ERROR, else None
     parse_success: bool
 
 
@@ -37,15 +51,8 @@ def extract_thinking(text: str) -> tuple[Optional[str], str]:
     Returns:
         Tuple of (thinking_content, text_without_thinking)
     """
-    pattern = r'<think>(.*?)</think>'
-    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-    
-    if match:
-        thinking = match.group(1).strip()
-        rest = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE).strip()
-        return thinking, rest
-    
-    return None, text
+    thinking, rest = strip_thinking(text)
+    return (thinking or None), rest
 
 
 def extract_public_response(full_response: str) -> str:
@@ -54,155 +61,96 @@ def extract_public_response(full_response: str) -> str:
     This is the key function for hidden CoT - the Assessor only sees
     the public portion of the Injector's output.
     """
-    _, public = extract_thinking(full_response)
+    _, public = strip_thinking(full_response)
     return public
 
 
 def parse_injector_output(response: str) -> InjectorOutput:
-    """Parse Injector's structured output.
+    """Parse Injector's compact output.
     
-    Expected format:
-        <think>...</think>  (optional)
-        
-        generated_note:
-        [the clinical note]
-        
-        final_answer: "CORRECT" or "INCORRECT"
-        
-        changes_made:
-        {"original_sentence": "...", "modified_sentence": "...", ...}
+    Expected format (v4):
+        <think>...</think>  (optional reasoning)
+        N. <modified sentence text>
+    
+    Example:
+        <think>I'll change sentence 3 to introduce a dosage error...</think>
+        3. Patient was prescribed 500mg of amoxicillin twice daily.
     """
-    thinking, rest = extract_thinking(response)
-    
-    # Extract generated_note - try multiple patterns for robustness
-    generated_note = None
-    note_patterns = [
-        r'generated_note:\s*\n(.*?)(?=\n\s*final_answer:|\n\s*changes_made:|$)',
-        r'generated_note:\s*(.*?)(?=final_answer:|changes_made:|$)',
-    ]
-    
-    for pattern in note_patterns:
-        note_match = re.search(pattern, rest, re.DOTALL | re.IGNORECASE)
-        if note_match:
-            generated_note = note_match.group(1).strip()
-            if generated_note:
-                break
-    
-    # Extract final_answer
-    final_answer = None
-    answer_pattern = r'final_answer:\s*["\']?(CORRECT|INCORRECT)["\']?'
-    answer_match = re.search(answer_pattern, rest, re.IGNORECASE)
-    if answer_match:
-        final_answer = answer_match.group(1).upper()
-    
-    # Extract changes_made JSON
-    changes_made = None
-    changes_pattern = r'changes_made:\s*\n?\s*(\{.*?\})'
-    changes_match = re.search(changes_pattern, rest, re.DOTALL)
-    if changes_match:
-        try:
-            changes_made = json.loads(changes_match.group(1))
-        except json.JSONDecodeError:
-            # Try to fix common JSON issues
-            json_str = changes_match.group(1)
-            json_str = re.sub(r'(\w+):', r'"\1":', json_str)  # Add quotes to keys
-            try:
-                changes_made = json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-    
-    parse_success = generated_note is not None and final_answer is not None
+    thinking, _ = strip_thinking(response)
+    sid, modified = parse_injector_compact(response)
     
     return InjectorOutput(
         raw_response=response,
-        thinking=thinking,
-        generated_note=generated_note,
-        final_answer=final_answer,
-        changes_made=changes_made,
-        parse_success=parse_success,
+        thinking=thinking or None,
+        changed_sentence_id=sid,
+        modified_text=modified,
+        parse_success=sid is not None and modified is not None,
     )
 
 
-def extract_note_for_assessor(injector_response: str) -> str:
-    """Extract ONLY the generated note for Assessor - hiding all other information.
+def extract_note_for_assessor(
+    injector_response: str,
+    original_sentences: str,
+) -> str:
+    """Build the full modified note for the Assessor from injector output.
     
-    This is the key function for the Hidden CoT design (SeRL paper).
-    The Assessor should see ONLY the clinical note text, with:
-    - NO <think>...</think> reasoning
-    - NO final_answer declaration
-    - NO changes_made metadata
+    The Assessor sees the complete numbered note with the injector's change
+    applied. All CoT reasoning is stripped.
+    
+    Args:
+        injector_response: Raw injector model output.
+        original_sentences: The original numbered sentences string.
     
     Returns:
-        The sanitized clinical note text only
+        Full numbered note with the injector's modification applied.
+        Returns original_sentences unchanged if parsing fails.
     """
     parsed = parse_injector_output(injector_response)
     
-    if not parsed.generated_note:
-        return ""
+    if not parsed.parse_success:
+        return original_sentences
     
-    note = parsed.generated_note
-    
-    # Sanitize: remove any leaked information that might hint at the answer
-    # Remove any stray final_answer or CORRECT/INCORRECT keywords
-    note = re.sub(r'final_answer:\s*["\']?(?:CORRECT|INCORRECT)["\']?', '', note, flags=re.IGNORECASE)
-    note = re.sub(r'changes_made:\s*\{.*?\}', '', note, flags=re.DOTALL | re.IGNORECASE)
-    note = re.sub(r'\n\s*"?(CORRECT|INCORRECT)"?\s*$', '', note, flags=re.IGNORECASE)
-    
-    return note.strip()
-
-
-def parse_assessor_output(response: str) -> AssessorOutput:
-    """Parse Assessor's structured output.
-    
-    Expected format:
-        <think>...</think>  (optional)
-        
-        final_answer: "CORRECT" or "INCORRECT"
-        Explanation: [one sentence]
-    """
-    thinking, rest = extract_thinking(response)
-    
-    # Extract final_answer
-    final_answer = None
-    answer_pattern = r'final_answer:\s*["\']?(CORRECT|INCORRECT)["\']?'
-    answer_match = re.search(answer_pattern, rest, re.IGNORECASE)
-    if answer_match:
-        final_answer = answer_match.group(1).upper()
-    
-    # Extract explanation
-    explanation = None
-    explanation_pattern = r'[Ee]xplanation:\s*(.+?)(?:\n|$)'
-    explanation_match = re.search(explanation_pattern, rest)
-    if explanation_match:
-        explanation = explanation_match.group(1).strip()
-    
-    parse_success = final_answer is not None
-    
-    return AssessorOutput(
-        raw_response=response,
-        thinking=thinking,
-        final_answer=final_answer,
-        explanation=explanation,
-        parse_success=parse_success,
+    return reconstruct_note(
+        original_sentences, parsed.changed_sentence_id, parsed.modified_text
     )
 
 
-def validate_injector_note(
-    original_note: str,
-    generated_note: str,
-    max_edit_distance_ratio: float = 0.3,
-) -> bool:
-    """Check if generated note is a valid minimal edit of original.
+def parse_assessor_output(response: str) -> AssessorOutput:
+    """Parse Assessor's output: CORRECT or a sentence number.
     
-    Returns True if the edit is within acceptable bounds.
-    Used for sanity checking, not for reward computation in v1.
+    Expected format:
+        <think>...</think>  (optional)
+        CORRECT
+        or
+        7
     """
-    if not generated_note or not original_note:
-        return False
+    thinking, _ = strip_thinking(response)
+    label, sentence_id = parse_assessor_answer(response)
     
-    # Simple length-based check
-    len_ratio = len(generated_note) / len(original_note)
-    if len_ratio < 0.7 or len_ratio > 1.3:
-        return False
+    return AssessorOutput(
+        raw_response=response,
+        thinking=thinking or None,
+        label=label,
+        sentence_id=sentence_id,
+        parse_success=label != "UNKNOWN",
+    )
+
+
+def validate_injector_output(
+    parsed: InjectorOutput,
+    total_sentences: int,
+) -> bool:
+    """Check if injector output is valid.
     
+    Returns True if:
+    - Parse succeeded
+    - Sentence ID is within range [1, total_sentences]
+    - Modified text is non-empty
+    """
+    if not parsed.parse_success:
+        return False
+    if parsed.changed_sentence_id < 1 or parsed.changed_sentence_id > total_sentences:
+        return False
+    if not parsed.modified_text or len(parsed.modified_text.strip()) < 5:
+        return False
     return True

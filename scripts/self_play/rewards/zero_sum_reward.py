@@ -1,32 +1,38 @@
-"""Zero-sum reward function for medical error detection self-play.
+"""Zero-sum reward function for medical error detection + localization self-play.
 
-Implements the adversarial reward structure:
-- Injector wins (+1) if Assessor is fooled
-- Assessor wins (+1) if classification is correct
-- Zero-sum: one player's gain is the other's loss
+Implements the 3-tier adversarial reward structure:
+- Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
+- Partial match (error detected but wrong sentence): +0.3
+- Miss (wrong classification or unparseable): -1.0
+- Format bonus: +0.1 for parseable output
 
 Compatible with both verl and OpenRLHF reward interfaces.
 """
 
 import json
 import re
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 
-# Reward values
-REWARD_WIN = 1.0
-REWARD_LOSE = -1.0
-FORMAT_REWARD = 0.1  # Small bonus for correct output format
+from scripts.self_play.utils import parse_assessor_answer
+
+# Reward values (3-tier)
+REWARD_EXACT = 1.0     # Exact match
+REWARD_PARTIAL = 0.3   # Detected error, wrong sentence
+REWARD_MISS = -1.0     # Missed or invalid
+FORMAT_REWARD = 0.1    # Small bonus for correct output format
 
 
-def parse_final_answer(response: str) -> Optional[str]:
-    """Extract final_answer from response."""
-    pattern = r'final_answer:\s*["\']?(CORRECT|INCORRECT)["\']?'
-    match = re.search(pattern, response, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
-    return None
+def parse_final_answer(response: str) -> Tuple[str, Optional[int]]:
+    """Extract assessor answer from response.
+    
+    Returns:
+        (label, sentence_id) where label is CORRECT/ERROR/UNKNOWN
+    """
+    if not response:
+        return ("UNKNOWN", None)
+    return parse_assessor_answer(response)
 
 
 def compute_game_rewards(
@@ -35,46 +41,65 @@ def compute_game_rewards(
     injector_output: str,
     assessor_output: str,
 ) -> tuple[float, float]:
-    """Compute zero-sum rewards for Injector and Assessor.
+    """Compute 3-tier zero-sum rewards for Injector and Assessor.
     
     Args:
         mode: "benign" or "error_injection"
-        ground_truth: "CORRECT" (benign) or "INCORRECT" (error)
+        ground_truth: "CORRECT" or str(sentence_id)
         injector_output: Full Injector response
         assessor_output: Full Assessor response
         
     Returns:
         (injector_reward, assessor_reward)
     """
-    # Parse Assessor's classification
-    assessor_answer = parse_final_answer(assessor_output)
-    injector_answer = parse_final_answer(injector_output)
+    # Parse Assessor's answer
+    label, pred_sid = parse_final_answer(assessor_output)
     
     # Default rewards
     injector_reward = 0.0
     assessor_reward = 0.0
     
-    # Check for format compliance
-    if injector_answer is not None:
-        injector_reward += FORMAT_REWARD
-    if assessor_answer is not None:
+    # Format compliance
+    if label != "UNKNOWN":
         assessor_reward += FORMAT_REWARD
+    # Injector format bonus (compact N. <text> format)
+    if injector_output and re.search(r'^\d+\.\s', injector_output.strip()):
+        injector_reward += FORMAT_REWARD
     
     # If Assessor failed to produce valid output, Injector wins by default
-    if assessor_answer is None:
-        return injector_reward + REWARD_WIN, assessor_reward + REWARD_LOSE
+    if label == "UNKNOWN":
+        return injector_reward + abs(REWARD_MISS), assessor_reward + REWARD_MISS
     
-    # Zero-sum game outcome
-    assessor_correct = (assessor_answer == ground_truth)
+    gt_is_correct = (ground_truth == "CORRECT")
     
-    if assessor_correct:
-        # Assessor wins
-        assessor_reward += REWARD_WIN
-        injector_reward += REWARD_LOSE
-    else:
-        # Injector wins (fooled the Assessor)
-        injector_reward += REWARD_WIN
-        assessor_reward += REWARD_LOSE
+    # 3-tier reward
+    if gt_is_correct and label == "CORRECT":
+        # Exact match: both agree note is correct → Assessor wins
+        assessor_reward += REWARD_EXACT
+        injector_reward += REWARD_MISS
+    elif gt_is_correct and label != "CORRECT":
+        # False positive: note is correct but assessor flagged → Injector wins
+        assessor_reward += REWARD_MISS
+        injector_reward += REWARD_EXACT
+    elif not gt_is_correct and label == "CORRECT":
+        # Missed error: Assessor fooled → Injector wins
+        assessor_reward += REWARD_MISS
+        injector_reward += REWARD_EXACT
+    elif not gt_is_correct and label == "ERROR":
+        # Assessor detected error — check sentence number
+        pred_str = str(pred_sid) if pred_sid else ""
+        if pred_str == ground_truth:
+            # Exact sentence match → Assessor wins decisively
+            assessor_reward += REWARD_EXACT
+            injector_reward += REWARD_MISS
+        elif pred_sid is not None:
+            # Partial: detected error, wrong sentence → partial credit both ways
+            assessor_reward += REWARD_PARTIAL
+            injector_reward += -REWARD_PARTIAL
+        else:
+            # Detected but no sentence → mostly Assessor partial win
+            assessor_reward += REWARD_PARTIAL
+            injector_reward += -REWARD_PARTIAL
     
     return injector_reward, assessor_reward
 
@@ -98,11 +123,10 @@ def compute_score(
     Returns:
         Dict with reward breakdown
     """
-    # Extract game result from extra_info (populated by tool)
     game_result = extra_info.get("game_result", {}) if extra_info else {}
     
     mode = game_result.get("mode", "unknown")
-    gt = game_result.get("ground_truth", "CORRECT")
+    gt = str(game_result.get("ground_truth", "CORRECT"))
     injector_output = game_result.get("injector_output", "")
     assessor_output = game_result.get("assessor_output", "")
     
@@ -114,8 +138,9 @@ def compute_score(
     )
     
     # Combined reward (for single-model training)
-    # Both roles are the same model, so we sum rewards
     total_reward = injector_reward + assessor_reward
+    
+    label, pred_sid = parse_final_answer(assessor_output)
     
     return {
         "reward": total_reward,
@@ -123,8 +148,12 @@ def compute_score(
         "assessor_reward": assessor_reward,
         "mode": mode,
         "ground_truth": gt,
-        "assessor_answer": parse_final_answer(assessor_output),
-        "assessor_correct": parse_final_answer(assessor_output) == gt,
+        "assessor_label": label,
+        "assessor_pred_sid": pred_sid,
+        "assessor_exact": (
+            (gt == "CORRECT" and label == "CORRECT") or 
+            (gt != "CORRECT" and label == "ERROR" and str(pred_sid) == gt)
+        ),
     }
 
 
@@ -151,10 +180,6 @@ def reward_func(
         except json.JSONDecodeError:
             label = {}
         
-        # Parse the multi-turn transcript to extract turns
-        # This depends on how verl formats the transcript
-        # Simplified: assume game_result is embedded or we parse manually
-        
         extra_info = label.get("extra_info", {})
         game_result = extra_info.get("game_result", {})
         
@@ -167,14 +192,11 @@ def reward_func(
             )
             rewards.append(result["reward"])
         else:
-            # Fallback: try to parse transcript directly
-            # This handles cases where game_result wasn't populated
             rewards.append(0.0)
     
     return torch.tensor(rewards, dtype=torch.float32)
 
 
-# Logging utilities for analysis
 def log_game_outcome(
     game_result: dict,
     injector_reward: float,
@@ -182,12 +204,19 @@ def log_game_outcome(
     output_path: Optional[str] = None,
 ) -> dict:
     """Create a log entry for game analysis."""
+    label, pred_sid = parse_final_answer(game_result.get("assessor_output", ""))
+    gt = str(game_result.get("ground_truth", ""))
+    
     log_entry = {
         "note_id": game_result.get("note_data", {}).get("note_id", ""),
         "mode": game_result.get("mode", ""),
-        "ground_truth": game_result.get("ground_truth", ""),
-        "assessor_answer": parse_final_answer(game_result.get("assessor_output", "")),
-        "assessor_correct": parse_final_answer(game_result.get("assessor_output", "")) == game_result.get("ground_truth", ""),
+        "ground_truth": gt,
+        "assessor_label": label,
+        "assessor_pred_sid": pred_sid,
+        "assessor_exact": (
+            (gt == "CORRECT" and label == "CORRECT") or
+            (gt != "CORRECT" and label == "ERROR" and str(pred_sid) == gt)
+        ),
         "injector_reward": injector_reward,
         "assessor_reward": assessor_reward,
         "injector_output_length": len(game_result.get("injector_output", "")),

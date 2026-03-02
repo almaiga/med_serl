@@ -4,16 +4,16 @@
 #
 # Game Design (from SeRL paper arXiv:2506.07468):
 # - Turn 1 (Injector): Model modifies clinical note (benign OR error injection)
-# - Turn 2 (Assessor): Model classifies note as CORRECT or INCORRECT
-# - Zero-sum rewards: If Assessor wins, Injector loses and vice versa
-# - Hidden CoT: Injector's <think> and final_answer are stripped before Assessor sees note
+# - Turn 2 (Assessor): Model outputs CORRECT or the error sentence number
+# - Zero-sum rewards with 3-tier localization: exact match, detection-only, miss
+# - Hidden CoT: Injector's <think> is stripped before Assessor sees note
 
 interaction:
   - name: "medical_game"
     class_name: "scripts.self_play.interactions.medical_game_interaction.MedicalGameInteraction"
     config:
-      # Prompts for Assessor (Turn 2)
-      detection_prompts_path: "configs/prompts/error_detection_prompts.json"
+      # Prompts for Assessor (Turn 2) - detection + localization
+      detection_prompts_path: "configs/prompts/detection_localization_prompts.json"
       
       # Max turns per episode
       max_turns: 2

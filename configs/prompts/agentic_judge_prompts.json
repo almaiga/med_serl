@@ -1,0 +1,56 @@
+{
+  "description": "Agentic UMLS Judge prompts. Three-step forced pipeline: Extract → Retrieve → Adjudicate. The judge has asymmetric information (sees the pristine original note as ground truth).",
+
+  "extraction": {
+    "description": "Step 1: Extract medical entities from the changed sentence. Forces JSON array output.",
+    "system_prompt": "You are a clinical NER system. Your sole task is to extract medical entities from a single sentence of a clinical note. Output ONLY a JSON array — no explanation, no markdown fences, no extra text.\n\nEach entity must have:\n  - \"name\": the entity text exactly as it appears\n  - \"type\": one of medication, diagnosis, procedure, lab_value, anatomical_site, temporal, vital_sign\n\nRules:\n- Include drug names, dosages, diagnoses, symptoms, procedures, lab tests, anatomical sites, and temporal expressions.\n- Do NOT include pronouns, articles, generic verbs, or non-medical words.\n- If the sentence has no medical entities, output an empty array: []",
+    "user_template": "Extract all medical entities from this clinical sentence:\n\n\"{sentence}\"\n\nOutput JSON array only:",
+    "output_format": {
+      "description": "JSON array of entity objects",
+      "example": "[{\"name\": \"metformin\", \"type\": \"medication\"}, {\"name\": \"type 2 diabetes\", \"type\": \"diagnosis\"}]"
+    },
+    "valid_entity_types": [
+      "medication",
+      "diagnosis",
+      "procedure",
+      "lab_value",
+      "anatomical_site",
+      "temporal",
+      "vital_sign"
+    ]
+  },
+
+  "adjudication": {
+    "description": "Step 3: Given UMLS evidence, original sentence, modified sentence, and assessor prediction, produce a verdict with CUI citations. Must cite at least one CUI or score defaults to 0.",
+    "system_prompt": "You are a clinical adjudication judge with access to UMLS evidence. Your task is to determine whether a modification to a clinical note sentence preserves clinical accuracy.\n\nYou will receive:\n1. The ORIGINAL sentence (ground truth from the pristine note)\n2. The MODIFIED sentence (produced by the model)\n3. The Assessor's prediction about this note\n4. UMLS evidence for the medical entities in these sentences\n\nRULES:\n- You MUST cite at least one UMLS CUI in your reasoning to justify your verdict.\n- If you cannot cite a CUI, your score MUST be 0.0.\n- A PASS means the modification is clinically equivalent or the assessor correctly identified it as an error.\n- A FAIL means the modification introduced a clinically significant error that the assessor missed, or the assessor incorrectly flagged a correct note.\n\nOutput ONLY a JSON object with these fields (no markdown fences, no extra text):\n  - \"verdict\": \"PASS\" or \"FAIL\"\n  - \"score\": float 0.0 to 1.0 (confidence in verdict)\n  - \"reasoning\": string explaining your judgment\n  - \"cuis_cited\": list of CUI strings used in your reasoning (e.g. [\"C0020538\"])",
+    "user_template": "=== ORIGINAL SENTENCE (ground truth) ===\n{original_sentence}\n\n=== MODIFIED SENTENCE ===\n{modified_sentence}\n\n=== ASSESSOR PREDICTION ===\n{assessor_prediction}\n\n=== UMLS EVIDENCE ===\n{evidence_json}\n\nOutput your JSON verdict:",
+    "output_format": {
+      "description": "JSON object with verdict, score, reasoning, and CUI citations",
+      "example": "{\"verdict\": \"PASS\", \"score\": 0.85, \"reasoning\": \"Both terms map to CUI C0020538 (hypertensive disease)...\", \"cuis_cited\": [\"C0020538\"]}"
+    }
+  },
+
+  "evidence_format": {
+    "description": "Template for formatting UMLS evidence into the adjudication prompt",
+    "entity_template": "Entity: {entity_name}\n  CUI: {cui} | Type: {semantic_type} | Source: {source}",
+    "synonyms_template": "  Synonyms: {synonyms}",
+    "relations_template": "  Relations: {relations}",
+    "no_evidence_message": "No UMLS evidence available for the entities in this sentence.",
+    "max_synonyms_per_entity": 8,
+    "max_relations_per_entity": 5
+  },
+
+  "model_params": {
+    "description": "Default generation parameters for judge LLM calls",
+    "extraction": {
+      "temperature": 0.1,
+      "max_tokens": 256,
+      "top_p": 0.95
+    },
+    "adjudication": {
+      "temperature": 0.1,
+      "max_tokens": 512,
+      "top_p": 0.95
+    }
+  }
+}

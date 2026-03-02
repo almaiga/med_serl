@@ -179,8 +179,11 @@ reward_model:
   reward_manager: naive
 
 # Custom reward function
+# Options:
+#   Rule-based only:  path: scripts.self_play.reward_function
+#   Agentic UMLS:     path: scripts.self_play.agentic_reward
 custom_reward_function:
-  path: null  # Will be set at runtime
+  path: scripts.self_play.agentic_reward
   name: compute_score
 
 # Algorithm configuration (REINFORCE++)

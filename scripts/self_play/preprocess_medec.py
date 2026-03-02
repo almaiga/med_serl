@@ -3,7 +3,10 @@
 Converts JSONL data to verl-compatible format.
 For each note pair, generates 2 examples:
 1. Benign mode (ground_truth="CORRECT") - only uses correct_note
-2. Error mode (ground_truth="INCORRECT") - uses full pair for error injection
+2. Error mode (ground_truth=str(sentence_id)) - error at a specific sentence
+
+Notes are pre-numbered (1-indexed) so the assessor can output a sentence number.
+Error sentence IDs are computed by matching error_sentence text against the note.
 
 Prompts are loaded from JSON config files at preprocessing time.
 
@@ -12,9 +15,15 @@ NOT a JSON-encoded string. We use HuggingFace datasets for proper serialization.
 """
 
 import json
+import random
 import argparse
 from pathlib import Path
 from typing import Any
+
+from scripts.self_play.utils import (
+    number_sentences,
+    find_error_sentence_id,
+)
 
 
 def load_jsonl(filepath: Path) -> list[dict]:
@@ -41,11 +50,25 @@ def create_benign_example(
 ) -> dict:
     """Create a benign modification example (ground_truth = CORRECT).
     
-    Injector receives only the correct_note and makes surface edits.
+    Injector receives pre-numbered sentences and makes surface edits.
+    A random benign change type is selected from the prompt config.
     """
     system_prompt = injection_prompts["system_prompt_correct"]
     user_template = injection_prompts["injector_correct_template"]
-    user_prompt = user_template.format(note=pair["correct_note"])
+
+    # Pre-number the sentences
+    sentences = number_sentences(pair["correct_note"])
+
+    # Pick a random benign change type
+    change_types = injection_prompts.get("benign_change_types", {})
+    change_type = random.choice(list(change_types.keys())) if change_types else "pseudo_factual"
+    change_desc = change_types.get(change_type, "Replace a medical term with an equivalent synonym.")
+
+    user_prompt = user_template.format(
+        sentences=sentences,
+        change_type=change_type,
+        change_type_description=change_desc,
+    )
     
     note_id = pair.get("note_id", f"selfplay-{idx}")
     
@@ -63,20 +86,21 @@ def create_benign_example(
         "extra_info": {
             "note_id": f"{note_id}-benign",
             "correct_note": pair["correct_note"],
+            "sentences": sentences,
             "incorrect_note": "",
             "error_type": "",
             "error_sentence": "",
+            "error_sentence_id": None,
             "corrected_sentence": "",
+            "change_type": change_type,
             "mode": "benign",
         },
-        # CRITICAL for verl multi-turn: interaction_kwargs tells verl which interaction to use
-        # See: https://verl.readthedocs.io/en/latest/sglang_multiturn/interaction_system.html
         "interaction_kwargs": {
-            "name": "medical_game",  # Must match interaction name in config
+            "name": "medical_game",
             "ground_truth": "CORRECT",
             "mode": "benign",
             "note_id": f"{note_id}-benign",
-            "correct_note": pair["correct_note"],
+            "sentences": sentences,
         }
     }
 
@@ -87,16 +111,28 @@ def create_error_example(
     idx: int,
     data_source: str = "medec_selfplay",
 ) -> dict:
-    """Create an error injection example (ground_truth = INCORRECT).
+    """Create an error injection example (ground_truth = sentence number).
     
-    Injector receives the correct_note and error_type to guide injection.
+    Injector receives pre-numbered sentences and error_type to guide injection.
+    Ground truth is the 1-indexed sentence number containing the error.
     """
     system_prompt = injection_prompts["system_prompt_incorrect"]
     user_template = injection_prompts["injector_incorrect_template"]
     error_type = pair.get("error_type", "clinical error")
+
+    # Pre-number the sentences (use incorrect_note so error_sentence can be located)
+    sentences = number_sentences(pair["incorrect_note"])
+
+    # Find error sentence ID by matching error_sentence text
+    error_sentence_text = pair.get("error_sentence", "")
+    error_sentence_id = find_error_sentence_id(pair["incorrect_note"], error_sentence_text)
+    
+    # Ground truth is the sentence number (as string), not "INCORRECT"
+    ground_truth = str(error_sentence_id) if error_sentence_id else "INCORRECT"
+
     user_prompt = user_template.format(
-        note=pair["correct_note"],
-        prompt_intent=error_type
+        sentences=sentences,
+        prompt_intent=error_type,
     )
     
     note_id = pair.get("note_id", f"selfplay-{idx}")
@@ -110,25 +146,27 @@ def create_error_example(
         "ability": "medical_error_detection",
         "reward_model": {
             "style": "rule",
-            "ground_truth": "INCORRECT"
+            "ground_truth": ground_truth,
         },
         "extra_info": {
             "note_id": f"{note_id}-error",
             "correct_note": pair["correct_note"],
             "incorrect_note": pair["incorrect_note"],
+            "sentences": sentences,
             "error_type": pair.get("error_type", ""),
             "error_sentence": pair.get("error_sentence", ""),
+            "error_sentence_id": error_sentence_id,
             "corrected_sentence": pair.get("corrected_sentence", ""),
             "mode": "error_injection",
         },
-        # CRITICAL for verl multi-turn: interaction_kwargs tells verl which interaction to use
         "interaction_kwargs": {
-            "name": "medical_game",  # Must match interaction name in config
-            "ground_truth": "INCORRECT",
+            "name": "medical_game",
+            "ground_truth": ground_truth,
             "mode": "error_injection",
             "note_id": f"{note_id}-error",
-            "correct_note": pair["correct_note"],
+            "sentences": sentences,
             "error_type": error_type,
+            "error_sentence_id": error_sentence_id,
         }
     }
 
@@ -136,7 +174,7 @@ def create_error_example(
 def convert_to_parquet(
     input_path: Path,
     output_path: Path,
-    injection_prompts_path: str = "configs/prompts/error_injection_prompts_v2.json",
+    injection_prompts_path: str = "configs/prompts/error_injection_prompts_v4.json",
     data_source: str = "medec_selfplay",
     max_pairs: int = None,
 ) -> None:
@@ -165,6 +203,7 @@ def convert_to_parquet(
     
     # Generate 2 examples per pair
     verl_examples = []
+    missing_sid_count = 0
     for idx, pair in enumerate(pairs):
         if not pair.get("correct_note") or not pair.get("incorrect_note"):
             print(f"Warning: Skipping pair {idx} - missing required fields")
@@ -174,29 +213,32 @@ def convert_to_parquet(
         benign_ex = create_benign_example(pair, injection_prompts, idx, data_source)
         verl_examples.append(benign_ex)
         
-        # Error example (INCORRECT)
+        # Error example (sentence number)
         error_ex = create_error_example(pair, injection_prompts, idx, data_source)
         verl_examples.append(error_ex)
+
+        if error_ex["extra_info"]["error_sentence_id"] is None:
+            missing_sid_count += 1
     
-    print(f"Generated {len(verl_examples)} examples ({len(pairs)} benign + {len(pairs)} error)")
+    error_count = len(verl_examples) // 2
+    print(f"Generated {len(verl_examples)} examples ({error_count} benign + {error_count} error)")
+    if missing_sid_count:
+        print(f"Warning: {missing_sid_count}/{error_count} error examples could not resolve error_sentence_id")
     
     # Use HuggingFace datasets for proper serialization
-    # verl uses datasets.load_dataset("parquet", ...) which handles list columns properly
     from datasets import Dataset
     
-    # Flatten the data structure for HuggingFace datasets
     rows = []
     for ex in verl_examples:
         rows.append({
             "data_source": ex["data_source"],
-            "prompt": ex["prompt"],  # Keep as native list, NOT json.dumps!
+            "prompt": ex["prompt"],
             "ability": ex["ability"],
-            "reward_model": ex["reward_model"],  # Keep as native dict
-            "extra_info": ex["extra_info"],  # Keep as native dict
-            "interaction_kwargs": ex["interaction_kwargs"],  # CRITICAL for multi-turn
+            "reward_model": ex["reward_model"],
+            "extra_info": ex["extra_info"],
+            "interaction_kwargs": ex["interaction_kwargs"],
         })
     
-    # Create HuggingFace dataset and save as parquet
     hf_dataset = Dataset.from_list(rows)
     
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,15 +251,17 @@ def convert_to_parquet(
         sample = verl_examples[0]
         print(f"ground_truth: {sample['reward_model']['ground_truth']}")
         print(f"mode: {sample['extra_info']['mode']}")
-        user_content = sample['prompt'][1]['content'] if len(sample['prompt']) > 1 else sample['prompt'][0]['content']
-        print(f"prompt preview (user): {user_content[:300]}...")
+        print(f"change_type: {sample['extra_info'].get('change_type', 'N/A')}")
+        user_content = sample['prompt'][1]['content']
+        print(f"prompt preview (user): {user_content[:400]}...")
         
         print("\n--- Sample ERROR example ---")
         sample = verl_examples[1]
         print(f"ground_truth: {sample['reward_model']['ground_truth']}")
         print(f"mode: {sample['extra_info']['mode']}")
-        user_content = sample['prompt'][1]['content'] if len(sample['prompt']) > 1 else sample['prompt'][0]['content']
-        print(f"prompt preview (user): {user_content[:300]}...")
+        print(f"error_sentence_id: {sample['extra_info']['error_sentence_id']}")
+        user_content = sample['prompt'][1]['content']
+        print(f"prompt preview (user): {user_content[:400]}...")
     
     # Verify the saved file
     print("\n--- Verifying saved parquet ---")
@@ -247,7 +291,7 @@ def main():
     parser.add_argument(
         "--injection-prompts",
         type=str,
-        default="configs/prompts/error_injection_prompts_v2.json",
+        default="configs/prompts/error_injection_prompts_v4.json",
         help="Path to injection prompts JSON",
     )
     parser.add_argument(

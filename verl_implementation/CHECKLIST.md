@@ -167,8 +167,8 @@
 - **CoT**: Stripped between phases
 
 ### Prompts
-- **Injector**: `configs/prompts/error_injection_prompts_v2.json`
-- **Assessor**: `configs/prompts/error_detection_prompts.json`
+- **Injector**: `configs/prompts/error_injection_prompts_v4.json`
+- **Assessor**: `configs/prompts/detection_localization_prompts.json`
 
 ---
 
@@ -236,8 +236,8 @@ Before running `bash verl_implementation/scripts/run_training.sh`:
    - [ ] `data_processed/selfplay/test.parquet` (81 examples)
 
 2. [ ] Config files exist:
-   - [ ] `configs/prompts/error_injection_prompts_v2.json`
-   - [ ] `configs/prompts/error_detection_prompts.json`
+   - [ ] `configs/prompts/error_injection_prompts_v4.json`
+   - [ ] `configs/prompts/detection_localization_prompts.json`
    - [ ] `verl_implementation/config/interaction_config.yaml`
 
 3. [ ] Tests passing:
