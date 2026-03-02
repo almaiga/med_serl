@@ -141,6 +141,11 @@ if curl -s "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
 else
     echo ""
     echo "Starting vLLM judge server on port $JUDGE_PORT (GPU $JUDGE_GPU)..."
+
+    # Pre-download model to avoid timeout during server start
+    echo "Ensuring model is cached locally..."
+    python -c "from huggingface_hub import snapshot_download; snapshot_download('$JUDGE_MODEL')" 2>/dev/null || true
+
     CUDA_VISIBLE_DEVICES="$JUDGE_GPU" python -m vllm.entrypoints.openai.api_server \
         --model "$JUDGE_MODEL" \
         --port "$JUDGE_PORT" \
@@ -152,23 +157,32 @@ else
         > "$PROJECT_ROOT/outputs/logs/judge_server.log" 2>&1 &
     JUDGE_PID=$!
     echo "Judge server PID: $JUDGE_PID"
-    echo "Waiting for server to be ready (up to 10 min — first run downloads model)..."
+    echo "Waiting for server to be ready (up to 15 min — first run can be slow)..."
 
-    # Wait up to 600s for the server (model download + KV cache init can take 5+ min cold)
-    for i in $(seq 1 300); do
-        if curl -s "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
-            echo "Judge server ready! (waited ${i}x2s)"
+    # Wait up to 900s for the server (vLLM V1 spawns subprocess with second import)
+    for i in $(seq 1 450); do
+        if curl -s --max-time 3 "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
+            echo ""
+            echo "Judge server ready! (waited $((i*2))s)"
             break
         fi
         if ! kill -0 "$JUDGE_PID" 2>/dev/null; then
+            echo ""
             echo "ERROR: Judge server died. Check outputs/logs/judge_server.log"
             exit 1
+        fi
+        # Progress dots every 30s
+        if (( i % 15 == 0 )); then
+            echo -n " ${i}s"
+        else
+            echo -n "."
         fi
         sleep 2
     done
 
-    if ! curl -s "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
-        echo "ERROR: Judge server failed to start after 600s."
+    if ! curl -s --max-time 5 "http://localhost:${JUDGE_PORT}/v1/models" > /dev/null 2>&1; then
+        echo ""
+        echo "ERROR: Judge server failed to start after 900s."
         echo "Check outputs/logs/judge_server.log for errors."
         exit 1
     fi
