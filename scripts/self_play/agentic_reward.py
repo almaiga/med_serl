@@ -12,12 +12,25 @@ Hybrid scoring formula:
 
 If UMLS/judge fails, gracefully degrades to pure rule-based scoring.
 
-Designed for verl's async Reward Loop:
-    https://verl.readthedocs.io/en/latest/preparation/reward_function.html
+Designed for verl's native GenRM Reward Loop:
+    https://verl.readthedocs.io/en/latest/advance/reward_loop.html
+
+Two execution modes:
+  1. Native GenRM (preferred): veRL manages the judge model server.
+     Set reward_model.enable=True in YAML. veRL injects
+     reward_router_address and reward_model_tokenizer into compute_score.
+     Judge calls go through veRL's /generate endpoint.
+
+  2. Standalone (testing): Manual vLLM server via JUDGE_VLLM_URL env var.
+     Uses OpenAI-compatible /v1/chat/completions endpoint.
 
 Usage in verl config:
+    reward_model:
+      enable: true
+      model:
+        path: Qwen/Qwen3-4B
     custom_reward_function:
-        path: scripts/self_play/agentic_reward
+        path: scripts.self_play.agentic_reward
         name: compute_score
 """
 
@@ -69,8 +82,9 @@ logger = logging.getLogger(__name__)
 # Configuration (from environment)
 # =============================================================================
 
-# vLLM judge server endpoint (same model as actors, separate port)
-JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "http://localhost:8001/v1/chat/completions")
+# Fallback vLLM judge server endpoint (standalone/testing mode only)
+# In native GenRM mode, reward_router_address is injected by veRL.
+JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "http://localhost:8002/v1/chat/completions")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-4B")
 
 # Hybrid scoring weights (must sum to 1.0)
@@ -83,6 +97,11 @@ MAX_ENTITIES = int(os.getenv("MAX_ENTITIES_PER_SENTENCE", "10"))
 # Timeouts
 LLM_TIMEOUT = float(os.getenv("JUDGE_LLM_TIMEOUT", "30"))
 TOTAL_TIMEOUT = float(os.getenv("JUDGE_TOTAL_TIMEOUT", "60"))
+
+# Module-level reference to veRL-injected GenRM resources
+# Set by compute_score when reward_router_address is provided
+_reward_router_address: Optional[str] = None
+_reward_model_tokenizer = None  # PreTrainedTokenizer or None
 
 # Logging
 LOG_DIR = Path(__file__).parent.parent.parent / "results" / "self_play" / "judge_traces"
@@ -102,6 +121,106 @@ async def _get_session() -> aiohttp.ClientSession:
 
 
 # =============================================================================
+# LLM Generation Abstraction (GenRM native vs standalone fallback)
+# =============================================================================
+
+async def _llm_generate(messages: List[Dict[str, str]], params: dict) -> str:
+    """Generate text from the judge LLM.
+
+    Routes to either:
+      - veRL's native GenRM router (/generate endpoint) if reward_router_address is set
+      - Standalone vLLM (/v1/chat/completions) as fallback
+
+    Returns:
+        The raw text content from the model response.
+    """
+    if _reward_router_address and _reward_model_tokenizer:
+        # === Native veRL GenRM mode ===
+        return await _llm_generate_genrm(messages, params)
+    else:
+        # === Standalone fallback (vLLM OpenAI-compatible) ===
+        return await _llm_generate_standalone(messages, params)
+
+
+async def _llm_generate_genrm(messages: List[Dict[str, str]], params: dict) -> str:
+    """Native veRL GenRM: tokenize messages, POST to reward_router_address/generate."""
+    session = await _get_session()
+    loop = asyncio.get_event_loop()
+
+    # Tokenize the chat messages using the reward model's tokenizer
+    try:
+        prompt_ids = await loop.run_in_executor(
+            None,
+            lambda: _reward_model_tokenizer.apply_chat_template(
+                messages, tokenize=True, add_generation_prompt=True
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"Tokenization failed, falling back to standalone: {e}")
+        return await _llm_generate_standalone(messages, params)
+
+    payload = {
+        "input_ids": prompt_ids,
+        "sampling_params": {
+            "max_new_tokens": params.get("max_tokens", 512),
+            "temperature": params.get("temperature", 0.1),
+            "top_p": params.get("top_p", 0.95),
+        },
+    }
+    url = f"http://{_reward_router_address}/generate"
+
+    try:
+        async with session.post(
+            url, json=payload,
+            timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                logger.warning(f"GenRM router returned {resp.status}: {body[:200]}")
+                return ""
+            output = await resp.json()
+            response_ids = output.get("output_ids", None)
+            if response_ids is not None:
+                text = await loop.run_in_executor(
+                    None,
+                    lambda: _reward_model_tokenizer.decode(
+                        response_ids, skip_special_tokens=True
+                    ),
+                )
+                return text.strip()
+            return ""
+    except Exception as e:
+        logger.debug(f"GenRM generate failed: {e}")
+        return ""
+
+
+async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict) -> str:
+    """Fallback: call a standalone vLLM server via OpenAI-compatible API."""
+    session = await _get_session()
+    payload = {
+        "model": JUDGE_MODEL,
+        "messages": messages,
+        "temperature": params.get("temperature", 0.1),
+        "max_tokens": params.get("max_tokens", 512),
+        "top_p": params.get("top_p", 0.95),
+    }
+    try:
+        async with session.post(
+            JUDGE_URL, json=payload,
+            timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                logger.warning(f"Standalone vLLM returned {resp.status}: {body[:200]}")
+                return ""
+            data = await resp.json()
+            return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logger.debug(f"Standalone LLM call failed: {e}")
+        return ""
+
+
+# =============================================================================
 # Step 1: LLM Entity Extraction
 # =============================================================================
 
@@ -111,44 +230,29 @@ async def _extract_entities(sentence: str) -> List[Dict[str, str]]:
     Returns:
         List of {"name": str, "type": str} dicts.
     """
-    session = await _get_session()
     params = get_model_params("extraction")
 
-    payload = {
-        "model": JUDGE_MODEL,
-        "messages": [
-            {"role": "system", "content": get_extraction_system_prompt()},
-            {"role": "user", "content": get_extraction_user_template().format(sentence=sentence)},
-        ],
-        "temperature": params.get("temperature", 0.1),
-        "max_tokens": params.get("max_tokens", 256),
-        "top_p": params.get("top_p", 0.95),
-    }
+    messages = [
+        {"role": "system", "content": get_extraction_system_prompt()},
+        {"role": "user", "content": get_extraction_user_template().format(sentence=sentence)},
+    ]
 
     try:
-        async with session.post(
-            JUDGE_URL,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
-        ) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                logger.warning(f"Judge LLM extraction returned {resp.status}: {body[:200]}")
-                return []
-            data = await resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
+        content = await _llm_generate(messages, params)
+        if not content:
+            return []
 
-            # Strip thinking tags if present
-            _, content = strip_thinking(content)
+        # Strip thinking tags if present
+        _, content = strip_thinking(content)
 
-            # Strip markdown fences
-            content = re.sub(r"^```(?:json)?\s*", "", content)
-            content = re.sub(r"\s*```$", "", content)
+        # Strip markdown fences
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
 
-            entities = json.loads(content)
-            if not isinstance(entities, list):
-                return []
-            return entities[:MAX_ENTITIES]
+        entities = json.loads(content)
+        if not isinstance(entities, list):
+            return []
+        return entities[:MAX_ENTITIES]
     except json.JSONDecodeError:
         logger.debug(f"Entity extraction returned invalid JSON: {content[:200]}")
         return []
@@ -195,7 +299,6 @@ async def _adjudicate(
         Dict with keys: verdict, score, reasoning, cuis_cited.
         On failure returns {"verdict": "ABSTAIN", "score": 0.0, ...}.
     """
-    session = await _get_session()
     params = get_model_params("adjudication")
     evidence_str = format_evidence_for_prompt(evidence)
 
@@ -206,16 +309,10 @@ async def _adjudicate(
         evidence_json=evidence_str,
     )
 
-    payload = {
-        "model": JUDGE_MODEL,
-        "messages": [
-            {"role": "system", "content": get_adjudication_system_prompt()},
-            {"role": "user", "content": user_content},
-        ],
-        "temperature": params.get("temperature", 0.1),
-        "max_tokens": params.get("max_tokens", 512),
-        "top_p": params.get("top_p", 0.95),
-    }
+    messages = [
+        {"role": "system", "content": get_adjudication_system_prompt()},
+        {"role": "user", "content": user_content},
+    ]
 
     default_result = {
         "verdict": "ABSTAIN",
@@ -225,51 +322,43 @@ async def _adjudicate(
     }
 
     try:
-        async with session.post(
-            JUDGE_URL,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
-        ) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                logger.warning(f"Judge LLM adjudication returned {resp.status}: {body[:200]}")
-                return default_result
-            data = await resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
+        content = await _llm_generate(messages, params)
+        if not content:
+            return default_result
 
-            # Strip thinking tags
-            _, content = strip_thinking(content)
+        # Strip thinking tags
+        _, content = strip_thinking(content)
 
-            # Strip markdown fences
-            content = re.sub(r"^```(?:json)?\s*", "", content)
-            content = re.sub(r"\s*```$", "", content)
+        # Strip markdown fences
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
 
-            verdict = json.loads(content)
-            if not isinstance(verdict, dict):
-                return default_result
+        verdict = json.loads(content)
+        if not isinstance(verdict, dict):
+            return default_result
 
-            # Validate required fields
-            v = verdict.get("verdict", "ABSTAIN").upper()
-            if v not in ("PASS", "FAIL"):
-                v = "ABSTAIN"
+        # Validate required fields
+        v = verdict.get("verdict", "ABSTAIN").upper()
+        if v not in ("PASS", "FAIL"):
+            v = "ABSTAIN"
 
-            score = float(verdict.get("score", 0.0))
-            score = max(0.0, min(1.0, score))
+        score = float(verdict.get("score", 0.0))
+        score = max(0.0, min(1.0, score))
 
-            cuis = verdict.get("cuis_cited", [])
-            if not isinstance(cuis, list):
-                cuis = []
+        cuis = verdict.get("cuis_cited", [])
+        if not isinstance(cuis, list):
+            cuis = []
 
-            # If no CUIs cited, force score to 0 (per prompt rules)
-            if not cuis:
-                score = 0.0
+        # If no CUIs cited, force score to 0 (per prompt rules)
+        if not cuis:
+            score = 0.0
 
-            return {
-                "verdict": v,
-                "score": score,
-                "reasoning": verdict.get("reasoning", ""),
-                "cuis_cited": cuis,
-            }
+        return {
+            "verdict": v,
+            "score": score,
+            "reasoning": verdict.get("reasoning", ""),
+            "cuis_cited": cuis,
+        }
     except json.JSONDecodeError:
         logger.debug(f"Adjudication returned invalid JSON: {content[:200]}")
         return default_result
@@ -486,11 +575,17 @@ def _log_trace(
 # Public API: compute_score (verl-compatible)
 # =============================================================================
 
-def compute_score(data_source, solution_str, ground_truth, extra_info=None):
+def compute_score(data_source, solution_str, ground_truth, extra_info=None,
+                   reward_router_address=None, reward_model_tokenizer=None):
     """Hybrid reward: rule-based + Agentic UMLS Judge.
 
     Drop-in replacement for reward_function.compute_score.
     Called by verl's RewardManager after each rollout.
+
+    When veRL's GenRM is enabled (reward_model.enable=True), veRL injects
+    reward_router_address and reward_model_tokenizer automatically.
+    When running standalone (testing), these are None and the fallback
+    JUDGE_VLLM_URL is used instead.
 
     Scoring formula:
         R = RULE_WEIGHT * rule_score + UMLS_WEIGHT * umls_score
@@ -503,10 +598,19 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         ground_truth (str): "CORRECT" or str(sentence_id).
         extra_info (dict): Contains correct_note, incorrect_note,
             error_sentence, error_sentence_id, mode, note_id, etc.
+        reward_router_address (str, optional): veRL GenRM router endpoint.
+            Injected by veRL when reward_model.enable=True.
+        reward_model_tokenizer (PreTrainedTokenizer, optional): Tokenizer
+            for the reward model. Injected by veRL.
 
     Returns:
         dict: {"score": float} for veRL Reward Loop compatibility.
     """
+    # Store GenRM references for use by _llm_generate
+    global _reward_router_address, _reward_model_tokenizer
+    if reward_router_address is not None:
+        _reward_router_address = reward_router_address
+        _reward_model_tokenizer = reward_model_tokenizer
     # Step A: Always compute the rule-based score (fast, synchronous)
     rule_score = rule_compute_score(data_source, solution_str, ground_truth, extra_info)
 
@@ -564,12 +668,20 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
 # Async compute_score (for verl async reward mode)
 # =============================================================================
 
-async def async_compute_score(data_source, solution_str, ground_truth, extra_info=None):
+async def async_compute_score(data_source, solution_str, ground_truth, extra_info=None,
+                               reward_router_address=None, reward_model_tokenizer=None):
     """Async version of compute_score for verl's async Reward Loop.
 
     verl auto-detects async functions and loads them accordingly.
+    When GenRM is enabled, reward_router_address and reward_model_tokenizer
+    are injected by veRL — judge calls route through the native /generate API.
     Returns dict {"score": float} per veRL Reward Loop API.
     """
+    # Store GenRM references for use by _llm_generate
+    global _reward_router_address, _reward_model_tokenizer
+    if reward_router_address is not None:
+        _reward_router_address = reward_router_address
+        _reward_model_tokenizer = reward_model_tokenizer
     rule_score = rule_compute_score(data_source, solution_str, ground_truth, extra_info)
 
     if UMLS_WEIGHT <= 0:

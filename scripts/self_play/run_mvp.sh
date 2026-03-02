@@ -1,10 +1,16 @@
 #!/bin/bash
 # =============================================================================
-# MedSeRL — Agentic UMLS Judge MVP
+# MedSeRL — Agentic UMLS Judge MVP (Standalone Testing Mode)
 #
-# Launches:
-#   1. A vLLM judge server on port 8002 (Qwen3-4B for entity extraction + adjudication)
-#   2. The test harness against 50 self-play examples
+# This script is for STANDALONE TESTING ONLY.
+# In production, veRL natively manages the judge model server via GenRM:
+#   reward_model.enable=true in self_play.yaml
+#   veRL injects reward_router_address into compute_score automatically.
+#   No manual vLLM server needed.
+#
+# This script launches:
+#   1. A vLLM judge server on port 8002 (standalone fallback mode)
+#   2. The test harness against N self-play examples
 #
 # Prerequisites:
 #   - UMLS_API_KEY set in environment (or in .env at project root)

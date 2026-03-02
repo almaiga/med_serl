@@ -163,18 +163,29 @@ critic:
     optimizer_offload: false
     fsdp_size: -1
 
-# Reward Model configuration
+# Reward Model configuration — GenRM (Generative Reward Model)
+# veRL natively manages the judge model server and injects
+# reward_router_address + reward_model_tokenizer into compute_score.
+# See: https://verl.readthedocs.io/en/latest/advance/reward_loop.html
 reward_model:
-  enable: false  # Using rule-based rewards only
+  enable: true  # Enable GenRM — veRL launches judge model server
   model:
-    input_tokenizer: null
-    path: null
+    input_tokenizer: null  # null = same as policy model
+    path: "Qwen/Qwen3-4B"  # Judge model (same as actor for MVP)
     external_lib: null
-    trust_remote_code: false
+    trust_remote_code: true
     fsdp_config:
       min_num_params: 0
       param_offload: false
-  micro_batch_size_per_gpu: 16
+  # Standalone mode: judge runs on separate GPU(s), enables streaming
+  # reward computation (reward calculated as each rollout finishes).
+  # Set to false for colocate mode (single-GPU, judge runs after all rollouts).
+  enable_resource_pool: false  # false = colocate (safe for single GPU)
+  # Uncomment below for multi-GPU standalone mode:
+  # enable_resource_pool: true
+  # nnodes: 1
+  # n_gpus_per_node: 1
+  micro_batch_size_per_gpu: 4
   max_length: null
   reward_manager: naive
 

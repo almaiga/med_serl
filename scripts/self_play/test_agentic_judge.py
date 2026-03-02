@@ -7,16 +7,17 @@ compares the scores. Also validates the 3-step pipeline (Extract → Retrieve
 → Adjudicate) with detailed traces.
 
 Usage:
-    # Requires: UMLS_API_KEY env var, vLLM judge server running on JUDGE_VLLM_URL
+    # Requires: UMLS_API_KEY env var, vLLM judge server running (standalone mode)
+    # In production, veRL natively manages the judge via GenRM (no server needed)
 
     # Quick smoke test (5 examples, no UMLS/LLM — tests plumbing only)
     python -m scripts.self_play.test_agentic_judge --dry-run --n 5
 
-    # Full test with UMLS + judge LLM (50 examples)
+    # Full test with UMLS + judge LLM (50 examples, standalone vLLM)
     python -m scripts.self_play.test_agentic_judge --n 50
 
     # Custom vLLM endpoint
-    JUDGE_VLLM_URL=http://localhost:8001/v1/chat/completions \\
+    JUDGE_VLLM_URL=http://localhost:8002/v1/chat/completions \\
     python -m scripts.self_play.test_agentic_judge --n 50
 """
 
