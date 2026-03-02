@@ -35,7 +35,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.self_play.reward_function import compute_score as rule_compute_score
-from scripts.self_play.utils import parse_assessor_answer, strip_thinking, split_sentences
+from scripts.self_play.utils import parse_assessor_answer, strip_thinking, split_sentences, find_error_sentence_id
 from scripts.self_play.judge_prompts import (
     get_config,
     get_extraction_system_prompt,
@@ -58,31 +58,120 @@ def load_parquet_examples(path: str, n: int = 50) -> List[Dict[str, Any]]:
         df = pd.read_parquet(path)
         ds = df.to_dict(orient="records")
 
+    # Debug: print schema of first row
+    if len(ds) > 0:
+        row0 = dict(ds[0]) if hasattr(ds[0], "keys") else ds[0]
+        print(f"  Parquet columns: {list(row0.keys())}")
+        for k, v in row0.items():
+            vtype = type(v).__name__
+            if isinstance(v, dict):
+                print(f"    {k}: dict with keys {list(v.keys())}")
+            elif isinstance(v, list):
+                print(f"    {k}: list[{len(v)}]")
+            elif isinstance(v, str) and len(v) > 80:
+                print(f"    {k}: str[{len(v)} chars]")
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, dict):
+                        print(f"      -> parsed dict keys: {list(parsed.keys())}")
+                        for ik, iv in parsed.items():
+                            print(f"         {ik}: {type(iv).__name__} = {str(iv)[:100]}")
+                except json.JSONDecodeError:
+                    pass
+            else:
+                print(f"    {k}: {vtype} = {str(v)[:120]}")
+
     examples = []
     for i, row in enumerate(ds):
         if i >= n:
             break
-        # Extract fields - handle both dict and HF Dataset rows
-        if hasattr(row, "keys"):
-            ex = dict(row)
-        else:
-            ex = row
+        ex = dict(row) if hasattr(row, "keys") else row
 
+        # Robustly extract nested fields — HF datasets may return Arrow structs
         extra_info = ex.get("extra_info", {})
         if isinstance(extra_info, str):
-            extra_info = json.loads(extra_info)
+            try:
+                extra_info = json.loads(extra_info)
+            except json.JSONDecodeError:
+                extra_info = {}
+        if not isinstance(extra_info, dict):
+            extra_info = {}
 
         reward_model = ex.get("reward_model", {})
         if isinstance(reward_model, str):
-            reward_model = json.loads(reward_model)
+            try:
+                reward_model = json.loads(reward_model)
+            except json.JSONDecodeError:
+                reward_model = {}
+        if not isinstance(reward_model, dict):
+            reward_model = {}
+
+        # --- Derive ground_truth and mode ---
+        # The parquet extra_info may lack 'mode' and 'error_sentence_id'.
+        # We reconstruct them from the available fields:
+        #   - mode: 'benign' if no incorrect_note/error_sentence, else 'error_injection'
+        #   - error_sentence_id: computed via find_error_sentence_id()
+        #   - ground_truth: 'CORRECT' for benign, str(sid) for error
+
+        mode = extra_info.get("mode", "")
+        if not isinstance(mode, str):
+            mode = str(mode) if mode is not None else ""
+
+        # Infer mode if missing
+        if not mode:
+            if extra_info.get("incorrect_note") or extra_info.get("error_sentence"):
+                mode = "error_injection"
+            else:
+                mode = "benign"
+
+        # Compute error_sentence_id if missing
+        error_sid = extra_info.get("error_sentence_id")
+        if error_sid is None and mode == "error_injection":
+            error_text = extra_info.get("error_sentence", "")
+            note_text = extra_info.get("incorrect_note", extra_info.get("correct_note", ""))
+            if error_text and note_text:
+                error_sid = find_error_sentence_id(note_text, error_text)
+            # Store back into extra_info so downstream code can use it
+            extra_info["error_sentence_id"] = error_sid
+            extra_info["mode"] = mode
+
+        # Derive ground_truth
+        if mode == "benign":
+            gt = "CORRECT"
+        elif error_sid is not None:
+            gt = str(error_sid)
+        else:
+            # Fallback: check reward_model
+            gt_raw = reward_model.get("ground_truth", "CORRECT")
+            if isinstance(gt_raw, dict):
+                gt = "CORRECT"  # nested dict — not a real label
+            else:
+                gt = str(gt_raw) if gt_raw is not None else "CORRECT"
+
+        # Also check interaction_kwargs as last resort
+        interaction_kwargs = ex.get("interaction_kwargs", {})
+        if isinstance(interaction_kwargs, str):
+            try:
+                interaction_kwargs = json.loads(interaction_kwargs)
+            except json.JSONDecodeError:
+                interaction_kwargs = {}
+        if isinstance(interaction_kwargs, dict):
+            if mode in ("", "unknown") and "mode" in interaction_kwargs:
+                mode = str(interaction_kwargs["mode"])
+            if gt == "CORRECT" and mode != "benign" and "ground_truth" in interaction_kwargs:
+                gt_ik = interaction_kwargs["ground_truth"]
+                if gt_ik is not None and str(gt_ik) != "CORRECT":
+                    gt = str(gt_ik)
+
+        note_id = str(extra_info.get("note_id", f"test-{i}"))
 
         examples.append({
-            "data_source": ex.get("data_source", "medec_selfplay"),
+            "data_source": str(ex.get("data_source", "medec_selfplay")),
             "prompt": ex.get("prompt", []),
-            "ground_truth": reward_model.get("ground_truth", "CORRECT"),
+            "ground_truth": gt,
             "extra_info": extra_info,
-            "mode": extra_info.get("mode", "unknown"),
-            "note_id": extra_info.get("note_id", f"test-{i}"),
+            "mode": mode,
+            "note_id": note_id,
         })
 
     return examples
@@ -163,7 +252,7 @@ def run_dry_test(examples: List[Dict], responses: List[str]) -> Dict[str, Any]:
             "assessor_pred_sid": pred_sid,
             "rule_score": rule_score,
         })
-        print(f"  [{i:3d}] {ex['mode']:16s} gt={ex['ground_truth']:8s} "
+        print(f"  [{i:3d}] {str(ex['mode']):16s} gt={str(ex['ground_truth']):8s} "
               f"pred={label:8s}({pred_sid}) rule={rule_score:+.2f}")
 
     # Summary
@@ -288,7 +377,7 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
             "elapsed_s": elapsed,
         })
 
-        print(f"  [{i:3d}] {ex['mode']:16s} gt={ex['ground_truth']:8s} "
+        print(f"  [{i:3d}] {str(ex['mode']):16s} gt={str(ex['ground_truth']):8s} "
               f"rule={rule_score:+.2f} agentic={agentic_score:+.2f} "
               f"Δ={agentic_score - rule_score:+.3f} ({elapsed:.1f}s)")
 

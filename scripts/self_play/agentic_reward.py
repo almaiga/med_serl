@@ -47,6 +47,7 @@ from scripts.self_play.utils import (
     diff_sentences,
     number_sentences,
     parse_numbered_sentences,
+    find_error_sentence_id,
 )
 from scripts.self_play.judge_prompts import (
     get_extraction_system_prompt,
@@ -280,27 +281,41 @@ async def _adjudicate(
 # =============================================================================
 
 def _identify_changed_sentences(extra_info: dict) -> Tuple[str, str]:
-    """Extract the original and modified sentences from extra_info.
+    """Extract the original (correct) and modified (error) sentences.
 
-    Uses extra_info fields: correct_note, incorrect_note, error_sentence,
-    error_sentence_id, mode.
+    The judge needs BOTH to compare and verify with UMLS evidence.
+
+    Data sources in extra_info (from the MEDEC parquet):
+      - corrected_sentence: the ground-truth correct version
+      - error_sentence: the erroneous version
+      - correct_note / incorrect_note: full clinical notes
+      - error_sentence_id: 1-indexed ID (may be missing in older parquet)
 
     Returns:
         (original_sentence, modified_sentence) — empty strings if not found.
     """
     mode = extra_info.get("mode", "")
+    if mode == "benign":
+        return "", ""
+
     original_sentence = ""
     modified_sentence = ""
 
-    if mode == "benign":
-        # For benign notes, both are the same — no modification
-        return "", ""
+    # --- Best path: use corrected_sentence and error_sentence directly ---
+    corrected = extra_info.get("corrected_sentence", "").strip()
+    error_text = extra_info.get("error_sentence", "").strip()
 
-    # Try to get sentences from the notes
+    if corrected and error_text:
+        return corrected, error_text
+
+    # --- Fallback: extract from full notes using error_sentence_id ---
     correct_note = extra_info.get("correct_note", "")
     incorrect_note = extra_info.get("incorrect_note", "")
     error_sid = extra_info.get("error_sentence_id")
-    error_text = extra_info.get("error_sentence", "")
+
+    # Compute error_sentence_id on the fly if missing
+    if error_sid is None and error_text and incorrect_note:
+        error_sid = find_error_sentence_id(incorrect_note, error_text)
 
     if error_sid is not None and correct_note and incorrect_note:
         try:
@@ -308,7 +323,6 @@ def _identify_changed_sentences(extra_info: dict) -> Tuple[str, str]:
             orig_sents = parse_numbered_sentences(correct_note)
             mod_sents = parse_numbered_sentences(incorrect_note)
 
-            # Also try raw split if numbered parsing fails
             if not orig_sents:
                 raw_orig = split_sentences(correct_note)
                 orig_sents = {i + 1: s for i, s in enumerate(raw_orig)}
@@ -321,7 +335,9 @@ def _identify_changed_sentences(extra_info: dict) -> Tuple[str, str]:
         except (ValueError, TypeError):
             pass
 
-    # Fallback: use error_sentence field
+    # Use corrected_sentence as original if we found modified but not original
+    if not original_sentence and corrected:
+        original_sentence = corrected
     if not modified_sentence and error_text:
         modified_sentence = error_text
 
@@ -375,21 +391,34 @@ async def _judge_pipeline(
         trace["skip_reason"] = "no_sentence_pair"
         return 0.0, trace
 
-    # Use the sentence that was actually changed for entity extraction
-    target_sentence = modified_sent or original_sent
+    # Step 1: Extract entities from BOTH original and modified sentences.
+    # The judge needs evidence for terms in both versions to properly
+    # determine if a substitution is clinically valid.
+    # E.g. original="Penicillin is prescribed" vs modified="Azithromycin and
+    # ceftriaxone are prescribed" — need UMLS evidence for ALL three drugs.
+    entities_modified = []
+    entities_original = []
 
-    # Step 1: Extract entities
-    entities = await _extract_entities(target_sentence)
-    trace["step1_entities"] = entities
+    if modified_sent:
+        entities_modified = await _extract_entities(modified_sent)
+    if original_sent and original_sent != modified_sent:
+        entities_original = await _extract_entities(original_sent)
 
-    if not entities:
-        # Extraction failed — fall back to extracting from original too
-        if original_sent and original_sent != target_sentence:
-            entities = await _extract_entities(original_sent)
-            trace["step1_entities"] = entities
+    # Merge and deduplicate by entity name (case-insensitive)
+    seen_names = set()
+    all_entities = []
+    for ent in entities_modified + entities_original:
+        name_lower = ent.get("name", "").lower()
+        if name_lower and name_lower not in seen_names:
+            seen_names.add(name_lower)
+            all_entities.append(ent)
 
-    # Step 2: Retrieve UMLS evidence
-    evidence = await _retrieve_evidence(entities)
+    trace["step1_entities"] = all_entities
+    trace["original_sentence"] = original_sent
+    trace["modified_sentence"] = modified_sent
+
+    # Step 2: Retrieve UMLS/RxNorm evidence for ALL extracted entities
+    evidence = await _retrieve_evidence(all_entities)
     trace["step2_evidence"] = evidence
 
     # Step 3: Adjudicate
