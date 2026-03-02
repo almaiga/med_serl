@@ -144,9 +144,10 @@ else
     CUDA_VISIBLE_DEVICES="$JUDGE_GPU" python -m vllm.entrypoints.openai.api_server \
         --model "$JUDGE_MODEL" \
         --port "$JUDGE_PORT" \
+        --max-model-len 4096 \
         --dtype auto \
         --enforce-eager \
-        --gpu-memory-utilization 0.5 \
+        --gpu-memory-utilization 0.45 \
         --trust-remote-code \
         > "$PROJECT_ROOT/outputs/logs/judge_server.log" 2>&1 &
     JUDGE_PID=$!
