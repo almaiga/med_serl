@@ -24,7 +24,7 @@
 #   SMOKE_STEPS   — Max training steps (default: 5, set high to run full epoch)
 #   SKIP_SERVER   — Set to 1 to reuse an already-running judge server
 
-set -e
+# Don't use set -e — we handle errors manually and need the EXIT trap to always run
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
@@ -48,6 +48,36 @@ mkdir -p "$OUTPUT_DIR"
 mkdir -p "$PROJECT_ROOT/results/self_play"
 
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+
+# ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
+echo "=== Cleanup: killing stale vLLM / Ray processes ==="
+# Kill any leftover vLLM servers on the judge port
+if lsof -ti :${JUDGE_PORT} >/dev/null 2>&1; then
+    echo "  Killing processes on port ${JUDGE_PORT}..."
+    lsof -ti :${JUDGE_PORT} | xargs kill -9 2>/dev/null || true
+    sleep 2
+fi
+# Kill any remaining Ray processes
+if pgrep -f "ray::" >/dev/null 2>&1; then
+    echo "  Stopping Ray..."
+    python3 -c "import ray; ray.init(address='auto', ignore_reinit_error=True); ray.shutdown()" 2>/dev/null || true
+    pkill -9 -f "ray::" 2>/dev/null || true
+    sleep 2
+fi
+# Kill any orphan vllm processes
+pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+echo "  Cleanup done."
+
+# ─── Trap: ensure cleanup on exit ────────────────────────────────────────────
+cleanup() {
+    if [ -n "$VLLM_PID" ]; then
+        echo "Trap: stopping judge server (PID $VLLM_PID)..."
+        kill "$VLLM_PID" 2>/dev/null || true
+    fi
+    pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+    ray stop --force 2>/dev/null || true
+}
+trap cleanup EXIT
 
 echo "=================================================="
 echo "MedSeRL Agentic Training — SMOKE TEST"
