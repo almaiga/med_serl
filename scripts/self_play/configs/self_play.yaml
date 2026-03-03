@@ -52,13 +52,6 @@ actor_rollout_ref:
     clip_ratio: 0.2
     entropy_coeff: 0.0
     use_kl_loss: false
-    rollout_correction:
-      rollout_is: null
-      rollout_is_threshold: 2.0
-      rollout_rs: null
-      rollout_rs_threshold: null
-      rollout_rs_threshold_lower: null
-      rollout_token_veto_threshold: null
     use_torch_compile: false
     kl_loss_coef: 0.001
     kl_loss_type: low_var_kl
@@ -296,7 +289,6 @@ algorithm:
     kl_coef: 0.01
     horizon: 10000
     target_kl: 0.1
-  rollout_correction: null  # Disabled for now
 
 # Trainer configuration
 trainer:
