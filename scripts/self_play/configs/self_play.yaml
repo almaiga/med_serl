@@ -103,14 +103,21 @@ actor_rollout_ref:
     ulysses_sequence_parallel_size: 1
     optim:
       _target_: verl.workers.config.FSDPOptimizerConfig
+      optimizer: AdamW
+      optimizer_impl: torch.optim
       lr: 5e-7
+      betas: [0.9, 0.999]
+      weight_decay: 0.01
+      clip_grad: 1.0
+      grad_clip: null
       lr_warmup_steps: -1
       lr_warmup_steps_ratio: 0.03
       min_lr_ratio: 0.0
       num_cycles: 0.5
       lr_scheduler_type: cosine
       total_training_steps: -1
-      weight_decay: 0.01
+      override_optimizer_config: null
+      zero_indexed_step: true
     fsdp_config:
       _target_: verl.workers.config.FSDPEngineConfig
       wrap_policy:
@@ -308,13 +315,21 @@ critic:
   ulysses_sequence_parallel_size: 1
   optim:
     _target_: verl.workers.config.FSDPOptimizerConfig
+    optimizer: AdamW
+    optimizer_impl: torch.optim
     lr: 1e-5
+    betas: [0.9, 0.999]
+    weight_decay: 0.01
+    clip_grad: 1.0
+    grad_clip: null
     lr_warmup_steps: -1
     lr_warmup_steps_ratio: 0.0
     min_lr_ratio: 0.0
     num_cycles: 0.5
     lr_scheduler_type: constant
     total_training_steps: -1
+    override_optimizer_config: null
+    zero_indexed_step: true
   engine:
     _target_: verl.workers.config.FSDPEngineConfig
     wrap_policy:
