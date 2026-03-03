@@ -156,7 +156,7 @@ critic:
     num_cycles: 0.5
     lr_scheduler_type: constant
     total_training_steps: -1
-  fsdp_config:
+  engine:
     _target_: verl.workers.config.FSDPEngineConfig
     wrap_policy:
       min_num_params: 0

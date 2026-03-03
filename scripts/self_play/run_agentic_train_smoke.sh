@@ -233,8 +233,8 @@ python3 -m verl.trainer.main_ppo \
     \
     critic.model.path="$ACTOR_MODEL" \
     critic.ppo_micro_batch_size_per_gpu=1 \
-    critic.fsdp_config.param_offload=True \
-    critic.fsdp_config.optimizer_offload=True \
+    critic.engine.param_offload=True \
+    critic.engine.optimizer_offload=True \
     \
     reward_model.enable=False \
     \
