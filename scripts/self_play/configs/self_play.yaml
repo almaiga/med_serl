@@ -24,6 +24,7 @@ data:
   truncation: error
   image_key: images
   trust_remote_code: true
+  sampler: null
 
 # Actor/Rollout/Reference model configuration
 actor_rollout_ref:
