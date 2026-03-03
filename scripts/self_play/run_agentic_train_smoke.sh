@@ -60,6 +60,66 @@ echo "Smoke steps  : $SMOKE_STEPS"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
+# ─── Pre-flight: Patch veRL for GLIBC / Megatron compat ───────────────────────
+# veRL unconditionally imports MindSpeed→Megatron→transformer_engine which
+# needs GLIBC ≥2.38.  We only use the HuggingFace backend, so wrap the import
+# in try/except so it fails gracefully instead of crashing.
+echo ""
+echo "=== Pre-flight: Patching veRL engine imports (GLIBC workaround) ==="
+python3 << 'PATCH_EOF'
+import pathlib, re, sys
+
+targets = [
+    # (file_path, old_import_line, wrapped_replacement)
+    (
+        pathlib.Path("/workspace/verl/verl/workers/engine/__init__.py"),
+        "from .mindspeed import MindspeedEngineWithLMHead",
+        (
+            "try:\n"
+            "    from .mindspeed import MindspeedEngineWithLMHead\n"
+            "except (ImportError, OSError):\n"
+            "    MindspeedEngineWithLMHead = None  # Megatron/MindSpeed unavailable"
+        ),
+    ),
+    (
+        pathlib.Path("/workspace/verl/verl/workers/engine/__init__.py"),
+        "from .megatron import MegatronEngine, MegatronEngineWithLMHead",
+        (
+            "try:\n"
+            "    from .megatron import MegatronEngine, MegatronEngineWithLMHead\n"
+            "except (ImportError, OSError):\n"
+            "    MegatronEngine = None  # Megatron unavailable\n"
+            "    MegatronEngineWithLMHead = None"
+        ),
+    ),
+]
+
+patched = 0
+for fpath, old_line, new_block in targets:
+    if not fpath.exists():
+        print(f"  SKIP: {fpath} not found")
+        continue
+    code = fpath.read_text()
+    if old_line not in code:
+        print(f"  SKIP: '{old_line[:60]}…' not found (already patched?)")
+        continue
+    # Only patch if the line is NOT already inside a try block
+    idx = code.index(old_line)
+    before = code[max(0, idx - 30):idx]
+    if "try:" in before:
+        print(f"  SKIP: already wrapped in try/except")
+        continue
+    code = code.replace(old_line, new_block, 1)
+    fpath.write_text(code)
+    patched += 1
+    print(f"  PATCHED: {fpath.name} — wrapped '{old_line[:50]}…'")
+
+if patched == 0:
+    print("  No patches needed (already applied or files not found).")
+else:
+    print(f"  Applied {patched} patch(es).")
+PATCH_EOF
+
 # ─── Step 0: Ensure data exists ───────────────────────────────────────────────
 echo ""
 echo "=== Step 0: Checking / Generating Data ==="
