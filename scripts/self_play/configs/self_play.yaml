@@ -220,6 +220,60 @@ custom_reward_function:
   path: scripts.self_play.agentic_reward
   name: compute_score
 
+# Sandbox Fusion — required by migrate_legacy_reward_impl (even if unused)
+sandbox_fusion:
+  url: null
+  max_concurrent: null
+  memory_limit_mb: null
+
+# New reward: section — target for migrate_legacy_reward_impl
+# The migration function reads from reward_model/custom_reward_function/sandbox_fusion
+# and writes the values into this section, then deletes the legacy keys.
+# All sub-keys must be pre-declared for OmegaConf strict mode.
+reward:
+  num_workers: 8
+  custom_reward_function:
+    path: null
+    name: compute_score
+  reward_manager:
+    source: register
+    name: naive
+    module:
+      path: null
+      name: custom_reward_manager
+  reward_model:
+    enable: false
+    enable_resource_pool: false
+    n_gpus_per_node: 1
+    nnodes: 0
+    model_path: null
+    rollout:
+      name: vllm
+      dtype: bfloat16
+      gpu_memory_utilization: 0.5
+      enforce_eager: true
+      cudagraph_capture_sizes: null
+      free_cache_engine: true
+      data_parallel_size: 1
+      expert_parallel_size: 1
+      tensor_model_parallel_size: 1
+      max_num_batched_tokens: 8192
+      max_model_len: null
+      max_num_seqs: 1024
+      load_format: auto
+      engine_kwargs: {}
+      limit_images: null
+      enable_chunked_prefill: true
+      enable_prefix_caching: true
+      disable_log_stats: true
+      skip_tokenizer_init: false
+      prompt_length: 2048
+      response_length: 2048
+  sandbox_fusion:
+    url: null
+    max_concurrent: 64
+    memory_limit_mb: 1024
+
 # Algorithm configuration (REINFORCE++)
 algorithm:
   gamma: 1.0
