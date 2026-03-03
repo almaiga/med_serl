@@ -187,6 +187,7 @@ reward_model:
   # n_gpus_per_node: 1
   micro_batch_size_per_gpu: 4
   max_length: null
+  num_workers: null  # required by veRL migrate_legacy_reward_impl schema check
   reward_manager: naive
 
 # Custom reward function

@@ -204,12 +204,16 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     \
-    critic.enable=False \
+    critic.model.path="$ACTOR_MODEL" \
+    critic.ppo_micro_batch_size_per_gpu=1 \
+    critic.fsdp_config.param_offload=True \
+    critic.fsdp_config.optimizer_offload=True \
     \
     reward_model.enable=False \
+    reward_model.num_workers=~ \
     \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
-    custom_reward_function.name=compute_score \
+    custom_reward_function.name=async_compute_score \
     \
     algorithm.use_kl_in_reward=False \
     algorithm.kl_ctrl.kl_coef=0.001 \
@@ -237,7 +241,7 @@ echo "=================================================="
 
 CS_CALLS=$(grep -c "compute_score called" "$SMOKE_LOG" 2>/dev/null || true); CS_CALLS=${CS_CALLS:-0}
 JUDGE_CALLS=$(grep -c "judge_verdict\|umls_score\|PASS\|FAIL\|ABSTAIN" "$SMOKE_LOG" 2>/dev/null || true); JUDGE_CALLS=${JUDGE_CALLS:-0}
-RULE_CALLS=$(grep -c "rule_score" "$SMOKE_LOG" 2>/dev/null || true); RULE_CALLS=${RULE_CALLS:-0}
+RULE_CALLS=$(grep -c "rule_score\|rule_compute_score" "$SMOKE_LOG" 2>/dev/null || true); RULE_CALLS=${RULE_CALLS:-0}
 
 echo ""
 echo "compute_score invocations : $CS_CALLS"
