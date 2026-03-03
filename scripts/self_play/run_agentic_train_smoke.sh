@@ -50,7 +50,7 @@ mkdir -p "$PROJECT_ROOT/results/self_play"
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
-echo "=== Cleanup: killing stale vLLM / Ray processes ==="
+echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
 # Kill any leftover vLLM servers on the judge port
 if lsof -ti :${JUDGE_PORT} >/dev/null 2>&1; then
     echo "  Killing processes on port ${JUDGE_PORT}..."
@@ -60,22 +60,82 @@ fi
 # Kill any remaining Ray processes
 if pgrep -f "ray::" >/dev/null 2>&1; then
     echo "  Stopping Ray..."
-    python3 -c "import ray; ray.init(address='auto', ignore_reinit_error=True); ray.shutdown()" 2>/dev/null || true
+    ray stop --force 2>/dev/null || true
     pkill -9 -f "ray::" 2>/dev/null || true
     sleep 2
 fi
-# Kill any orphan vllm processes
+# Kill any orphan vllm / python-gpu processes
 pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+pkill -9 -f "vllm.worker" 2>/dev/null || true
+pkill -9 -f "from multiprocessing" 2>/dev/null || true
+
+# Nuclear option: kill ALL processes holding the GPU except this shell
+echo "  Checking GPU processes via nvidia-smi..."
+if command -v nvidia-smi &>/dev/null; then
+    GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
+    if [ -n "$GPU_PIDS" ]; then
+        echo "  Found GPU processes: $GPU_PIDS — killing them..."
+        for pid in $GPU_PIDS; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+        sleep 3
+    else
+        echo "  No stale GPU processes found."
+    fi
+    # Show current GPU state
+    nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
+fi
 echo "  Cleanup done."
+
+# ─── Pre-flight: verify enough GPU memory is free ────────────────────────────
+echo ""
+echo "=== Pre-flight: GPU memory check ==="
+python3 << 'GPU_CHECK_EOF'
+import subprocess, sys
+try:
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=10
+    )
+    free_mb, total_mb = [int(x.strip()) for x in result.stdout.strip().split(",")]
+    free_gb = free_mb / 1024
+    total_gb = total_mb / 1024
+    print(f"  GPU memory: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
+    # Judge (Qwen3-8B bf16) needs ~18 GiB + KV cache overhead
+    if free_gb < 20:
+        print(f"  ERROR: Only {free_gb:.1f} GiB free — need at least 20 GiB for judge server.")
+        print(f"  Run: nvidia-smi  to see what's using GPU memory, then kill those processes.")
+        sys.exit(1)
+    else:
+        print(f"  OK — enough memory for judge server.")
+except Exception as e:
+    print(f"  WARNING: Could not check GPU memory: {e}")
+GPU_CHECK_EOF
+if [ $? -ne 0 ]; then
+    echo "ABORTING: Not enough GPU memory. Clean up stale processes first."
+    exit 1
+fi
 
 # ─── Trap: ensure cleanup on exit ────────────────────────────────────────────
 cleanup() {
+    echo ""
+    echo "Trap: cleaning up all GPU processes..."
     if [ -n "$VLLM_PID" ]; then
-        echo "Trap: stopping judge server (PID $VLLM_PID)..."
+        echo "  Stopping judge server (PID $VLLM_PID)..."
         kill "$VLLM_PID" 2>/dev/null || true
     fi
     pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+    pkill -9 -f "vllm.worker" 2>/dev/null || true
     ray stop --force 2>/dev/null || true
+    # Kill any remaining GPU processes spawned by this script
+    if command -v nvidia-smi &>/dev/null; then
+        GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
+        for pid in $GPU_PIDS; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+    echo "  Cleanup complete."
+}
 }
 trap cleanup EXIT
 
