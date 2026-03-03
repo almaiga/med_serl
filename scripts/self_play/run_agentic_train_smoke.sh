@@ -210,7 +210,6 @@ python3 -m verl.trainer.main_ppo \
     critic.fsdp_config.optimizer_offload=True \
     \
     reward_model.enable=False \
-    reward_model.num_workers=~ \
     \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
     custom_reward_function.name=async_compute_score \

@@ -164,31 +164,53 @@ critic:
     fsdp_size: -1
 
 # Reward Model configuration — GenRM (Generative Reward Model)
-# veRL natively manages the judge model server and injects
-# reward_router_address + reward_model_tokenizer into compute_score.
+# veRL's migrate_legacy_reward_impl reads ALL these keys and migrates them
+# to the new reward.* namespace. Every key must exist (even as null) or
+# Hydra/OmegaConf strict mode throws ConfigAttributeError.
 # See: https://verl.readthedocs.io/en/latest/advance/reward_loop.html
 reward_model:
-  enable: true  # Enable GenRM — veRL launches judge model server
+  enable: false               # False = use standalone judge, True = veRL manages judge
   model:
-    input_tokenizer: null  # null = same as policy model
-    path: "Qwen/Qwen3-8B"  # Judge model (larger than actor for better medical reasoning)
+    input_tokenizer: null
+    path: "Qwen/Qwen3-8B"
     external_lib: null
     trust_remote_code: true
     fsdp_config:
       min_num_params: 0
       param_offload: false
-  # Standalone mode: judge runs on separate GPU(s), enables streaming
-  # reward computation (reward calculated as each rollout finishes).
-  # Set to false for colocate mode (single-GPU, judge runs after all rollouts).
-  enable_resource_pool: false  # false = colocate (safe for single GPU)
-  # Uncomment below for multi-GPU standalone mode:
-  # enable_resource_pool: true
-  # nnodes: 1
-  # n_gpus_per_node: 1
+  enable_resource_pool: false
+  nnodes: 0
+  n_gpus_per_node: 1
   micro_batch_size_per_gpu: 4
   max_length: null
-  num_workers: null  # required by veRL migrate_legacy_reward_impl schema check
+  num_workers: null           # required by migrate_legacy_reward_impl
   reward_manager: naive
+  reward_loop_source: null
+  reward_loop_module_path: null
+  reward_loop_class_name: null
+  reward_kwargs: null
+  rollout:
+    name: vllm
+    dtype: bfloat16
+    gpu_memory_utilization: 0.5
+    enforce_eager: true
+    cudagraph_capture_sizes: null
+    free_cache_engine: true
+    data_parallel_size: 1
+    expert_parallel_size: 1
+    tensor_model_parallel_size: 1
+    max_num_batched_tokens: 8192
+    max_model_len: null
+    max_num_seqs: 1024
+    load_format: auto
+    engine_kwargs: {}
+    limit_images: null
+    enable_chunked_prefill: true
+    enable_prefix_caching: true
+    disable_log_stats: true
+    skip_tokenizer_init: false
+    prompt_length: 2048
+    response_length: 2048
 
 # Custom reward function
 # Options:
