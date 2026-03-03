@@ -136,7 +136,7 @@ cleanup() {
     fi
     echo "  Cleanup complete."
 }
-}
+
 trap cleanup EXIT
 
 echo "=================================================="
