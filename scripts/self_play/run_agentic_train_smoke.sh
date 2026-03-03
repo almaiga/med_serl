@@ -61,63 +61,30 @@ echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
 # ─── Pre-flight: Patch veRL for GLIBC / Megatron compat ───────────────────────
-# veRL unconditionally imports MindSpeed→Megatron→transformer_engine which
-# needs GLIBC ≥2.38.  We only use the HuggingFace backend, so wrap the import
-# in try/except so it fails gracefully instead of crashing.
+# veRL's __init__.py already wraps mindspeed & megatron in try/except but only
+# catches ImportError.  transformer_engine raises OSError when GLIBC is too old.
+# This patch widens  except ImportError  →  except (ImportError, OSError).
 echo ""
 echo "=== Pre-flight: Patching veRL engine imports (GLIBC workaround) ==="
 python3 << 'PATCH_EOF'
-import pathlib, re, sys
+import pathlib, re
 
-targets = [
-    # (file_path, old_import_line, wrapped_replacement)
-    (
-        pathlib.Path("/workspace/verl/verl/workers/engine/__init__.py"),
-        "from .mindspeed import MindspeedEngineWithLMHead",
-        (
-            "try:\n"
-            "    from .mindspeed import MindspeedEngineWithLMHead\n"
-            "except (ImportError, OSError):\n"
-            "    MindspeedEngineWithLMHead = None  # Megatron/MindSpeed unavailable"
-        ),
-    ),
-    (
-        pathlib.Path("/workspace/verl/verl/workers/engine/__init__.py"),
-        "from .megatron import MegatronEngine, MegatronEngineWithLMHead",
-        (
-            "try:\n"
-            "    from .megatron import MegatronEngine, MegatronEngineWithLMHead\n"
-            "except (ImportError, OSError):\n"
-            "    MegatronEngine = None  # Megatron unavailable\n"
-            "    MegatronEngineWithLMHead = None"
-        ),
-    ),
-]
-
-patched = 0
-for fpath, old_line, new_block in targets:
-    if not fpath.exists():
-        print(f"  SKIP: {fpath} not found")
-        continue
-    code = fpath.read_text()
-    if old_line not in code:
-        print(f"  SKIP: '{old_line[:60]}…' not found (already patched?)")
-        continue
-    # Only patch if the line is NOT already inside a try block
-    idx = code.index(old_line)
-    before = code[max(0, idx - 30):idx]
-    if "try:" in before:
-        print(f"  SKIP: already wrapped in try/except")
-        continue
-    code = code.replace(old_line, new_block, 1)
-    fpath.write_text(code)
-    patched += 1
-    print(f"  PATCHED: {fpath.name} — wrapped '{old_line[:50]}…'")
-
-if patched == 0:
-    print("  No patches needed (already applied or files not found).")
+fpath = pathlib.Path("/workspace/verl/verl/workers/engine/__init__.py")
+if not fpath.exists():
+    print("  SKIP: file not found")
 else:
-    print(f"  Applied {patched} patch(es).")
+    code = fpath.read_text()
+    # Widen every bare  except ImportError:  to  except (ImportError, OSError):
+    new_code, n = re.subn(
+        r'except ImportError:',
+        'except (ImportError, OSError):',
+        code,
+    )
+    if n == 0:
+        print("  No bare 'except ImportError:' found (already patched?).")
+    else:
+        fpath.write_text(new_code)
+        print(f"  PATCHED: widened {n} 'except ImportError' → 'except (ImportError, OSError)'")
 PATCH_EOF
 
 # ─── Step 0: Ensure data exists ───────────────────────────────────────────────
