@@ -177,7 +177,7 @@ python3 -m verl.trainer.main_ppo \
     data.truncation=error \
     \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
-    "+actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
+    "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
@@ -235,9 +235,9 @@ echo "=================================================="
 echo "=== Step 3: Smoke Test Verification ==="
 echo "=================================================="
 
-CS_CALLS=$(grep -c "compute_score called" "$SMOKE_LOG" 2>/dev/null || echo 0)
-JUDGE_CALLS=$(grep -c "judge_verdict\|umls_score\|PASS\|FAIL\|ABSTAIN" "$SMOKE_LOG" 2>/dev/null || echo 0)
-RULE_CALLS=$(grep -c "rule_score" "$SMOKE_LOG" 2>/dev/null || echo 0)
+CS_CALLS=$(grep -c "compute_score called" "$SMOKE_LOG" 2>/dev/null || true); CS_CALLS=${CS_CALLS:-0}
+JUDGE_CALLS=$(grep -c "judge_verdict\|umls_score\|PASS\|FAIL\|ABSTAIN" "$SMOKE_LOG" 2>/dev/null || true); JUDGE_CALLS=${JUDGE_CALLS:-0}
+RULE_CALLS=$(grep -c "rule_score" "$SMOKE_LOG" 2>/dev/null || true); RULE_CALLS=${RULE_CALLS:-0}
 
 echo ""
 echo "compute_score invocations : $CS_CALLS"
