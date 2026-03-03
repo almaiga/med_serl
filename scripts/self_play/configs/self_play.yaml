@@ -57,7 +57,6 @@ actor_rollout_ref:
     external_lib: null
     override_config:
       attn_implementation: flash_attention_2
-      model_config: {}
     enable_gradient_checkpointing: true
     enable_activation_offload: false
     trust_remote_code: true
@@ -298,7 +297,6 @@ critic:
     external_lib: null
     override_config:
       attn_implementation: flash_attention_2
-      model_config: {}
     enable_gradient_checkpointing: true
     enable_activation_offload: false
     trust_remote_code: true
