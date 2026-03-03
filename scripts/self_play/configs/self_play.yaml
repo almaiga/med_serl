@@ -294,6 +294,7 @@ critic:
   model:
     _target_: verl.workers.config.FSDPCriticModelCfg
     path: "Qwen/Qwen3-4B"
+    tokenizer_path: "Qwen/Qwen3-4B"
     external_lib: null
     override_config:
       attn_implementation: flash_attention_2
