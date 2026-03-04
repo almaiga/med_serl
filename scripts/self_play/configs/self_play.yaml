@@ -401,7 +401,19 @@ actor_rollout_ref:
       served_model_name: null
     quantization: null
     quantization_config_file: null
-    mtp: null
+    mtp:
+      _target_: verl.workers.config.MtpConfig
+      enable: false
+      enable_train: false
+      enable_rollout: false
+      detach_encoder: false
+      mtp_loss_scaling_factor: 0.1
+      speculative_algorithm: EAGLE
+      speculative_num_steps: 3
+      speculative_eagle_topk: 1
+      speculative_num_draft_tokens: 4
+      method: mtp
+      num_speculative_tokens: 1
     qat: null
     layered_summon: false
     server: null
