@@ -69,8 +69,10 @@ actor_rollout_ref:
     ppo_mini_batch_size: 4
     ppo_micro_batch_size: null
     ppo_micro_batch_size_per_gpu: 1
+    ppo_infer_micro_batch_size_per_gpu: null
     use_dynamic_bsz: false
     ppo_max_token_len_per_gpu: 16384
+    ppo_infer_max_token_len_per_gpu: 16384
     grad_clip: 1.0
     clip_ratio: 0.2
     clip_ratio_low: 0.2
@@ -101,6 +103,12 @@ actor_rollout_ref:
     shuffle: false
     data_loader_seed: 42
     ulysses_sequence_parallel_size: 1
+    use_remove_padding: false
+    use_rollout_log_probs: false
+    calculate_sum_pi_squared: false
+    sum_pi_squared_checkpointing: false
+    entropy_from_logits_with_chunking: false
+    entropy_checkpointing: false
     optim:
       _target_: verl.workers.config.FSDPOptimizerConfig
       optimizer: AdamW
@@ -124,7 +132,30 @@ actor_rollout_ref:
         min_num_params: 0
       param_offload: false
       optimizer_offload: false
+      grad_offload: false
+      forward_only: false
+      strategy: fsdp
+      dtype: bfloat16
+      use_dynamic_bsz: true
+      max_token_len_per_gpu: null
+      micro_batch_size_per_gpu: null
+      infer_max_token_len_per_gpu: null
+      infer_micro_batch_size_per_gpu: null
+      use_fused_kernels: false
+      use_remove_padding: true
+      seed: 42
+      full_determinism: false
+      offload_policy: false
+      reshard_after_forward: true
       fsdp_size: -1
+      forward_prefetch: false
+      model_dtype: fp32
+      use_orig_params: false
+      mixed_precision: null
+      ulysses_sequence_parallel_size: 1
+      entropy_from_logits_with_chunking: false
+      use_torch_compile: true
+      entropy_checkpointing: false
     checkpoint:
       _target_: verl.trainer.config.CheckpointConfig
       save_contents: ['model', 'optimizer', 'extra']
@@ -166,13 +197,12 @@ actor_rollout_ref:
     _target_: verl.workers.config.RolloutConfig
     name: vllm
     mode: async
-    nnodes: 0
-    n_gpus_per_node: 1
     temperature: 1.0
     top_p: 1.0
     top_k: 20
     do_sample: true
     n: 1
+    repetition_penalty: 1.0
     over_sample_rate: 0
     prompt_length: 2048
     response_length: 2048
@@ -182,7 +212,7 @@ actor_rollout_ref:
     enforce_eager: true
     cudagraph_capture_sizes: null
     free_cache_engine: true
-    load_format: dummy_dtensor
+    load_format: dummy
     tensor_model_parallel_size: 1
     data_parallel_size: 1
     expert_parallel_size: 1
@@ -200,6 +230,9 @@ actor_rollout_ref:
     log_prob_max_token_len_per_gpu: 16384
     disable_log_stats: true
     multi_stage_wake_up: false
+    enable_sleep_mode: true
+    sglang_engine_mode: local
+    custom: null
     engine_kwargs:
       vllm: {}
       sglang: {}
@@ -242,14 +275,12 @@ actor_rollout_ref:
       engine_kwargs: {}
     trace:
       _target_: verl.workers.config.TraceConfig
-      project_name: null
-      experiment_name: null
       backend: null
       token2text: false
       max_samples_per_step_per_worker: null
     skip_rollout: false
     skip_dump_dir: /tmp/rollout_dump
-    skip_tokenizer_init: true
+    skip_tokenizer_init: false
     enable_rollout_routing_replay: false
     layered_summon: false
     limit_images: null
@@ -306,12 +337,30 @@ critic:
       attn_implementation: flash_attention_2
     enable_gradient_checkpointing: true
     enable_activation_offload: false
+    use_remove_padding: false
+    use_shm: false
     trust_remote_code: true
+    lora_rank: 0
+    lora_alpha: 16
+    target_modules: all-linear
   strategy: fsdp
+  rollout_n: 1
+  ppo_mini_batch_size: 1
   ppo_micro_batch_size: null
   ppo_micro_batch_size_per_gpu: 1
+  ppo_infer_micro_batch_size_per_gpu: null
+  ppo_infer_max_token_len_per_gpu: 32768
+  forward_max_token_len_per_gpu: 32768
+  forward_micro_batch_size: 1
+  forward_micro_batch_size_per_gpu: 1
   use_dynamic_bsz: false
   ppo_max_token_len_per_gpu: 16384
+  ppo_epochs: 1
+  data_loader_seed: 1
+  shuffle: true
+  cliprange_value: 0.5
+  loss_agg_mode: token-mean
+  grad_clip: 1.0
   ulysses_sequence_parallel_size: 1
   optim:
     _target_: verl.workers.config.FSDPOptimizerConfig
@@ -336,7 +385,30 @@ critic:
       min_num_params: 0
     param_offload: false
     optimizer_offload: false
+    grad_offload: false
+    forward_only: false
+    strategy: fsdp
+    dtype: bfloat16
+    use_dynamic_bsz: true
+    max_token_len_per_gpu: null
+    micro_batch_size_per_gpu: null
+    infer_max_token_len_per_gpu: null
+    infer_micro_batch_size_per_gpu: null
+    use_fused_kernels: false
+    use_remove_padding: true
+    seed: 42
+    full_determinism: false
+    offload_policy: false
+    reshard_after_forward: true
     fsdp_size: -1
+    forward_prefetch: false
+    model_dtype: fp32
+    use_orig_params: false
+    mixed_precision: null
+    ulysses_sequence_parallel_size: 1
+    entropy_from_logits_with_chunking: false
+    use_torch_compile: true
+    entropy_checkpointing: false
 
 # ─── Reward Model (legacy, pre-migration) ────────────────────────────────────
 # veRL's migrate_legacy_reward_impl reads ALL these keys and migrates them
@@ -461,6 +533,8 @@ algorithm:
   pf_ppo:
     reweight_method: pow
     weight_pow: 2.0
+  filter_groups: null
+  rollout_correction: null
 
 # ─── Trainer ──────────────────────────────────────────────────────────────────
 trainer:
@@ -501,19 +575,17 @@ transfer_queue:
 global_profiler:
   _target_: verl.utils.profiler.ProfilerConfig
   tool: null
-  steps: null
-  profile_continuous_steps: false
+  enable: false
+  all_ranks: false
+  ranks: []
   save_path: "outputs/profile"
-  global_tool_config:
+  tool_config:
     nsys:
       _target_: verl.utils.profiler.config.NsightToolConfig
       discrete: false
     torch_memory:
       trace_alloc_max_entries: 100000
       stack_depth: 32
-      context: "all"
-      stacks: "all"
-      kw_args: {}
 
 # ─── Ray Configuration ───────────────────────────────────────────────────────
 ray_kwargs:

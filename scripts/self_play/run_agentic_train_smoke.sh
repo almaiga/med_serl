@@ -177,6 +177,89 @@ else:
         print(f"  PATCHED: widened {n} 'except ImportError' → 'except (ImportError, OSError)'")
 PATCH_EOF
 
+# ─── Pre-flight: Auto-patch YAML to match installed veRL dataclasses ──────────
+# veRL uses Hydra structured configs (_target_ → dataclass).  If the YAML has
+# fields the dataclass doesn't define, Hydra throws InstantiationException.
+# This step introspects every _target_ class and strips unknown fields.
+echo ""
+echo "=== Pre-flight: Auto-patching self_play.yaml for installed veRL version ==="
+export YAML_TO_PATCH="$CONFIG_DIR/self_play.yaml"
+python3 << 'YAML_PATCH_EOF'
+import yaml, importlib, dataclasses, pathlib, copy, sys, os
+
+YAML_PATH = pathlib.Path(os.environ["YAML_TO_PATCH"])
+if not YAML_PATH.exists():
+    print("  SKIP: self_play.yaml not found at", YAML_PATH)
+    sys.exit(0)
+
+with open(YAML_PATH) as f:
+    cfg = yaml.safe_load(f)
+
+original = copy.deepcopy(cfg)
+changes = []
+warnings = []
+
+def patch_node(node, path=""):
+    """Recursively find dicts with _target_, strip unknown keys, add missing defaults."""
+    if not isinstance(node, dict):
+        return
+    # First recurse into children
+    for k, v in list(node.items()):
+        if isinstance(v, dict):
+            patch_node(v, f"{path}.{k}" if path else k)
+    # Then check this node
+    target = node.get("_target_")
+    if target:
+        try:
+            mod_path, cls_name = target.rsplit(".", 1)
+            mod = importlib.import_module(mod_path)
+            cls = getattr(mod, cls_name)
+            if not dataclasses.is_dataclass(cls):
+                return
+        except Exception:
+            return
+        valid = {}
+        for f in dataclasses.fields(cls):
+            valid[f.name] = f
+        valid_names = set(valid.keys()) | {"_target_"}
+        # Remove unknown keys
+        to_remove = [k for k in node if k not in valid_names]
+        for k in to_remove:
+            changes.append(f"  REMOVED {path}.{k} (not in {target})")
+            del node[k]
+        # Add missing fields that have defaults
+        for fname, field in valid.items():
+            if fname not in node:
+                if field.default is not dataclasses.MISSING:
+                    node[fname] = field.default
+                    changes.append(f"  ADDED   {path}.{fname} = {field.default!r}")
+                elif field.default_factory is not dataclasses.MISSING:
+                    node[fname] = field.default_factory()
+                    changes.append(f"  ADDED   {path}.{fname} = {node[fname]!r}")
+                else:
+                    warnings.append(f"  WARNING {path}.{fname} is REQUIRED (no default) in {target}")
+
+patch_node(cfg)
+
+if changes or warnings:
+    # Backup original before overwriting
+    backup = YAML_PATH.with_suffix(".yaml.bak")
+    with open(backup, "w") as f:
+        yaml.dump(original, f, default_flow_style=False, sort_keys=False, width=120)
+    if changes:
+        with open(YAML_PATH, "w") as f:
+            yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, width=120)
+        print(f"  PATCHED self_play.yaml — {len(changes)} field(s) changed (backup: {backup}):")
+        for c in changes:
+            print(c)
+    if warnings:
+        print(f"  {len(warnings)} REQUIRED field(s) missing (may need manual add):")
+        for w in warnings:
+            print(w)
+else:
+    print("  All _target_ blocks match installed veRL — no changes needed.")
+YAML_PATCH_EOF
+
 # ─── Step 0: Ensure data exists ───────────────────────────────────────────────
 echo ""
 echo "=== Step 0: Checking / Generating Data ==="
@@ -297,7 +380,6 @@ python3 -m verl.trainer.main_ppo \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    "++actor_rollout_ref.actor.optim.optimizer=AdamW" \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
