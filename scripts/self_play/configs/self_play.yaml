@@ -235,10 +235,6 @@ actor_rollout_ref:
     rollout_n: 1
     strategy: fsdp
     use_torch_compile: false
-    log_prob_micro_batch_size: null
-    log_prob_micro_batch_size_per_gpu: 8
-    log_prob_use_dynamic_bsz: false
-    log_prob_max_token_len_per_gpu: 16384
     profiler:
       _target_: verl.utils.profiler.ProfilerConfig
       tool: null
