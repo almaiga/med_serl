@@ -242,7 +242,7 @@ print('Download complete.')
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.35 \
+            --gpu-memory-utilization 0.20 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
@@ -300,7 +300,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_max_samples=20 \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
-    data.max_response_length=512 \
+    data.max_response_length=1024 \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     \
@@ -313,7 +313,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
@@ -327,7 +327,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
-    actor_rollout_ref.rollout.response_length=512 \
+    actor_rollout_ref.rollout.response_length=1024 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     \
