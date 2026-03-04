@@ -180,83 +180,91 @@ PATCH_EOF
 # ─── Pre-flight: Auto-patch YAML to match installed veRL dataclasses ──────────
 # veRL uses Hydra structured configs (_target_ → dataclass).  If the YAML has
 # fields the dataclass doesn't define, Hydra throws InstantiationException.
-# This step introspects every _target_ class and strips unknown fields.
+# This step introspects every _target_ class and REMOVES unknown fields.
+# It does NOT add missing fields (that risks writing Python-specific YAML tags
+# like !!python/tuple or !!python/object which OmegaConf cannot parse).
 echo ""
 echo "=== Pre-flight: Auto-patching self_play.yaml for installed veRL version ==="
 export YAML_TO_PATCH="$CONFIG_DIR/self_play.yaml"
 python3 << 'YAML_PATCH_EOF'
-import yaml, importlib, dataclasses, pathlib, copy, sys, os
+import yaml, importlib, dataclasses, pathlib, copy, re, sys, os
 
 YAML_PATH = pathlib.Path(os.environ["YAML_TO_PATCH"])
 if not YAML_PATH.exists():
     print("  SKIP: self_play.yaml not found at", YAML_PATH)
     sys.exit(0)
 
+# First, check for corrupted Python object tags and abort if found
+raw_text = YAML_PATH.read_text()
+python_tags = re.findall(r'!!python/\S+', raw_text)
+if python_tags:
+    print(f"  ERROR: YAML contains Python-specific tags that OmegaConf cannot parse:")
+    for tag in set(python_tags):
+        print(f"    {tag}")
+    backup = YAML_PATH.with_suffix(".yaml.bak")
+    if backup.exists():
+        print(f"  Restoring from backup: {backup}")
+        import shutil
+        shutil.copy2(backup, YAML_PATH)
+        raw_text = YAML_PATH.read_text()
+    else:
+        print("  No backup found. Please fix the YAML manually or re-pull from git.")
+        sys.exit(1)
+
 with open(YAML_PATH) as f:
     cfg = yaml.safe_load(f)
 
-original = copy.deepcopy(cfg)
+original_text = raw_text  # preserve original for backup
 changes = []
 warnings = []
 
 def patch_node(node, path=""):
-    """Recursively find dicts with _target_, strip unknown keys, add missing defaults."""
+    """Recursively find dicts with _target_, strip unknown keys only."""
     if not isinstance(node, dict):
         return
-    # First recurse into children
     for k, v in list(node.items()):
         if isinstance(v, dict):
             patch_node(v, f"{path}.{k}" if path else k)
-    # Then check this node
     target = node.get("_target_")
-    if target:
-        try:
-            mod_path, cls_name = target.rsplit(".", 1)
-            mod = importlib.import_module(mod_path)
-            cls = getattr(mod, cls_name)
-            if not dataclasses.is_dataclass(cls):
-                return
-        except Exception:
+    if not target:
+        return
+    try:
+        mod_path, cls_name = target.rsplit(".", 1)
+        mod = importlib.import_module(mod_path)
+        cls = getattr(mod, cls_name)
+        if not dataclasses.is_dataclass(cls):
             return
-        valid = {}
-        for f in dataclasses.fields(cls):
-            valid[f.name] = f
-        valid_names = set(valid.keys()) | {"_target_"}
-        # Remove unknown keys
-        to_remove = [k for k in node if k not in valid_names]
-        for k in to_remove:
-            changes.append(f"  REMOVED {path}.{k} (not in {target})")
-            del node[k]
-        # Add missing fields that have defaults
-        for fname, field in valid.items():
-            if fname not in node:
-                if field.default is not dataclasses.MISSING:
-                    node[fname] = field.default
-                    changes.append(f"  ADDED   {path}.{fname} = {field.default!r}")
-                elif field.default_factory is not dataclasses.MISSING:
-                    node[fname] = field.default_factory()
-                    changes.append(f"  ADDED   {path}.{fname} = {node[fname]!r}")
-                else:
-                    warnings.append(f"  WARNING {path}.{fname} is REQUIRED (no default) in {target}")
+    except Exception as e:
+        warnings.append(f"  WARN: cannot import {target}: {e}")
+        return
+    valid_names = {f.name for f in dataclasses.fields(cls)} | {"_target_"}
+    # Remove unknown keys
+    to_remove = [k for k in node if k not in valid_names]
+    for k in to_remove:
+        changes.append(f"  REMOVED {path}.{k} (not in {target})")
+        del node[k]
+    # Warn about missing REQUIRED fields (but do NOT add them)
+    for f in dataclasses.fields(cls):
+        if f.name not in node and f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
+            warnings.append(f"  MISSING {path}.{f.name} (REQUIRED by {cls_name}, no default)")
 
 patch_node(cfg)
 
-if changes or warnings:
-    # Backup original before overwriting
+if changes:
+    # Write backup of original raw text (preserves comments, no re-serialization)
     backup = YAML_PATH.with_suffix(".yaml.bak")
-    with open(backup, "w") as f:
-        yaml.dump(original, f, default_flow_style=False, sort_keys=False, width=120)
-    if changes:
-        with open(YAML_PATH, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False, sort_keys=False, width=120)
-        print(f"  PATCHED self_play.yaml — {len(changes)} field(s) changed (backup: {backup}):")
-        for c in changes:
-            print(c)
-    if warnings:
-        print(f"  {len(warnings)} REQUIRED field(s) missing (may need manual add):")
-        for w in warnings:
-            print(w)
-else:
+    backup.write_text(original_text)
+    # Write patched config using safe_dump (no Python-specific tags)
+    with open(YAML_PATH, "w") as f:
+        yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False, width=120)
+    print(f"  PATCHED — {len(changes)} field(s) removed (backup: {backup}):")
+    for c in changes:
+        print(c)
+if warnings:
+    print(f"  {len(warnings)} warning(s):")
+    for w in warnings:
+        print(w)
+if not changes and not warnings:
     print("  All _target_ blocks match installed veRL — no changes needed.")
 YAML_PATCH_EOF
 
@@ -387,6 +395,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.fsdp_config.strategy=fsdp2 \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
     actor_rollout_ref.rollout.name=vllm \
@@ -398,17 +407,20 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
+    actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=512 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.fsdp_config.strategy=fsdp2 \
+    actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     \
     critic.model.path="$ACTOR_MODEL" \
     critic.ppo_micro_batch_size_per_gpu=1 \
-    critic.engine.param_offload=True \
-    critic.engine.optimizer_offload=True \
+    critic.model.fsdp_config.param_offload=True \
+    critic.model.fsdp_config.optimizer_offload=True \
     \
     reward_model.enable=False \
     \
