@@ -298,8 +298,6 @@ actor_rollout_ref:
     _target_: verl.workers.config.RolloutConfig
     name: vllm
     mode: async
-    nnodes: 0
-    n_gpus_per_node: 1
     temperature: 1.0
     top_k: 20
     top_p: 1.0
@@ -374,8 +372,6 @@ actor_rollout_ref:
       engine_kwargs: {}
     trace:
       _target_: verl.workers.config.TraceConfig
-      project_name: medserl_selfplay
-      experiment_name: selfplay_v1
       backend: null
       token2text: false
       max_samples_per_step_per_worker: null
@@ -697,8 +693,9 @@ transfer_queue:
 global_profiler:
   _target_: verl.utils.profiler.ProfilerConfig
   tool: null
-  steps: null
-  profile_continuous_steps: false
+  enable: false
+  all_ranks: false
+  ranks: []
   save_path: "outputs/profile"
   global_tool_config:
     nsys:
