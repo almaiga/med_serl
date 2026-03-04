@@ -34,7 +34,7 @@ actor_rollout_ref:
     name: vllm
     enforce_eager: True
     gpu_memory_utilization: 0.5
-    load_format: dummy_dtensor
+    load_format: dummy
     tensor_model_parallel_size: 1
     temperature: 0.7
     top_p: 0.95
