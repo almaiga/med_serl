@@ -709,17 +709,6 @@ global_profiler:
     nsys:
       _target_: verl.utils.profiler.config.NsightToolConfig
       discrete: false
-      controller_nsight_options:
-        trace: "cuda,nvtx,cublas,ucx"
-        cuda-memory-usage: "true"
-        cuda-graph-trace: graph
-      worker_nsight_options:
-        trace: "cuda,nvtx,cublas,ucx"
-        cuda-memory-usage: "true"
-        cuda-graph-trace: graph
-        capture-range: cudaProfilerApi
-        capture-range-end: null
-        kill: none
     torch_memory:
       trace_alloc_max_entries: 100000
       stack_depth: 32
