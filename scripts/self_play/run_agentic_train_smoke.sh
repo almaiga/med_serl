@@ -295,8 +295,8 @@ python3 -m verl.trainer.main_ppo \
     \
     data.train_files="$TRAIN_PARQUET" \
     data.val_files="$VAL_PARQUET" \
-    data.train_batch_size=4 \
-    data.val_batch_size=4 \
+    data.train_batch_size=8 \
+    data.val_batch_size=8 \
     data.train_max_samples=20 \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
