@@ -85,6 +85,8 @@ if command -v nvidia-smi &>/dev/null; then
     # Show current GPU state
     nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 fi
+# Allow CUDA driver to recover after aggressive kill -9
+sleep 5
 echo "  Cleanup done."
 
 # ─── Pre-flight: verify enough GPU memory is free ────────────────────────────
@@ -97,17 +99,21 @@ try:
         ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"],
         capture_output=True, text=True, timeout=10
     )
-    free_mb, total_mb = [int(x.strip()) for x in result.stdout.strip().split(",")]
-    free_gb = free_mb / 1024
-    total_gb = total_mb / 1024
-    print(f"  GPU memory: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
-    # Judge (Qwen3-8B bf16) needs ~18 GiB + KV cache overhead
-    if free_gb < 20:
-        print(f"  ERROR: Only {free_gb:.1f} GiB free — need at least 20 GiB for judge server.")
-        print(f"  Run: nvidia-smi  to see what's using GPU memory, then kill those processes.")
+    lines = result.stdout.strip().split("\n")
+    print(f"  Found {len(lines)} GPU(s)")
+    total_free_gb = 0
+    for i, line in enumerate(lines):
+        free_mb, total_mb = [int(x.strip()) for x in line.split(",")]
+        free_gb = free_mb / 1024
+        total_gb = total_mb / 1024
+        total_free_gb += free_gb
+        print(f"  GPU {i}: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
+    # Need at least 20 GiB free on any single GPU for the judge
+    if total_free_gb < 20:
+        print(f"  ERROR: Only {total_free_gb:.1f} GiB total free — need at least 20 GiB.")
         sys.exit(1)
     else:
-        print(f"  OK — enough memory for judge server.")
+        print(f"  OK — {total_free_gb:.1f} GiB total free across {len(lines)} GPU(s).")
 except Exception as e:
     print(f"  WARNING: Could not check GPU memory: {e}")
 GPU_CHECK_EOF
@@ -236,13 +242,13 @@ snapshot_download('${JUDGE_MODEL}', ignore_patterns=['*.gguf'])
 print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
-        echo "Starting vLLM judge server on port ${JUDGE_PORT} (GPU 1) ..."
-        env CUDA_VISIBLE_DEVICES=1 python3 -m vllm.entrypoints.openai.api_server \
+        echo "Starting vLLM judge server on port ${JUDGE_PORT} ..."
+        python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.5 \
+            --gpu-memory-utilization 0.3 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
@@ -287,7 +293,7 @@ echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
 
-CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
+python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_agentic" \
     \
@@ -296,7 +302,6 @@ CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     data.train_files="$TRAIN_PARQUET" \
     data.val_files="$VAL_PARQUET" \
     data.train_batch_size=8 \
-    data.val_batch_size=8 \
     data.train_max_samples=20 \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
@@ -306,7 +311,8 @@ CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
-    actor_rollout_ref.model.use_remove_padding=False \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.model.use_shm=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.lora_rank=16 \
     actor_rollout_ref.model.lora_alpha=32 \
@@ -326,8 +332,7 @@ CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
-    actor_rollout_ref.rollout.max_model_len=2048 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
@@ -355,7 +360,7 @@ CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     trainer.project_name=medserl-smoke \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
-    trainer.n_gpus_per_node=1 \
+    trainer.n_gpus_per_node=2 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=99999 \
