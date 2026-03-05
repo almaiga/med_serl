@@ -237,7 +237,7 @@ print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
         echo "Starting vLLM judge server on port ${JUDGE_PORT} (GPU 1) ..."
-        CUDA_VISIBLE_DEVICES=1 python3 -m vllm.entrypoints.openai.api_server \
+        env CUDA_VISIBLE_DEVICES=1 python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
@@ -287,7 +287,7 @@ echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
 
-python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_agentic" \
     \
