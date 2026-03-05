@@ -326,7 +326,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.15 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
     actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
