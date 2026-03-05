@@ -360,7 +360,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name=medserl-smoke \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=99999 \
