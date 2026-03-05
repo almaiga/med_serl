@@ -293,7 +293,7 @@ echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
 
-python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_agentic" \
     \
