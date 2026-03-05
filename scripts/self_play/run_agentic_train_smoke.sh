@@ -242,7 +242,7 @@ print('Download complete.')
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.20 \
+            --gpu-memory-utilization 0.30 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
