@@ -236,13 +236,13 @@ snapshot_download('${JUDGE_MODEL}', ignore_patterns=['*.gguf'])
 print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
-        echo "Starting vLLM judge server on port ${JUDGE_PORT} ..."
-        python3 -m vllm.entrypoints.openai.api_server \
+        echo "Starting vLLM judge server on port ${JUDGE_PORT} (GPU 1) ..."
+        CUDA_VISIBLE_DEVICES=1 python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.30 \
+            --gpu-memory-utilization 0.5 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
@@ -316,8 +316,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
     actor_rollout_ref.rollout.load_format=safetensors \
@@ -326,7 +326,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
     actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
@@ -336,7 +336,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.fsdp_config.param_offload=False \
     actor_rollout_ref.ref.strategy=fsdp2 \
     \
     critic.enable=false \
