@@ -43,6 +43,19 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${OUTPUT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/${DATASET}_${TIMESTAMP}.log"
 
+# ── Ensure screen is installed ─────────────────────────────────────────────
+if ! command -v screen &>/dev/null; then
+    echo "screen not found — installing..."
+    if command -v apt-get &>/dev/null; then
+        apt-get update -qq && apt-get install -y screen
+    elif command -v brew &>/dev/null; then
+        brew install screen
+    else
+        echo "ERROR: cannot install screen automatically. Please install screen manually."
+        exit 1
+    fi
+fi
+
 # ── Kill existing session if running ────────────────────────────────────────
 screen -X -S "${SESSION_NAME}" quit 2>/dev/null || true
 
