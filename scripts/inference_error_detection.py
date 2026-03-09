@@ -110,8 +110,16 @@ def detect_model_type(model_path: str) -> str:
     return MODEL_TYPE_GENERIC
 
 
-def load_model_and_tokenizer(model_path: str, model_type: str):
-    """Load model and tokenizer from local or HF path based on model type."""
+def load_model_and_tokenizer(model_path: str, model_type: str, base_model_override: str = None):
+    """Load model and tokenizer from local or HF path based on model type.
+    
+    Args:
+        model_path: Path to model or LoRA adapter directory.
+        model_type: Model type string (e.g. 'qwen').
+        base_model_override: If set, use this path instead of the one in
+            adapter_config.json.  Useful in offline / air-gapped environments
+            where the HF hub ID in the adapter config cannot be resolved.
+    """
     print(f"Loading model from: {model_path}")
     print(f"Model type: {model_type}")
     
@@ -120,12 +128,12 @@ def load_model_and_tokenizer(model_path: str, model_type: str):
     if is_adapter:
         if not PEFT_AVAILABLE:
             raise ImportError("PEFT is required to load LoRA adapters. Install with: pip install peft")
-        base_model_path = get_base_model_from_adapter(model_path)
+        base_model_path = base_model_override or get_base_model_from_adapter(model_path)
         print(f"🔧 Detected LoRA adapter, base model: {base_model_path}")
     
     # Load base model first if it's a LoRA adapter
     if is_adapter:
-        base_model_path = get_base_model_from_adapter(model_path)
+        base_model_path = base_model_override or get_base_model_from_adapter(model_path)
         print(f"📦 Loading base model: {base_model_path}")
         model = AutoModelForCausalLM.from_pretrained(
             base_model_path,
@@ -139,11 +147,25 @@ def load_model_and_tokenizer(model_path: str, model_type: str):
         print(f"⚡ Merging adapter for faster inference...")
         model = model.merge_and_unload()
         
-        # Load tokenizer from adapter path (has chat template) or base model
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
+        # Load tokenizer from base model (adapter tokenizer_config may have
+        # extra_special_tokens as list instead of dict — breaks older transformers)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                trust_remote_code=True
+            )
+        except (AttributeError, TypeError):
+            print(f"⚠️  Tokenizer in adapter dir broken, falling back to base model tokenizer: {base_model_path}")
+            tokenizer = AutoTokenizer.from_pretrained(
+                base_model_path,
+                trust_remote_code=True
+            )
+            # Apply chat template from adapter dir if present
+            chat_template_path = os.path.join(model_path, "chat_template.jinja")
+            if os.path.exists(chat_template_path):
+                with open(chat_template_path) as f:
+                    tokenizer.chat_template = f.read()
+                print(f"✅ Applied chat template from adapter dir")
     else:
         # Standard model loading
         model = AutoModelForCausalLM.from_pretrained(

@@ -63,6 +63,7 @@ THINKING_BUDGET="${THINKING_BUDGET:-1024}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
 NO_THINKING="${NO_THINKING:-0}"
+BASE_MODEL_PATH="${BASE_MODEL_PATH:-}"   # override base model for LoRA adapters (offline mode)
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
 OUTPUT_DIR="results/detection/${MODEL_NAME}"
 
@@ -109,6 +110,7 @@ PYTHON_CMD+=" --max_new_tokens ${MAX_NEW_TOKENS}"
 PYTHON_CMD+=" --output_dir ${OUTPUT_DIR}"
 [[ -n "${MAX_SAMPLES}" ]] && PYTHON_CMD+=" --max_samples ${MAX_SAMPLES}"
 [[ "${NO_THINKING}" == "1" ]] && PYTHON_CMD+=" --no_thinking"
+[[ -n "${BASE_MODEL_PATH}" ]] && PYTHON_CMD+=" --base_model_path ${BASE_MODEL_PATH}"
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""

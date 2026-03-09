@@ -429,6 +429,10 @@ def main():
     p.add_argument("--thinking_budget", type=int, default=1024)
     p.add_argument("--no_thinking",     action="store_true")
     p.add_argument("--output_dir",      default="results/detection")
+    p.add_argument("--base_model_path", default=None,
+                   help="Override base-model path for LoRA adapters "
+                        "(use when running offline and adapter_config "
+                        "points to an HF hub ID)")
     args = p.parse_args()
 
     model_type = detect_model_type(args.model_path)
@@ -438,7 +442,10 @@ def main():
     print(f"Dataset : {args.dataset}  |  Thinking: {not args.no_thinking}")
     print(f"{'='*50}\n")
 
-    model, tokenizer = load_model_and_tokenizer(args.model_path, model_type)
+    model, tokenizer = load_model_and_tokenizer(
+        args.model_path, model_type,
+        base_model_override=args.base_model_path,
+    )
     prompt_config    = load_prompt_config(Path(args.prompt_config))
     test_df          = load_test_data(args.dataset)
 
