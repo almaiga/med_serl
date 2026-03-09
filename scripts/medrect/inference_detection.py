@@ -250,21 +250,25 @@ def run_inference(
             input_ids2 = torch.cat(padded, dim=0)
             attn_mask2 = torch.cat(masks, dim=0)
             stage2_input_len = input_ids2.size(1)
-            # Answer stage: output is just a number or "CORRECT" (1-3 tokens)
-            with torch.no_grad():
-                outputs = model.generate(
-                    input_ids=input_ids2,
-                    attention_mask=attn_mask2,
-                    max_new_tokens=16,
-                    temperature=0.3,
-                    do_sample=True,
-                    top_p=0.95,
-                    top_k=20,
-                    min_p=0.05,
-                    repetition_penalty=1.3,
-                    pad_token_id=tokenizer.pad_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
-                )
+            # Answer stage: only run if at least one sample needs it
+            if any(needs_stage2):
+                with torch.no_grad():
+                    outputs = model.generate(
+                        input_ids=input_ids2,
+                        attention_mask=attn_mask2,
+                        max_new_tokens=16,
+                        temperature=0.3,
+                        do_sample=True,
+                        top_p=0.95,
+                        top_k=20,
+                        min_p=0.05,
+                        repetition_penalty=1.3,
+                        pad_token_id=tokenizer.pad_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                    )
+            else:
+                # All samples completed in stage 1 — reuse batch_final as outputs
+                outputs = input_ids2
 
         for i, m in enumerate(meta):
             thinking = ""
