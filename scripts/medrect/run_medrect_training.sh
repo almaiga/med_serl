@@ -28,7 +28,7 @@ cd "${PROJECT_ROOT}"
 
 # ---- Configuration (overridable via env) ----
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-8B}"
-MEDRECT_DATA="${MEDRECT_DATA:-/workspace/medrect/data/medrect/medrect-en-train.json /workspace/medrect/data/medrect/medrect-ja-train.json}"
+MEDRECT_DATA="${MEDRECT_DATA:-/workspace/medrect/data/medrect/medrect-en-train.json}"
 PROMPT_CONFIG="configs/prompts/sft/medrect_detection_prompts.json"
 PREPARED_DATA="data_processed/medrect/medrect_sft_train.jsonl"
 
@@ -190,6 +190,8 @@ run_pipeline() {
         --lora-alpha "${LORA_ALPHA}" \
         --lora-dropout "${LORA_DROPOUT}" \
         --lora-target-modules "${LORA_TARGET}" \
+        --eval-split 0 \
+        --no-early-stopping \
         --bf16 \
         --debug-samples 2 \
         ${WANDB_FLAG}
