@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 # =============================================================================
 # Detection + Localization Inference — Launcher
@@ -29,20 +29,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-# ── HuggingFace cache — models live here, run fully offline ──────────────────
-export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
+# ── HuggingFace cache — use offline mode only if cache exists ─────────────────
+if [[ -d "/workspace/.cache/huggingface/hub" ]]; then
+    export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
+    export HF_HUB_OFFLINE=1
+    export TRANSFORMERS_OFFLINE=1
+else
+    export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
+fi
 
-# ── Model registry — add new models here ─────────────────────────────────────
-declare -A MODELS=(
-    ["HuatuoGPT-o1-7B"]="FreedomIntelligence/HuatuoGPT-o1-7B"
-    ["Qwen3-4B"]="Qwen/Qwen3-4B"
-    ["Qwen3-8B"]="Qwen/Qwen3-8B"
-    ["Qwen3-14B"]="Qwen/Qwen3-14B"
-    ["Qwen3-32B"]="Qwen/Qwen3-32B"
-    ["medrect-sft"]="outputs/local_training/qwen3-8b-medrect-sft"
-)
+# ── Model registry (bash 3 compatible) ───────────────────────────────────────
+resolve_model_path() {
+    case "$1" in
+        HuatuoGPT-o1-7B) echo "FreedomIntelligence/HuatuoGPT-o1-7B" ;;
+        Qwen3-4B)        echo "Qwen/Qwen3-4B" ;;
+        Qwen3-8B)        echo "Qwen/Qwen3-8B" ;;
+        Qwen3-14B)       echo "Qwen/Qwen3-14B" ;;
+        Qwen3-32B)       echo "Qwen/Qwen3-32B" ;;
+        medrect-sft)     echo "outputs/local_training/qwen3-8b-medrect-sft" ;;
+        *)               echo "" ;;
+    esac
+}
 
 # ── Resolve model name ──────────────────────────────────────────────────
 MODEL_NAME="${1:-}"
@@ -50,13 +57,18 @@ if [[ -z "${MODEL_NAME}" ]]; then
     echo "Usage: bash $0 <model_name>"
     echo ""
     echo "Available models:"
-    for k in "${!MODELS[@]}"; do printf "  %-25s %s\n" "${k}" "${MODELS[$k]}"; done
+    echo "  HuatuoGPT-o1-7B            FreedomIntelligence/HuatuoGPT-o1-7B"
+    echo "  Qwen3-4B                   Qwen/Qwen3-4B"
+    echo "  Qwen3-8B                   Qwen/Qwen3-8B"
+    echo "  Qwen3-14B                  Qwen/Qwen3-14B"
+    echo "  Qwen3-32B                  Qwen/Qwen3-32B"
+    echo "  medrect-sft                outputs/local_training/qwen3-8b-medrect-sft"
     exit 1
 fi
 
-MODEL_PATH="${MODELS[${MODEL_NAME}]:-}"
+MODEL_PATH="$(resolve_model_path "${MODEL_NAME}")"
 if [[ -z "${MODEL_PATH}" ]]; then
-    echo "ERROR: unknown model '${MODEL_NAME}'. Add it to the MODELS table in this script."
+    echo "ERROR: unknown model '${MODEL_NAME}'. Add it to resolve_model_path() in this script."
     exit 1
 fi
 
@@ -138,7 +150,11 @@ echo "  ${PYTHON_CMD}"
 echo ""
 
 # ── Launch ───────────────────────────────────────────────────────────────────
-FULL_CMD="HF_HOME=${HF_HOME} HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 ${PYTHON_CMD} 2>&1 | tee -a '${LOG_FILE}'; echo ''; echo '=== DONE (exit \$?) ===' "
+HF_ENV="HF_HOME=${HF_HOME}"
+if [[ "${HF_HUB_OFFLINE:-0}" == "1" ]]; then
+    HF_ENV+=" HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1"
+fi
+FULL_CMD="${HF_ENV} ${PYTHON_CMD} 2>&1 | tee -a '${LOG_FILE}'; echo ''; echo '=== DONE (exit \$?) ===' "
 screen -dmS "${SCREEN_NAME}" bash -c "${FULL_CMD}"
 sleep 1
 echo "Started: screen -r ${SCREEN_NAME}"
