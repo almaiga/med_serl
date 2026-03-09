@@ -130,11 +130,16 @@ def convert_record(
     if reasoning_field and reasoning_field in record:
         reasoning = record[reasoning_field]
     else:
-        # Try common field names
+        # Try common field names (top-level)
         for field in ["reasoning", "thinking", "chain_of_thought", "rationale"]:
             if field in record and record[field]:
                 reasoning = record[field]
                 break
+        # Check nested raw_response.reasoning (e.g. DeepSeek-R1 generated chains)
+        if reasoning is None:
+            raw_resp = record.get("raw_response")
+            if isinstance(raw_resp, dict):
+                reasoning = raw_resp.get("reasoning") or raw_resp.get("thinking")
     
     return {
         "sample_id": sample_id,
