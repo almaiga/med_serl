@@ -98,7 +98,7 @@ INFERENCE_SCRIPT="scripts/medrect/inference_detection.py"
 mkdir -p "${LOG_DIR}"
 
 # ── Build command ────────────────────────────────────────────────────────────
-PYTHON_CMD="python ${INFERENCE_SCRIPT}"
+PYTHON_CMD="python -u ${INFERENCE_SCRIPT}"
 PYTHON_CMD+=" --model_path ${MODEL_PATH}"
 PYTHON_CMD+=" --prompt_config ${PROMPT_CONFIG}"
 PYTHON_CMD+=" --dataset ${DATASET}"
@@ -132,7 +132,7 @@ echo "  ${PYTHON_CMD}"
 echo ""
 
 # ── Launch ───────────────────────────────────────────────────────────────────
-FULL_CMD="${PYTHON_CMD} 2>&1 | tee -a '${LOG_FILE}'; echo ''; echo '=== DONE (exit \$?) ===' "
+FULL_CMD="HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 ${PYTHON_CMD} 2>&1 | tee -a '${LOG_FILE}'; echo ''; echo '=== DONE (exit \$?) ===' "
 screen -dmS "${SCREEN_NAME}" bash -c "${FULL_CMD}"
 sleep 1
 echo "Started: screen -r ${SCREEN_NAME}"
