@@ -90,6 +90,28 @@ else:
     print("  GLIBC: file not found (not Docker?), skipping")
 PATCH_GLIBC
 
+# Patch 2: Restore vanilla ray.init() — undo any previous MedSeRL patches.
+#          RAY_ADDRESS=auto (set below) handles connecting to the pre-started head.
+python3 << 'PATCH_RAY'
+import pathlib, re
+fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
+if fpath.exists():
+    code = fpath.read_text()
+    vanilla = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
+    if "_ray_kw" in code:
+        # Old MedSeRL patch present — restore the vanilla one-liner
+        code = re.sub(
+            r"_ray_kw = OmegaConf\.to_container.*?ray\.init\(\*\*_ray_kw\)",
+            vanilla, code, flags=re.DOTALL
+        )
+        fpath.write_text(code)
+        print("  Ray init: restored vanilla (RAY_ADDRESS=auto handles connection)")
+    else:
+        print("  Ray init: already vanilla")
+else:
+    print("  Ray init: file not found (not Docker?), skipping")
+PATCH_RAY
+
 # ── Data check ────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Data Check ==="
@@ -115,14 +137,21 @@ echo "=== Starting Ray head node ==="
 rm -rf /tmp/ray /dev/shm/ray 2>/dev/null || true
 mkdir -p /dev/shm/ray
 
+# Let Ray auto-detect the container IP (forced 127.0.0.1 causes RPC timeout)
 ray start --head \
     --num-cpus=8 \
     --num-gpus="$N_GPUS" \
     --temp-dir=/dev/shm/ray \
-    --node-ip-address=127.0.0.1 \
     --include-dashboard=false \
+    --disable-usage-stats \
     --port=6379 \
     --object-store-memory=10000000000
+
+# Verify Ray started successfully
+if ! ray status >/dev/null 2>&1; then
+    echo "ERROR: Ray head failed to start. Check Docker networking."
+    exit 1
+fi
 
 export RAY_ADDRESS=auto
 sleep 3
