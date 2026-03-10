@@ -7,7 +7,8 @@
 #
 # Usage:
 #   bash scripts/self_play/run_rule_smoke.sh
-
+ray stop
+ray start --head --num-cpus=8 --num-gpus=1 --temp-dir=/dev/shm/ray --include-dashboard=false --disable-usage-stats --port=6379 --object-store-memory=10000000000
 set -x
 ulimit -n 65535
 
