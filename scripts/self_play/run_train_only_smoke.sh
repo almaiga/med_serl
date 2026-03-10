@@ -25,8 +25,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="smoke_trainonly_${TIMESTAMP}"
 OUTPUT_DIR="outputs/self_play/smoke_trainonly_${TIMESTAMP}"
 
-# Force vLLM V0 engine globally (affects veRL's internal rollout)
-export VLLM_USE_V1=0
+# NOTE: Do NOT set VLLM_USE_V1=0 here — veRL's internal vLLM rollout requires V1.
+# No judge server in this script, so no V0 override needed at all.
 
 # Skip judge entirely — pure rule-based reward
 export UMLS_WEIGHT=0
@@ -116,7 +116,6 @@ echo "=================================================="
 echo "Project root : $PROJECT_ROOT"
 echo "Actor model  : $ACTOR_MODEL"
 echo "UMLS_WEIGHT  : $UMLS_WEIGHT (rule-based only)"
-echo "VLLM_USE_V1  : $VLLM_USE_V1 (V0 engine)"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 

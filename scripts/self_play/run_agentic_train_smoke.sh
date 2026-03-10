@@ -33,10 +33,9 @@ JUDGE_PORT="${JUDGE_PORT:-8002}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
 SKIP_SERVER="${SKIP_SERVER:-0}"
 
-# Force vLLM V0 engine globally: vLLM >=0.11 defaults to V1 which has a
-# multi-process handshake that hangs in containerised environments (RunPod, Docker).
-# This affects BOTH the standalone judge server AND veRL's internal vLLM rollout.
-export VLLM_USE_V1=0
+# NOTE: Do NOT set VLLM_USE_V1=0 globally — veRL's internal vLLM rollout
+# requires V1 (AsyncLLM).  We only set it in the judge server's subprocess
+# environment below, then ensure it's unset before training.
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
@@ -269,8 +268,8 @@ snapshot_download('${JUDGE_MODEL}', ignore_patterns=['*.gguf'])
 print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
-        echo "Starting vLLM judge server on port ${JUDGE_PORT} ..."
-        python3 -m vllm.entrypoints.openai.api_server \
+        echo "Starting vLLM judge server on port ${JUDGE_PORT} (V0 engine) ..."
+        VLLM_USE_V1=0 python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
@@ -326,6 +325,9 @@ ray stop --force 2>/dev/null || true
 rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 sleep 2
 echo "Ray state cleaned."
+
+# Ensure VLLM_USE_V1 is NOT set — veRL's rollout needs V1
+unset VLLM_USE_V1 2>/dev/null || true
 
 # ── Patch veRL Ray init for Docker ──
 # This must handle THREE cases:
