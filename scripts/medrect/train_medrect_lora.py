@@ -88,6 +88,11 @@ def format_for_sft(example: Dict, tokenizer) -> Dict[str, str]:
         </think>
         
         {label}
+    
+    Supported label formats:
+        - Assessor: "CORRECT" or "{sentence_number}" (detection + localization)
+        - Injector: "N. <modified sentence>" (error injection / benign change)
+    Both are used as-is after the </think> tag.
     """
     system_prompt = example["system_prompt"]
     user_prompt = example["user_prompt"]

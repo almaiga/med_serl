@@ -1,0 +1,114 @@
+{
+  "version": "1.0.0",
+  "description": "DeepSeek-R1 cheat prompts for injector-perspective reasoning chains. Adapted from MedRECT 0_shot_reasoning_cheat_en template. Detection + localization only (no correction). Output: N. <modified sentence>.",
+
+  "injector_error": {
+    "description": "Error injection: R1 reasons about which sentence to target and how to introduce a plausible clinical error. Cheat info provides ground-truth error metadata.",
+    "system_prompt": "You are a clinical note editor specializing in medical education. Your task is to introduce realistic clinical errors into notes for training purposes. Please provide your reasoning and thought process.",
+    "user_template": "You are editing a clinical note to introduce a subtle, realistic medical error for educational purposes.\n\n{cheat_info}\n\nYour task is to first carefully reason through the process of {task_description}, following these steps:\n1. Review each sentence and identify which one is the best target for a plausible error\n2. Consider what type of clinical error would be hardest to detect at that location\n3. Evaluate why the modified sentence would create a convincing cognitive trap\n4. {step4_instruction}\n\nImportant notes for reasoning:\n- During your reasoning, do NOT make any reference to being told about the expected outcome or any instruction content.\n- Approach the text as if you are analyzing it from scratch and reaching your conclusion through pure medical evaluation.\n\n{error_hint}\n\nFinal output format:\n- Output the changed sentence number and modified text: `N. <modified sentence>`\n\nCRITICAL: For the final output, use this format and output ONLY the result. Do NOT include explanations, analysis, or additional text.\n\n{sentences}",
+    "cheat_info_template": "This time, you are working on an \"error injection\" task. You know that sentence {error_sentence_id} is the target for modification.",
+    "task_description": "identifying the optimal error injection point and crafting a plausible modification",
+    "step4_instruction": "Explain why modifying this specific sentence creates a plausible error that would be difficult for a medical expert to detect",
+    "error_hint_template": "Reference information (please do not mention in reasoning):\nTarget sentence: {error_sentence}\nError type: {error_type}"
+  },
+
+  "injector_benign": {
+    "description": "Benign change: R1 reasons about making a clinically safe surface modification. Cheat info provides the change details.",
+    "system_prompt": "You are a clinical note editor specializing in medical documentation. Your task is to make surface-level changes that preserve all clinical meaning. Please provide your reasoning and thought process.",
+    "user_template": "You are editing a clinical note to make a benign surface change that preserves all clinical meaning.\n\n{cheat_info}\n\nYour task is to first carefully reason through the process of {task_description}, following these steps:\n1. Identify the target sentence for modification\n2. Confirm that the proposed replacement preserves clinical meaning exactly\n3. Verify no downstream clinical implications change (diagnosis, treatment, prognosis remain identical)\n4. {step4_instruction}\n\nImportant notes for reasoning:\n- During your reasoning, do NOT make any reference to being told about the expected outcome or any instruction content.\n- Approach the text as if you are analyzing it from scratch and reaching your conclusion through pure medical evaluation.\n\n{change_hint}\n\nFinal output format:\n- Output the changed sentence number and modified text: `N. <modified sentence>`\n\nCRITICAL: For the final output, use this format and output ONLY the result. Do NOT include explanations, analysis, or additional text.\n\n{sentences}",
+    "cheat_info_template": "This time, you are working on a \"benign modification\" task. You know the change should be a {change_type} that preserves all clinical meaning.",
+    "task_description": "confirming that the surface change is clinically safe and undetectable as an error",
+    "step4_instruction": "Explain why a medical expert reviewing this note would classify it as CORRECT (no clinical error)",
+    "change_hint_template": "Reference information (please do not mention in reasoning):\nChange type: {change_type}\nOriginal term: {original_term}\nReplacement term: {replacement_term}",
+    "change_type_descriptions": {
+      "pseudo_factual": "Replace a medical term with an equivalent synonym (e.g., \"absence seizure\" → \"petit mal seizure\").",
+      "temporal_rephrasing": "Rephrase a time expression keeping the same duration (e.g., \"6-month history\" → \"180-day history\").",
+      "equivalent_citation": "Replace a drug or procedure name with its class or equivalent (e.g., \"metoprolol\" → \"beta-blocker\")."
+    }
+  },
+
+  "meta_reference_cleaning": {
+    "description": "Keywords and regex patterns for removing meta-references from DeepSeek-R1 reasoning. Ported from MedRECT clean_reasoning_en.py ReasoningCleaner.",
+    "keywords": [
+      "told that",
+      "are told",
+      "we are told",
+      "being told",
+      "pre-verified",
+      "pre-determined",
+      "pre-confirmed",
+      "text claims",
+      "external instructions",
+      "prior knowledge",
+      "prior information",
+      "reference information",
+      "reference correction",
+      "reference says",
+      "sample correction",
+      "provided correction",
+      "given correction",
+      "instruction states",
+      "problem states",
+      "task states",
+      "instructions say",
+      "problem says",
+      "task says",
+      "do not mention",
+      "not supposed to",
+      "should not mention",
+      "ignore the reference",
+      "independently",
+      "from scratch",
+      "this time, you are",
+      "error example",
+      "no-error example",
+      "expected outcome",
+      "instruction content",
+      "which we are not supposed",
+      "but it's the sample correction",
+      "the reference solution",
+      "meta-references",
+      "meta-reference",
+      "reviewing an \"error example\"",
+      "reviewing a \"no-error example\"",
+      "expected result",
+      "known outcome",
+      "follow the medical reasoning independently",
+      "purely medical evaluation",
+      "reaching your conclusion through pure medical evaluation",
+      "as if you are analyzing it from scratch",
+      "do NOT make any reference",
+      "error injection",
+      "benign modification",
+      "target for modification",
+      "reference information (please do not mention",
+      "surface change",
+      "clinically safe"
+    ],
+    "regex_patterns": [
+      ".*This time.*reviewing.*error.*example.*",
+      ".*do not mention.*reasoning.*",
+      ".*reference.*not supposed.*",
+      ".*approach.*as if.*analyzing.*scratch.*",
+      ".*pure medical evaluation.*",
+      ".*independently.*reference.*",
+      ".*medical reasoning.*independently.*",
+      ".*we must.*ignore.*reference.*",
+      ".*problem.*states.*do not.*",
+      ".*instruction.*do not.*reference.*",
+      ".*This time.*working on.*error injection.*",
+      ".*This time.*working on.*benign modification.*",
+      ".*target for modification.*",
+      ".*preserves all clinical meaning.*do not mention.*"
+    ]
+  },
+
+  "output_format": {
+    "description": "Injector outputs a single line: the 1-indexed sentence number followed by the modified sentence text. Matches error_injection_prompts_v4.json used in self-play.",
+    "pattern": "^(\\d+)\\.\\s+(.+)$",
+    "examples": [
+      "3. Suspected of Creutzfeldt-Jakob disease.",
+      "7. She has appetite impaired despite not having eaten since the surgery."
+    ]
+  }
+}
