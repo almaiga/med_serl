@@ -49,6 +49,7 @@ mkdir -p "$PROJECT_ROOT/results/self_play"
 
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export CUDA_VISIBLE_DEVICES=0          # single GPU — all processes use GPU 0
+export RAY_memory_monitor_refresh_ms=0 # disable Ray memory monitor (prevents OOM kills during GPU init)
 
 # ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
 echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
@@ -313,7 +314,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.model.use_shm=True \
+    actor_rollout_ref.model.use_shm=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.lora_rank=16 \
     actor_rollout_ref.model.lora_alpha=32 \

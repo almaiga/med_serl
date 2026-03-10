@@ -1,0 +1,18 @@
+{
+  "scenario": "injector_benign",
+  "total_samples": 1028,
+  "processed": 1028,
+  "correct_samples_count": 1019,
+  "rejected_samples_count": 9,
+  "skipped_checkpoint": 0,
+  "accuracy": 0.9912451361867705,
+  "pass_rate_pct": 99.12451361867704,
+  "error_flag": 0,
+  "api_stats": {
+    "total": 2233,
+    "success": 2233,
+    "failed": 0
+  },
+  "output_file": "/Users/josmaiga/Documents/GitHub/med_serl/data_processed/medrect/injector_benign_chains_20260310_135156.jsonl",
+  "timestamp": "20260310_135156"
+}

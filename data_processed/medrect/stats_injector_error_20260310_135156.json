@@ -1,0 +1,18 @@
+{
+  "scenario": "injector_error",
+  "total_samples": 1205,
+  "processed": 1205,
+  "correct_samples_count": 1178,
+  "rejected_samples_count": 27,
+  "skipped_checkpoint": 0,
+  "accuracy": 0.9775933609958506,
+  "pass_rate_pct": 97.75933609958506,
+  "error_flag": 1,
+  "api_stats": {
+    "total": 1205,
+    "success": 1205,
+    "failed": 0
+  },
+  "output_file": "/Users/josmaiga/Documents/GitHub/med_serl/data_processed/medrect/injector_error_chains_20260310_135156.jsonl",
+  "timestamp": "20260310_135156"
+}
