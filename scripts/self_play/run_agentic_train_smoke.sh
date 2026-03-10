@@ -242,13 +242,13 @@ snapshot_download('${JUDGE_MODEL}', ignore_patterns=['*.gguf'])
 print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
-        echo "Starting vLLM judge server on port ${JUDGE_PORT} (GPU 1) ..."
-        CUDA_VISIBLE_DEVICES=1 python3 -m vllm.entrypoints.openai.api_server \
+        echo "Starting vLLM judge server on port ${JUDGE_PORT} (GPU 0) ..."
+        CUDA_VISIBLE_DEVICES=0 python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.3 \
+            --gpu-memory-utilization 0.15 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
@@ -332,7 +332,7 @@ CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.50 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
