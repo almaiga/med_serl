@@ -49,10 +49,16 @@ mkdir -p "$PROJECT_ROOT/results/self_play"
 
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export CUDA_VISIBLE_DEVICES=0          # single GPU — all processes use GPU 0
-export RAY_memory_monitor_refresh_ms=0 # disable Ray memory monitor (prevents OOM kills during GPU init)
-export RAY_DISABLE_DOCKER_CPU_WARNING=1          # suppress fractional CPU warning in Docker
-export RAY_DEDUP_LOGS=0                          # show all Ray worker logs
-export RAY_raylet_start_wait_time_s=120          # give raylet more time to register with GCS
+export HYDRA_FULL_ERROR=1               # full veRL/Hydra stack traces
+
+# ── Ray environment tweaks for RunPod Docker ──
+export RAY_memory_monitor_refresh_ms=0            # disable Ray memory monitor (prevents OOM kills during GPU init)
+export RAY_DISABLE_DOCKER_CPU_WARNING=1           # suppress fractional CPU warning in Docker
+export RAY_DEDUP_LOGS=0                           # show all Ray worker logs
+export RAY_USE_MULTIPROCESSING_CPU_COUNT=1        # use integer CPUs (avoids cgroup fractional 27.2→27 truncation bug)
+export RAY_raylet_start_wait_time_s=300           # give raylet 5 min to register with GCS
+export RAY_TMPDIR=/dev/shm/ray                    # use tmpfs for Ray sockets/plasma (fast IPC)
+export RAY_GCS_SERVER_REQUEST_TIMEOUT_S=60        # increase GCS gRPC request timeout
 
 # ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
 echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
@@ -297,17 +303,14 @@ echo ""
 echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
-# Pre-start Ray cluster (avoids dashboard startup failure on RunPod)
-echo "Pre-starting Ray cluster (dashboard disabled)..."
+# Clean all stale Ray state so veRL's ray.init() starts fresh
+echo "Cleaning stale Ray state..."
 ray stop --force 2>/dev/null || true
-sleep 2
-ray start --head \
-    --num-cpus=$(nproc) \
-    --disable-usage-stats \
-    --include-dashboard=false
-export RAY_ADDRESS=auto    # tell veRL to connect to existing cluster
+pkill -9 -f "gcs_server|raylet|plasma_store" 2>/dev/null || true
+rm -rf /tmp/ray /dev/shm/ray 2>/dev/null || true
+fuser -k 6379/tcp 2>/dev/null || true   # free default GCS port
 sleep 3
-echo "Ray cluster ready."
+echo "  Done — veRL will start its own Ray cluster."
 echo ""
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
@@ -381,6 +384,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=-1 \
     trainer.test_freq=99999 \
     trainer.val_before_train=False \
+    \
+    ++ray_kwargs.ray_init.include_dashboard=False \
+    ++ray_kwargs.ray_init.num_cpus=27 \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
