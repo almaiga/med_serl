@@ -48,6 +48,8 @@ mkdir -p "$OUTPUT_DIR"
 mkdir -p "$PROJECT_ROOT/results/self_play"
 
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+export CUDA_VISIBLE_DEVICES=0          # single GPU — all processes use GPU 0
+export VLLM_USE_V1=0                   # force vLLM v0 engine (avoids EngineCore handshake timeout)
 
 # ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
 echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
@@ -243,12 +245,12 @@ print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
         echo "Starting vLLM judge server on port ${JUDGE_PORT} (GPU 0) ..."
-        CUDA_VISIBLE_DEVICES=0 python3 -m vllm.entrypoints.openai.api_server \
+        python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.15 \
+            --gpu-memory-utilization 0.20 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
@@ -258,7 +260,7 @@ print('Download complete.')
         # Wait for server to come up (up to 900s)
         echo "Waiting for judge server to become healthy (may take 5-10 min)..."
         WAIT_SECS=0
-        MAX_WAIT=900
+        MAX_WAIT=1800
         until curl -s -o /dev/null -w "%{http_code}" "http://localhost:${JUDGE_PORT}/health" 2>/dev/null | grep -q "200"; do
             sleep 10
             WAIT_SECS=$((WAIT_SECS + 10))
@@ -293,7 +295,7 @@ echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
 
-CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
+python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_agentic" \
     \
@@ -332,7 +334,7 @@ CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.50 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
