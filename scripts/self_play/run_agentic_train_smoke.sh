@@ -51,6 +51,10 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export CUDA_VISIBLE_DEVICES=0          # single GPU — all processes use GPU 0
 export HYDRA_FULL_ERROR=1               # full veRL/Hydra stack traces
 
+# ── CUDA / torch startup acceleration ──
+export TORCH_CUDA_ARCH_LIST="8.0"                 # A100 = sm_80 — skip JIT for other archs (saves ~3-5 min)
+export CUDA_MODULE_LOADING=LAZY                   # lazy-load CUDA modules
+
 # ── Ray environment tweaks for RunPod Docker ──
 export RAY_memory_monitor_refresh_ms=0            # disable Ray memory monitor (prevents OOM kills during GPU init)
 export RAY_DISABLE_DOCKER_CPU_WARNING=1           # suppress fractional CPU warning in Docker
@@ -194,6 +198,38 @@ else:
         print(f"  PATCHED: widened {n} 'except ImportError' → 'except (ImportError, OSError)'")
 PATCH_EOF
 
+# ─── Pre-flight: Patch veRL Ray init for Docker ─────────────────────────────────
+# The Hydra ++ray_kwargs.ray_init.* overrides don't reliably reach ray.init().
+# Monkey-patch main_ppo.py directly to inject Docker-safe defaults.
+echo ""
+echo "=== Pre-flight: Patching veRL Ray init (Docker workaround) ==="
+python3 << 'PATCH_RAY'
+import pathlib
+
+fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
+if not fpath.exists():
+    print("  SKIP: main_ppo.py not found")
+else:
+    code = fpath.read_text()
+    target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
+    if "_ray_kw" not in code and target in code:
+        replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
+    # ── MedSeRL Docker fix: inject Ray init defaults ──
+    import os as _os
+    if _ray_kw.get('num_cpus') is None:
+        _ray_kw['num_cpus'] = _os.cpu_count() or 4
+    _ray_kw.setdefault('include_dashboard', False)
+    _ray_kw.setdefault('_temp_dir', '/dev/shm/ray')
+    _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
+    print(f"ray init kwargs (patched): {_ray_kw}")
+    ray.init(**_ray_kw)"""
+        code = code.replace(target, replacement)
+        fpath.write_text(code)
+        print("  PATCHED: main_ppo.py — injected Ray init defaults for Docker")
+    else:
+        print("  main_ppo.py already patched or target not found")
+PATCH_RAY
+
 # ─── Pre-flight: Config approach ──────────────────────────────────────────────
 # Using ppo_agentic.yaml with Hydra defaults composition (same pattern as the
 # working ppo_multiturn.yaml / run_training_v2.sh). veRL's built-in ppo_trainer
@@ -271,8 +307,8 @@ print('Download complete.')
         WAIT_SECS=0
         MAX_WAIT=1800
         until curl -s -o /dev/null -w "%{http_code}" "http://localhost:${JUDGE_PORT}/health" 2>/dev/null | grep -q "200"; do
-            sleep 10
-            WAIT_SECS=$((WAIT_SECS + 10))
+            sleep 3
+            WAIT_SECS=$((WAIT_SECS + 3))
             echo -n "."
             if [ "$WAIT_SECS" -ge "$MAX_WAIT" ]; then
                 echo ""
@@ -309,7 +345,8 @@ ray stop --force 2>/dev/null || true
 pkill -9 -f "gcs_server|raylet|plasma_store" 2>/dev/null || true
 rm -rf /tmp/ray /dev/shm/ray 2>/dev/null || true
 fuser -k 6379/tcp 2>/dev/null || true   # free default GCS port
-sleep 3
+mkdir -p /dev/shm/ray                   # pre-create tmpfs dir for Ray
+sleep 2
 echo "  Done — veRL will start its own Ray cluster."
 echo ""
 python3 -m verl.trainer.main_ppo \
