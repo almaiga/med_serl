@@ -226,6 +226,7 @@ class ReasoningCleaner:
                             sentences_to_remove.append(
                                 (line_start + match.start(), line_start + match.end())
                             )
+                            logger.debug(f"Pattern match: {pattern.pattern[:50]}...")
                             break
 
                 # Also check the trailing part after the last period
@@ -238,6 +239,7 @@ class ReasoningCleaner:
                                 sentences_to_remove.append(
                                     (line_start + last_end, line_start + len(line))
                                 )
+                                logger.debug(f"Pattern match: {pattern.pattern[:50]}...")
                                 break
             else:
                 # No period — check the whole line
@@ -248,6 +250,7 @@ class ReasoningCleaner:
                             sentences_to_remove.append(
                                 (line_start, line_start + len(line))
                             )
+                            logger.debug(f"Pattern match: {pattern.pattern[:50]}...")
                             break
 
         return sentences_to_remove
@@ -656,7 +659,12 @@ async def process_record(
     )
     output["_meta"] = {
         "meta_refs_removed": removed_count,
+        "reasoning_cleaned": removed_count > 0,
+        "original_reasoning_length": len(reasoning_raw),
+        "cleaned_reasoning_length": len(reasoning_cleaned),
         "reasoning_tokens": result["usage"].get("completion_tokens", 0),
+        "prompt_tokens": result["usage"].get("prompt_tokens", 0),
+        "total_tokens": result["usage"].get("total_tokens", 0),
         "raw_content": content,
     }
 
@@ -823,7 +831,7 @@ async def run_pipeline(args: argparse.Namespace) -> None:
         if args.resume:
             ckpt.save()
 
-        # Summary
+        # Summary (MedRECT-style statistics with error_flag breakdown)
         logger.info(f"\n{'='*60}")
         logger.info(f"RESULTS: injector_{scenario}")
         logger.info(f"  Total processed: {stats['total']}")
@@ -838,11 +846,24 @@ async def run_pipeline(args: argparse.Namespace) -> None:
         logger.info(f"  API stats: {client.stats()}")
         logger.info(f"{'='*60}\n")
 
-        # Save stats
+        # Save detailed stats (aligned with MedRECT extract_correct_samples format)
         stats_path = output_dir / f"stats_injector_{scenario}_{timestamp}.json"
         with open(stats_path, "w") as f:
             json.dump(
-                {**stats, "pass_rate": pass_rate, "api": client.stats(), "output": str(out_file)},
+                {
+                    "scenario": f"injector_{scenario}",
+                    "total_samples": len(records),
+                    "processed": stats["total"],
+                    "correct_samples_count": stats["generated"],
+                    "rejected_samples_count": stats["rejected"],
+                    "skipped_checkpoint": stats["skipped"],
+                    "accuracy": pass_rate / 100.0,
+                    "pass_rate_pct": pass_rate,
+                    "error_flag": 1 if scenario == "error" else 0,
+                    "api_stats": client.stats(),
+                    "output_file": str(out_file),
+                    "timestamp": timestamp,
+                },
                 f, indent=2,
             )
 
