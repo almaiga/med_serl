@@ -28,7 +28,7 @@
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
-JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
+JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-4B}"
 JUDGE_PORT="${JUDGE_PORT:-8002}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
 SKIP_SERVER="${SKIP_SERVER:-0}"

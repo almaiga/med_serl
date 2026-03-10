@@ -1,0 +1,14 @@
+{
+  "total": 3,
+  "generated": 3,
+  "rejected": 0,
+  "skipped": 0,
+  "api_fail": 0,
+  "pass_rate": 100.0,
+  "api": {
+    "total": 3,
+    "success": 3,
+    "failed": 0
+  },
+  "output": "/Users/josmaiga/Documents/GitHub/med_serl/data_processed/medrect/injector_error_chains_20260310_120932.jsonl"
+}

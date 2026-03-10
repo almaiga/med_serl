@@ -194,22 +194,61 @@ class ReasoningCleaner:
         )
 
     def find_sentences_to_remove(self, text: str) -> List[Tuple[int, int]]:
-        """Find sentences containing meta-references."""
+        """Find sentences containing meta-references.
+
+        Splits on both period boundaries AND newlines so we catch
+        meta-ref lines that don't end with a period.
+        """
         if not text:
             return []
 
         sentences_to_remove = []
-        sentence_pattern = re.compile(r"[^.]*\.")
+        # Split into segments by newline first, then by period within each
+        # This captures both "sentence." units and standalone lines
+        segment_pattern = re.compile(r"[^\n]+")
 
-        for match in sentence_pattern.finditer(text):
-            sentence = match.group().strip()
-            if not sentence:
-                continue
+        for line_match in segment_pattern.finditer(text):
+            line = line_match.group()
+            line_start = line_match.start()
 
-            for pattern in self.all_patterns:
-                if pattern.search(sentence):
-                    sentences_to_remove.append((match.start(), match.end()))
-                    break
+            # Try to split the line further by periods
+            sentence_pattern = re.compile(r"[^.]*\.")
+            sub_matches = list(sentence_pattern.finditer(line))
+
+            if sub_matches:
+                # Check each period-delimited sentence
+                for match in sub_matches:
+                    sentence = match.group().strip()
+                    if not sentence:
+                        continue
+                    for pattern in self.all_patterns:
+                        if pattern.search(sentence):
+                            sentences_to_remove.append(
+                                (line_start + match.start(), line_start + match.end())
+                            )
+                            break
+
+                # Also check the trailing part after the last period
+                last_end = sub_matches[-1].end()
+                if last_end < len(line):
+                    trailing = line[last_end:].strip()
+                    if trailing:
+                        for pattern in self.all_patterns:
+                            if pattern.search(trailing):
+                                sentences_to_remove.append(
+                                    (line_start + last_end, line_start + len(line))
+                                )
+                                break
+            else:
+                # No period — check the whole line
+                stripped = line.strip()
+                if stripped:
+                    for pattern in self.all_patterns:
+                        if pattern.search(stripped):
+                            sentences_to_remove.append(
+                                (line_start, line_start + len(line))
+                            )
+                            break
 
         return sentences_to_remove
 
