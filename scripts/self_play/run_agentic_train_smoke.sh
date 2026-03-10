@@ -49,7 +49,6 @@ mkdir -p "$PROJECT_ROOT/results/self_play"
 
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export CUDA_VISIBLE_DEVICES=0          # single GPU — all processes use GPU 0
-export VLLM_USE_V1=0                   # force vLLM v0 engine (avoids EngineCore handshake timeout)
 
 # ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
 echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
