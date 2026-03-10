@@ -33,6 +33,11 @@ JUDGE_PORT="${JUDGE_PORT:-8002}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
 SKIP_SERVER="${SKIP_SERVER:-0}"
 
+# Force vLLM V0 engine globally: vLLM >=0.11 defaults to V1 which has a
+# multi-process handshake that hangs in containerised environments (RunPod, Docker).
+# This affects BOTH the standalone judge server AND veRL's internal vLLM rollout.
+export VLLM_USE_V1=0
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="smoke_agentic_${TIMESTAMP}"
 OUTPUT_DIR="outputs/self_play/smoke_${TIMESTAMP}"
@@ -237,9 +242,6 @@ print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
         echo "Starting vLLM judge server on port ${JUDGE_PORT} ..."
-        # Force V0 engine: vLLM >=0.11 defaults to V1 which has a multi-process
-        # handshake that can hang in containerised environments (RunPod, Docker).
-        export VLLM_USE_V1=0
         python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
@@ -289,6 +291,13 @@ echo ""
 echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
+
+# ─── Pre-training: clean Ray state to avoid GCS timeout ───────────────────────
+echo "Cleaning stale Ray state..."
+ray stop --force 2>/dev/null || true
+rm -rf /dev/shm/ray /tmp/ray 2>/dev/null || true
+sleep 2
+echo "Ray state cleaned."
 
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
