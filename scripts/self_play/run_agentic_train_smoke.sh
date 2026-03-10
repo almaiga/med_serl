@@ -237,6 +237,9 @@ print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
         echo "Starting vLLM judge server on port ${JUDGE_PORT} ..."
+        # Force V0 engine: vLLM >=0.11 defaults to V1 which has a multi-process
+        # handshake that can hang in containerised environments (RunPod, Docker).
+        export VLLM_USE_V1=0
         python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \

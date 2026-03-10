@@ -146,6 +146,9 @@ else
     echo "Ensuring model is cached locally..."
     python -c "from huggingface_hub import snapshot_download; snapshot_download('$JUDGE_MODEL')" 2>/dev/null || true
 
+    # Force V0 engine: vLLM >=0.11 defaults to V1 which has a multi-process
+    # handshake that can hang in containerised environments (RunPod, Docker).
+    export VLLM_USE_V1=0
     CUDA_VISIBLE_DEVICES="$JUDGE_GPU" python -m vllm.entrypoints.openai.api_server \
         --model "$JUDGE_MODEL" \
         --port "$JUDGE_PORT" \
