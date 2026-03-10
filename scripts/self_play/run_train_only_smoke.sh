@@ -80,6 +80,20 @@ if command -v nvidia-smi &>/dev/null; then
 fi
 echo "  Cleanup done."
 
+# ─── Expand /dev/shm if too small (Docker default is 64MB) ────────────────────
+# Ray's object store uses /dev/shm for shared-memory IPC.  If it's tiny the GCS
+# server deadlocks during startup → "Deadline Exceeded".
+if [ -d /dev/shm ]; then
+    SHM_SIZE_KB=$(df /dev/shm 2>/dev/null | awk 'NR==2{print $2}')
+    if [ -n "$SHM_SIZE_KB" ] && [ "$SHM_SIZE_KB" -lt 1048576 ]; then
+        echo "  /dev/shm is only $((SHM_SIZE_KB/1024)) MB — expanding to 16 GB ..."
+        mount -o remount,size=16G /dev/shm 2>/dev/null && echo "  /dev/shm expanded." \
+            || echo "  WARNING: could not remount /dev/shm (not root?). Will cap object_store_memory instead."
+    else
+        echo "  /dev/shm is $((SHM_SIZE_KB/1024)) MB — OK."
+    fi
+fi
+
 # ─── Trap: cleanup on exit ───────────────────────────────────────────────────
 cleanup() {
     echo ""
@@ -139,16 +153,19 @@ rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 sleep 2
 
 # ── Patch veRL Ray init for Docker ──
+# This must handle THREE cases:
+#   a) Fresh main_ppo.py (never patched) — apply full patch
+#   b) Already patched but missing object_store_memory — add it
+#   c) Fully patched — no-op
 python3 << 'PATCH_RAY'
-import pathlib
+import pathlib, re
 fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
 if not fpath.exists():
     print("SKIP: main_ppo.py not found")
 else:
     code = fpath.read_text()
-    target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
-    if "_ray_kw" not in code and target in code:
-        replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
+    fresh_target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
+    full_replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
     # ── MedSeRL Docker fix ──
     import os as _os
     if _ray_kw.get('num_cpus') is None:
@@ -156,13 +173,32 @@ else:
     _ray_kw.setdefault('include_dashboard', False)
     _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
     _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
+    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB — safe for small /dev/shm
+    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass /dev/shm entirely
     print(f"ray init kwargs (patched): {_ray_kw}")
     ray.init(**_ray_kw)"""
-        code = code.replace(target, replacement)
+
+    if "_ray_kw" not in code and fresh_target in code:
+        # Case (a): never patched
+        code = code.replace(fresh_target, full_replacement)
         fpath.write_text(code)
-        print("PATCHED: main_ppo.py — Docker-safe Ray defaults")
+        print("PATCHED: main_ppo.py — full Docker-safe Ray defaults")
+    elif "_ray_kw" in code and "object_store_memory" not in code:
+        # Case (b): patched before but missing object_store_memory
+        # Insert the two new lines right before the print(f"ray init kwargs
+        insert_before = '    print(f"ray init kwargs (patched):'
+        new_lines = (
+            "    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB — safe for small /dev/shm\n"
+            "    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass /dev/shm entirely\n"
+        )
+        if insert_before in code:
+            code = code.replace(insert_before, new_lines + insert_before)
+            fpath.write_text(code)
+            print("PATCHED: added object_store_memory + _plasma_directory to existing patch")
+        else:
+            print("WARNING: could not find insertion point — manual check needed")
     else:
-        print("main_ppo.py already patched or target not found")
+        print("main_ppo.py already fully patched")
 PATCH_RAY
 
 python3 -m verl.trainer.main_ppo \
@@ -239,6 +275,7 @@ python3 -m verl.trainer.main_ppo \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=8 \
     "++ray_kwargs.ray_init._temp_dir=$RAY_TMPDIR_PATH" \
+    ++ray_kwargs.ray_init.object_store_memory=1000000000 \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
