@@ -38,6 +38,20 @@ SKIP_SERVER="${SKIP_SERVER:-0}"
 # This affects BOTH the standalone judge server AND veRL's internal vLLM rollout.
 export VLLM_USE_V1=0
 
+# All Ray temp under /workspace (persistent, large, won't break SSH)
+RAY_TMPDIR_PATH="/workspace/ray_tmp"
+mkdir -p "$RAY_TMPDIR_PATH"
+
+# ── Ray env vars for RunPod Docker ──
+export RAY_DISABLE_DOCKER_CPU_WARNING=1
+export RAY_DEDUP_LOGS=0
+export RAY_USE_MULTIPROCESSING_CPU_COUNT=1
+export RAY_memory_monitor_refresh_ms=0
+export RAY_raylet_start_wait_time_s=300
+export RAY_TMPDIR="$RAY_TMPDIR_PATH"
+export RAY_GCS_SERVER_REQUEST_TIMEOUT_S=60
+export HYDRA_FULL_ERROR=1
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="smoke_agentic_${TIMESTAMP}"
 OUTPUT_DIR="outputs/self_play/smoke_${TIMESTAMP}"
@@ -295,9 +309,36 @@ echo ""
 # ─── Pre-training: clean Ray state to avoid GCS timeout ───────────────────────
 echo "Cleaning stale Ray state..."
 ray stop --force 2>/dev/null || true
-rm -rf /dev/shm/ray /tmp/ray 2>/dev/null || true
+rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 sleep 2
 echo "Ray state cleaned."
+
+# ── Patch veRL Ray init for Docker ──
+python3 << 'PATCH_RAY'
+import pathlib
+fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
+if not fpath.exists():
+    print("SKIP: main_ppo.py not found")
+else:
+    code = fpath.read_text()
+    target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
+    if "_ray_kw" not in code and target in code:
+        replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
+    # ── MedSeRL Docker fix ──
+    import os as _os
+    if _ray_kw.get('num_cpus') is None:
+        _ray_kw['num_cpus'] = min(_os.cpu_count() or 4, 8)
+    _ray_kw.setdefault('include_dashboard', False)
+    _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
+    _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
+    print(f"ray init kwargs (patched): {_ray_kw}")
+    ray.init(**_ray_kw)"""
+        code = code.replace(target, replacement)
+        fpath.write_text(code)
+        print("PATCHED: main_ppo.py — Docker-safe Ray defaults")
+    else:
+        print("main_ppo.py already patched or target not found")
+PATCH_RAY
 
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
@@ -370,6 +411,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=-1 \
     trainer.test_freq=99999 \
     trainer.val_before_train=False \
+    ++ray_kwargs.ray_init.include_dashboard=False \
+    ++ray_kwargs.ray_init.num_cpus=8 \
+    "++ray_kwargs.ray_init._temp_dir=$RAY_TMPDIR_PATH" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
