@@ -61,47 +61,20 @@ export RAY_DISABLE_DOCKER_CPU_WARNING=1           # suppress fractional CPU warn
 export RAY_DEDUP_LOGS=0                           # show all Ray worker logs
 export RAY_USE_MULTIPROCESSING_CPU_COUNT=1        # use integer CPUs (avoids cgroup fractional 27.2→27 truncation bug)
 export RAY_raylet_start_wait_time_s=300           # give raylet 5 min to register with GCS
-export RAY_TMPDIR=/dev/shm/ray                    # use tmpfs for Ray sockets/plasma (fast IPC)
+export RAY_TMPDIR=/workspace/ray_tmp              # under /workspace (persistent, large, safe for SSH)
 export RAY_GCS_SERVER_REQUEST_TIMEOUT_S=60        # increase GCS gRPC request timeout
 
-# ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
-echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
-# Kill any leftover vLLM servers on the judge port
-if lsof -ti :${JUDGE_PORT} >/dev/null 2>&1; then
-    echo "  Killing processes on port ${JUDGE_PORT}..."
-    lsof -ti :${JUDGE_PORT} | xargs kill -9 2>/dev/null || true
-    sleep 2
-fi
-# Kill any remaining Ray processes
-if pgrep -f "ray::" >/dev/null 2>&1; then
-    echo "  Stopping Ray..."
-    ray stop --force 2>/dev/null || true
-    pkill -9 -f "ray::" 2>/dev/null || true
-    sleep 2
-fi
-# Kill any orphan vllm / python-gpu processes
-pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
-pkill -9 -f "vllm.worker" 2>/dev/null || true
-pkill -9 -f "from multiprocessing" 2>/dev/null || true
+mkdir -p /workspace/ray_tmp
 
-# Nuclear option: kill ALL processes holding the GPU except this shell
-echo "  Checking GPU processes via nvidia-smi..."
+# ─── Cleanup: gentle stop of Ray and vLLM (safe for SSH) ─────────────────────
+echo "=== Cleanup: stopping Ray and checking GPU state ==="
+ray stop --force 2>/dev/null || true
+rm -rf /workspace/ray_tmp/* 2>/dev/null || true
+# Show current GPU state
 if command -v nvidia-smi &>/dev/null; then
-    GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
-    if [ -n "$GPU_PIDS" ]; then
-        echo "  Found GPU processes: $GPU_PIDS — killing them..."
-        for pid in $GPU_PIDS; do
-            kill -9 "$pid" 2>/dev/null || true
-        done
-        sleep 3
-    else
-        echo "  No stale GPU processes found."
-    fi
-    # Show current GPU state
     nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 fi
-# Allow CUDA driver to recover after aggressive kill -9
-sleep 5
+sleep 2
 echo "  Cleanup done."
 
 # ─── Pre-flight: verify enough GPU memory is free ────────────────────────────
@@ -140,21 +113,12 @@ fi
 # ─── Trap: ensure cleanup on exit ────────────────────────────────────────────
 cleanup() {
     echo ""
-    echo "Trap: cleaning up all GPU processes..."
+    echo "Trap: cleaning up..."
     if [ -n "$VLLM_PID" ]; then
         echo "  Stopping judge server (PID $VLLM_PID)..."
         kill "$VLLM_PID" 2>/dev/null || true
     fi
-    pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
-    pkill -9 -f "vllm.worker" 2>/dev/null || true
     ray stop --force 2>/dev/null || true
-    # Kill any remaining GPU processes spawned by this script
-    if command -v nvidia-smi &>/dev/null; then
-        GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
-        for pid in $GPU_PIDS; do
-            kill -9 "$pid" 2>/dev/null || true
-        done
-    fi
     echo "  Cleanup complete."
 }
 
@@ -219,7 +183,7 @@ else:
     if _ray_kw.get('num_cpus') is None:
         _ray_kw['num_cpus'] = _os.cpu_count() or 4
     _ray_kw.setdefault('include_dashboard', False)
-    _ray_kw.setdefault('_temp_dir', '/dev/shm/ray')
+    _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
     _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
     print(f"ray init kwargs (patched): {_ray_kw}")
     ray.init(**_ray_kw)"""
@@ -339,13 +303,11 @@ echo ""
 echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
-# Clean all stale Ray state so veRL's ray.init() starts fresh
+# Clean stale Ray state (safe — only ray stop, no pkill/fuser/rm /tmp)
 echo "Cleaning stale Ray state..."
 ray stop --force 2>/dev/null || true
-pkill -9 -f "gcs_server|raylet|plasma_store" 2>/dev/null || true
-rm -rf /tmp/ray /dev/shm/ray 2>/dev/null || true
-fuser -k 6379/tcp 2>/dev/null || true   # free default GCS port
-mkdir -p /dev/shm/ray                   # pre-create tmpfs dir for Ray
+rm -rf /workspace/ray_tmp/* 2>/dev/null || true
+mkdir -p /workspace/ray_tmp
 sleep 2
 echo "  Done — veRL will start its own Ray cluster."
 echo ""
@@ -426,7 +388,7 @@ python3 -m verl.trainer.main_ppo \
     \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=27 \
-    "++ray_kwargs.ray_init._temp_dir=/dev/shm/ray" \
+    "++ray_kwargs.ray_init._temp_dir=/workspace/ray_tmp" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
