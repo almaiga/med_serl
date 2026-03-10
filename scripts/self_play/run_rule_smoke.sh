@@ -1,14 +1,12 @@
 #!/bin/bash
-# MedSeRL SGLang Multi-Turn Smoke Test
+# MedSeRL SGLang Multi-Turn Smoke Test (rule-based reward, no judge)
 #
-# Follows the official veRL sglang multiturn examples exactly:
-#   https://github.com/verl-project/verl/tree/main/examples/sglang_multiturn
-#   → run_qwen3-4b_gsm8k_multiturn.sh
+# Tests the full veRL REINFORCE++ loop with SGLang multi-turn rollouts
+# and the rule-based reward_function.py — NO judge server needed.
 #
 # Usage:
 #   bash scripts/self_play/run_rule_smoke.sh
-ray stop
-ray start --head --num-cpus=8 --num-gpus=1 --temp-dir=/dev/shm/ray --include-dashboard=false --disable-usage-stats --port=6379 --object-store-memory=10000000000
+
 set -x
 ulimit -n 65535
 
@@ -22,19 +20,52 @@ TRAIN_EPOCHS="${TRAIN_EPOCHS:-1}"
 TRAIN_PARQUET="$PROJECT_DIR/data_processed/self_play/train.parquet"
 VAL_PARQUET="$PROJECT_DIR/data_processed/self_play/val.parquet"
 
-# One-time fix: undo any previous MedSeRL patches to main_ppo.py
-python3 -c "
-import pathlib, re
-f = pathlib.Path('/workspace/verl/verl/trainer/main_ppo.py')
-if f.exists() and '_ray_kw' in f.read_text():
-    code = re.sub(r'_ray_kw = OmegaConf\.to_container.*?ray\.init\(\*\*_ray_kw\)',
-                  'ray.init(**OmegaConf.to_container(ray_init_kwargs))',
-                  f.read_text(), flags=re.DOTALL)
-    f.write_text(code)
-    print('Restored vanilla ray.init in main_ppo.py')
-" 2>/dev/null || true
+# ── Ray env vars for RunPod Docker ──
+export RAY_DISABLE_DOCKER_CPU_WARNING=1
+export RAY_DEDUP_LOGS=0
+export RAY_USE_MULTIPROCESSING_CPU_COUNT=1
+export RAY_memory_monitor_refresh_ms=0
+export RAY_raylet_start_wait_time_s=300
+export RAY_TMPDIR=/dev/shm/ray
+export RAY_GCS_SERVER_REQUEST_TIMEOUT_S=60
+export HYDRA_FULL_ERROR=1
 
-# Val file fallback
+# ── Clean stale Ray state ──
+ray stop --force 2>/dev/null || true
+pkill -9 -f "gcs_server|raylet|plasma_store" 2>/dev/null || true
+rm -rf /tmp/ray /dev/shm/ray 2>/dev/null || true
+fuser -k 6379/tcp 2>/dev/null || true
+mkdir -p /dev/shm/ray
+sleep 2
+
+# ── Patch veRL Ray init for Docker (same as run_agentic_train_smoke.sh) ──
+python3 << 'PATCH_RAY'
+import pathlib
+fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
+if not fpath.exists():
+    print("SKIP: main_ppo.py not found")
+else:
+    code = fpath.read_text()
+    target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
+    if "_ray_kw" not in code and target in code:
+        replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
+    # ── MedSeRL Docker fix: inject Ray init defaults ──
+    import os as _os
+    if _ray_kw.get('num_cpus') is None:
+        _ray_kw['num_cpus'] = _os.cpu_count() or 4
+    _ray_kw.setdefault('include_dashboard', False)
+    _ray_kw.setdefault('_temp_dir', '/dev/shm/ray')
+    _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
+    print(f"ray init kwargs (patched): {_ray_kw}")
+    ray.init(**_ray_kw)"""
+        code = code.replace(target, replacement)
+        fpath.write_text(code)
+        print("PATCHED: main_ppo.py — injected Docker-safe Ray defaults")
+    else:
+        print("main_ppo.py already patched or target not found")
+PATCH_RAY
+
+# ── Val file fallback ──
 if [ ! -f "$VAL_PARQUET" ] && [ -f "$TRAIN_PARQUET" ]; then
     cp "$TRAIN_PARQUET" "$VAL_PARQUET"
 fi
@@ -102,4 +133,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=-1 \
     trainer.test_freq=99999 \
     trainer.val_before_train=False \
+    \
+    ++ray_kwargs.ray_init.include_dashboard=False \
+    ++ray_kwargs.ray_init.num_cpus=8 \
+    "++ray_kwargs.ray_init._temp_dir=/dev/shm/ray" \
     "$@"
