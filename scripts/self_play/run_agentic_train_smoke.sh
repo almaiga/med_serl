@@ -50,6 +50,9 @@ mkdir -p "$PROJECT_ROOT/results/self_play"
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export CUDA_VISIBLE_DEVICES=0          # single GPU — all processes use GPU 0
 export RAY_memory_monitor_refresh_ms=0 # disable Ray memory monitor (prevents OOM kills during GPU init)
+export RAY_DISABLE_DOCKER_CPU_WARNING=1          # suppress fractional CPU warning in Docker
+export RAY_DEDUP_LOGS=0                          # show all Ray worker logs
+export RAY_raylet_start_wait_time_s=120          # give raylet more time to register with GCS
 
 # ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
 echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
@@ -294,7 +297,18 @@ echo ""
 echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
-
+# Pre-start Ray cluster (avoids dashboard startup failure on RunPod)
+echo "Pre-starting Ray cluster (dashboard disabled)..."
+ray stop --force 2>/dev/null || true
+sleep 2
+ray start --head \
+    --num-cpus=$(nproc) \
+    --disable-usage-stats \
+    --include-dashboard=false
+export RAY_ADDRESS=auto    # tell veRL to connect to existing cluster
+sleep 3
+echo "Ray cluster ready."
+echo ""
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_agentic" \
