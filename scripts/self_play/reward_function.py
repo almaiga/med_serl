@@ -20,6 +20,7 @@ The model acts as "Assessor" and classifies/localizes - this is what we reward.
 """
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -30,6 +31,8 @@ import threading
 from difflib import SequenceMatcher
 
 from scripts.self_play.utils import parse_assessor_answer, strip_thinking
+
+logger = logging.getLogger(__name__)
 
 
 # Global log file path - creates new file per training run
@@ -293,6 +296,12 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         float: Reward score (Assessor perspective)
     """
     global _stats
+    
+    # Smoke-test sentinel — confirms real model rollouts reach the reward function
+    logger.info(
+        "compute_score called: source=%s gt=%s solution=%r...",
+        data_source, ground_truth, (solution_str or "")[:80],
+    )
     
     # Ensure we have valid inputs
     solution_str = solution_str or ""
