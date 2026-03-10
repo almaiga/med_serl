@@ -331,7 +331,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.model.use_shm=False \
+    actor_rollout_ref.model.use_shm=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.lora_rank=16 \
     actor_rollout_ref.model.lora_alpha=32 \
@@ -354,6 +354,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.free_cache_engine=True \
+    "+actor_rollout_ref.rollout.engine_kwargs.vllm.disable_cascade_attn=True" \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=1024 \
@@ -387,6 +389,7 @@ python3 -m verl.trainer.main_ppo \
     \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=27 \
+    "++ray_kwargs.ray_init._temp_dir=/dev/shm/ray" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
