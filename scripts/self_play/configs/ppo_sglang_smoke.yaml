@@ -1,0 +1,36 @@
+# MedSeRL SGLang Multi-Turn Smoke Test Configuration
+# Based on verl's gsm8k_multiturn_grpo.yaml pattern:
+#   https://github.com/verl-project/verl/tree/main/examples/sglang_multiturn
+#
+# Key differences from ppo_agentic.yaml:
+#   - rollout.name = sglang (required for multi-turn)
+#   - multi_turn enabled with interaction config
+#   - data.return_raw_chat = True (required for sglang chat format)
+#   - hybrid_engine = True (shared actor + rollout GPU, multi_stage_wake_up)
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  max_prompt_length: 1024
+  max_response_length: 1024
+  train_batch_size: 8
+  return_raw_chat: True
+  trust_remote_code: True
+
+actor_rollout_ref:
+  hybrid_engine: True
+  model:
+    trust_remote_code: True
+    enable_gradient_checkpointing: True
+  rollout:
+    name: sglang
+    multi_turn:
+      enable: True
+      max_user_turns: 2
+      max_assistant_turns: 2
