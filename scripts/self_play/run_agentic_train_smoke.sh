@@ -48,33 +48,43 @@ mkdir -p "$OUTPUT_DIR"
 mkdir -p "$PROJECT_ROOT/results/self_play"
 
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
-export CUDA_VISIBLE_DEVICES=0          # single GPU — all processes use GPU 0
-export HYDRA_FULL_ERROR=1               # full veRL/Hydra stack traces
 
-# ── CUDA / torch startup acceleration ──
-export TORCH_CUDA_ARCH_LIST="8.0"                 # A100 = sm_80 — skip JIT for other archs (saves ~3-5 min)
-export CUDA_MODULE_LOADING=LAZY                   # lazy-load CUDA modules
+# ─── Cleanup: kill leftover processes from previous crashed runs ──────────────
+echo "=== Cleanup: killing ALL stale GPU / vLLM / Ray processes ==="
+# Kill any leftover vLLM servers on the judge port
+if lsof -ti :${JUDGE_PORT} >/dev/null 2>&1; then
+    echo "  Killing processes on port ${JUDGE_PORT}..."
+    lsof -ti :${JUDGE_PORT} | xargs kill -9 2>/dev/null || true
+    sleep 2
+fi
+# Kill any remaining Ray processes
+if pgrep -f "ray::" >/dev/null 2>&1; then
+    echo "  Stopping Ray..."
+    ray stop --force 2>/dev/null || true
+    pkill -9 -f "ray::" 2>/dev/null || true
+    sleep 2
+fi
+# Kill any orphan vllm / python-gpu processes
+pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+pkill -9 -f "vllm.worker" 2>/dev/null || true
+pkill -9 -f "from multiprocessing" 2>/dev/null || true
 
-# ── Ray environment tweaks for RunPod Docker ──
-export RAY_memory_monitor_refresh_ms=0            # disable Ray memory monitor (prevents OOM kills during GPU init)
-export RAY_DISABLE_DOCKER_CPU_WARNING=1           # suppress fractional CPU warning in Docker
-export RAY_DEDUP_LOGS=0                           # show all Ray worker logs
-export RAY_USE_MULTIPROCESSING_CPU_COUNT=1        # use integer CPUs (avoids cgroup fractional 27.2→27 truncation bug)
-export RAY_raylet_start_wait_time_s=300           # give raylet 5 min to register with GCS
-export RAY_TMPDIR=/workspace/ray_tmp              # under /workspace (persistent, large, safe for SSH)
-export RAY_GCS_SERVER_REQUEST_TIMEOUT_S=60        # increase GCS gRPC request timeout
-
-mkdir -p /workspace/ray_tmp
-
-# ─── Cleanup: gentle stop of Ray and vLLM (safe for SSH) ─────────────────────
-echo "=== Cleanup: stopping Ray and checking GPU state ==="
-ray stop --force 2>/dev/null || true
-rm -rf /workspace/ray_tmp/* 2>/dev/null || true
-# Show current GPU state
+# Nuclear option: kill ALL processes holding the GPU except this shell
+echo "  Checking GPU processes via nvidia-smi..."
 if command -v nvidia-smi &>/dev/null; then
+    GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
+    if [ -n "$GPU_PIDS" ]; then
+        echo "  Found GPU processes: $GPU_PIDS — killing them..."
+        for pid in $GPU_PIDS; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+        sleep 3
+    else
+        echo "  No stale GPU processes found."
+    fi
+    # Show current GPU state
     nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 fi
-sleep 2
 echo "  Cleanup done."
 
 # ─── Pre-flight: verify enough GPU memory is free ────────────────────────────
@@ -87,21 +97,17 @@ try:
         ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"],
         capture_output=True, text=True, timeout=10
     )
-    lines = result.stdout.strip().split("\n")
-    print(f"  Found {len(lines)} GPU(s)")
-    total_free_gb = 0
-    for i, line in enumerate(lines):
-        free_mb, total_mb = [int(x.strip()) for x in line.split(",")]
-        free_gb = free_mb / 1024
-        total_gb = total_mb / 1024
-        total_free_gb += free_gb
-        print(f"  GPU {i}: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
-    # Need at least 20 GiB free on any single GPU for the judge
-    if total_free_gb < 20:
-        print(f"  ERROR: Only {total_free_gb:.1f} GiB total free — need at least 20 GiB.")
+    free_mb, total_mb = [int(x.strip()) for x in result.stdout.strip().split(",")]
+    free_gb = free_mb / 1024
+    total_gb = total_mb / 1024
+    print(f"  GPU memory: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
+    # Judge (Qwen3-8B bf16) needs ~18 GiB + KV cache overhead
+    if free_gb < 20:
+        print(f"  ERROR: Only {free_gb:.1f} GiB free — need at least 20 GiB for judge server.")
+        print(f"  Run: nvidia-smi  to see what's using GPU memory, then kill those processes.")
         sys.exit(1)
     else:
-        print(f"  OK — {total_free_gb:.1f} GiB total free across {len(lines)} GPU(s).")
+        print(f"  OK — enough memory for judge server.")
 except Exception as e:
     print(f"  WARNING: Could not check GPU memory: {e}")
 GPU_CHECK_EOF
@@ -113,12 +119,21 @@ fi
 # ─── Trap: ensure cleanup on exit ────────────────────────────────────────────
 cleanup() {
     echo ""
-    echo "Trap: cleaning up..."
+    echo "Trap: cleaning up all GPU processes..."
     if [ -n "$VLLM_PID" ]; then
         echo "  Stopping judge server (PID $VLLM_PID)..."
         kill "$VLLM_PID" 2>/dev/null || true
     fi
+    pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+    pkill -9 -f "vllm.worker" 2>/dev/null || true
     ray stop --force 2>/dev/null || true
+    # Kill any remaining GPU processes spawned by this script
+    if command -v nvidia-smi &>/dev/null; then
+        GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
+        for pid in $GPU_PIDS; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
     echo "  Cleanup complete."
 }
 
@@ -161,38 +176,6 @@ else:
         fpath.write_text(new_code)
         print(f"  PATCHED: widened {n} 'except ImportError' → 'except (ImportError, OSError)'")
 PATCH_EOF
-
-# ─── Pre-flight: Patch veRL Ray init for Docker ─────────────────────────────────
-# The Hydra ++ray_kwargs.ray_init.* overrides don't reliably reach ray.init().
-# Monkey-patch main_ppo.py directly to inject Docker-safe defaults.
-echo ""
-echo "=== Pre-flight: Patching veRL Ray init (Docker workaround) ==="
-python3 << 'PATCH_RAY'
-import pathlib
-
-fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
-if not fpath.exists():
-    print("  SKIP: main_ppo.py not found")
-else:
-    code = fpath.read_text()
-    target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
-    if "_ray_kw" not in code and target in code:
-        replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
-    # ── MedSeRL Docker fix: inject Ray init defaults ──
-    import os as _os
-    if _ray_kw.get('num_cpus') is None:
-        _ray_kw['num_cpus'] = _os.cpu_count() or 4
-    _ray_kw.setdefault('include_dashboard', False)
-    _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
-    _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
-    print(f"ray init kwargs (patched): {_ray_kw}")
-    ray.init(**_ray_kw)"""
-        code = code.replace(target, replacement)
-        fpath.write_text(code)
-        print("  PATCHED: main_ppo.py — injected Ray init defaults for Docker")
-    else:
-        print("  main_ppo.py already patched or target not found")
-PATCH_RAY
 
 # ─── Pre-flight: Config approach ──────────────────────────────────────────────
 # Using ppo_agentic.yaml with Hydra defaults composition (same pattern as the
@@ -253,13 +236,13 @@ snapshot_download('${JUDGE_MODEL}', ignore_patterns=['*.gguf'])
 print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
-        echo "Starting vLLM judge server on port ${JUDGE_PORT} (GPU 0) ..."
+        echo "Starting vLLM judge server on port ${JUDGE_PORT} ..."
         python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.20 \
+            --gpu-memory-utilization 0.30 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
@@ -269,10 +252,10 @@ print('Download complete.')
         # Wait for server to come up (up to 900s)
         echo "Waiting for judge server to become healthy (may take 5-10 min)..."
         WAIT_SECS=0
-        MAX_WAIT=1800
+        MAX_WAIT=900
         until curl -s -o /dev/null -w "%{http_code}" "http://localhost:${JUDGE_PORT}/health" 2>/dev/null | grep -q "200"; do
-            sleep 3
-            WAIT_SECS=$((WAIT_SECS + 3))
+            sleep 10
+            WAIT_SECS=$((WAIT_SECS + 10))
             echo -n "."
             if [ "$WAIT_SECS" -ge "$MAX_WAIT" ]; then
                 echo ""
@@ -303,14 +286,7 @@ echo ""
 echo "JUDGE_VLLM_URL=$JUDGE_VLLM_URL"
 echo "UMLS_API_KEY set: $([ -n "$UMLS_API_KEY" ] && echo yes || echo NO)"
 echo ""
-# Clean stale Ray state (safe — only ray stop, no pkill/fuser/rm /tmp)
-echo "Cleaning stale Ray state..."
-ray stop --force 2>/dev/null || true
-rm -rf /workspace/ray_tmp/* 2>/dev/null || true
-mkdir -p /workspace/ray_tmp
-sleep 2
-echo "  Done — veRL will start its own Ray cluster."
-echo ""
+
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_agentic" \
@@ -320,6 +296,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_files="$TRAIN_PARQUET" \
     data.val_files="$VAL_PARQUET" \
     data.train_batch_size=8 \
+    data.val_batch_size=8 \
     data.train_max_samples=20 \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
@@ -329,39 +306,35 @@ python3 -m verl.trainer.main_ppo \
     \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
-    actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.model.use_shm=True \
+    actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.lora_rank=16 \
     actor_rollout_ref.model.lora_alpha=32 \
     actor_rollout_ref.model.target_modules=all-linear \
-    actor_rollout_ref.actor.optim.lr=1e-5 \
+    actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
-    actor_rollout_ref.rollout.load_format=safetensors \
-    actor_rollout_ref.rollout.layered_summon=True \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.15 \
+    actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.free_cache_engine=True \
-    "+actor_rollout_ref.rollout.engine_kwargs.vllm.disable_cascade_attn=True" \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=1024 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
     \
     critic.enable=false \
@@ -385,10 +358,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=-1 \
     trainer.test_freq=99999 \
     trainer.val_before_train=False \
-    \
-    ++ray_kwargs.ray_init.include_dashboard=False \
-    ++ray_kwargs.ray_init.num_cpus=27 \
-    "++ray_kwargs.ray_init._temp_dir=/workspace/ray_tmp" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
