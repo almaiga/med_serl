@@ -35,6 +35,10 @@ export UMLS_WEIGHT=0
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
 mkdir -p "$RAY_TMPDIR_PATH"
 
+# ── GPU visibility — pin GPU 0 and prevent Ray from clearing it in workers ──
+export CUDA_VISIBLE_DEVICES=0
+export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
+
 # ── Ray env vars for RunPod Docker ──
 export RAY_DISABLE_DOCKER_CPU_WARNING=1
 export RAY_DEDUP_LOGS=0
@@ -59,12 +63,11 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # ─── Cleanup: kill stale GPU / Ray processes ──────────────────────────────────
 echo "=== Cleanup ==="
-#pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
-#pkill -9 -f "vllm.worker" 2>/dev/null || true
-#ray stop --force 2>/dev/null || true
-#pkill -9 -f "ray::" 2>/dev/null || true
-#rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
-#sleep 2
+
+# Kill RunPod's built-in vLLM API server (auto-starts on boot, hogs ~90% GPU)
+pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+pkill -9 -f "vllm.worker" 2>/dev/null || true
+sleep 2
 
 # Kill stale GPU processes (safe — does NOT affect RunPod SSH)
 if command -v nvidia-smi &>/dev/null; then
@@ -79,6 +82,15 @@ if command -v nvidia-smi &>/dev/null; then
     nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 fi
 echo "  Cleanup done."
+
+# ── CUDA health check ──
+echo "  Verifying CUDA is functional ..."
+if python3 -c "import torch; d=torch.cuda.current_device(); print(f'CUDA OK — device {d}: {torch.cuda.get_device_name(d)}')" 2>/dev/null; then
+    echo "  CUDA health check passed."
+else
+    echo "  ERROR: CUDA cannot initialise. Try: nvidia-smi -r  (GPU reset) or restart the pod."
+    exit 1
+fi
 
 # ─── Expand /dev/shm if too small (Docker default is 64MB) ────────────────────
 # Ray's object store uses /dev/shm for shared-memory IPC.  If it's tiny the GCS
