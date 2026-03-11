@@ -59,12 +59,12 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # ─── Cleanup: kill stale GPU / Ray processes ──────────────────────────────────
 echo "=== Cleanup ==="
-pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
-pkill -9 -f "vllm.worker" 2>/dev/null || true
-ray stop --force 2>/dev/null || true
-pkill -9 -f "ray::" 2>/dev/null || true
-rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
-sleep 2
+#pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+#pkill -9 -f "vllm.worker" 2>/dev/null || true
+#ray stop --force 2>/dev/null || true
+#pkill -9 -f "ray::" 2>/dev/null || true
+#rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
+#sleep 2
 
 # Kill any remaining GPU processes
 if command -v nvidia-smi &>/dev/null; then
