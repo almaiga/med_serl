@@ -69,15 +69,25 @@ pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
 pkill -9 -f "vllm.worker" 2>/dev/null || true
 sleep 2
 
-# Kill stale GPU processes (safe — does NOT affect RunPod SSH)
+# Kill stale GPU processes — use SIGTERM first, then SIGKILL only if needed.
+# Immediate SIGKILL can corrupt the CUDA runtime context inside Docker.
 if command -v nvidia-smi &>/dev/null; then
     GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
     if [ -n "$GPU_PIDS" ]; then
-        echo "  Killing stale GPU processes: $GPU_PIDS"
+        echo "  Sending SIGTERM to stale GPU processes: $GPU_PIDS"
         for pid in $GPU_PIDS; do
-            kill -9 "$pid" 2>/dev/null || true
+            kill "$pid" 2>/dev/null || true
         done
-        sleep 3
+        sleep 5
+        # Only SIGKILL stragglers
+        REMAINING=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
+        if [ -n "$REMAINING" ]; then
+            echo "  SIGKILL remaining: $REMAINING"
+            for pid in $REMAINING; do
+                kill -9 "$pid" 2>/dev/null || true
+            done
+            sleep 3
+        fi
     fi
     nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 fi
@@ -85,10 +95,27 @@ echo "  Cleanup done."
 
 # ── CUDA health check ──
 echo "  Verifying CUDA is functional ..."
-if python3 -c "import torch; d=torch.cuda.current_device(); print(f'CUDA OK — device {d}: {torch.cuda.get_device_name(d)}')" 2>/dev/null; then
-    echo "  CUDA health check passed."
-else
-    echo "  ERROR: CUDA cannot initialise. Try: nvidia-smi -r  (GPU reset) or restart the pod."
+CUDA_CHECK=$(python3 -c "
+import torch, sys
+print(f'torch {torch.__version__}, CUDA compiled: {torch.version.cuda}')
+if not torch.cuda.is_available():
+    print('FAIL: torch.cuda.is_available() == False', file=sys.stderr)
+    sys.exit(1)
+try:
+    torch.cuda.init()
+    d = torch.cuda.current_device()
+    print(f'CUDA OK — device {d}: {torch.cuda.get_device_name(d)}')
+except Exception as e:
+    print(f'FAIL: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)
+CUDA_RC=$?
+echo "  $CUDA_CHECK"
+if [ $CUDA_RC -ne 0 ]; then
+    echo ""
+    echo "  ERROR: CUDA runtime cannot initialise (driver is fine, runtime is not)."
+    echo "  This usually happens after kill -9 of GPU processes in Docker."
+    echo "  Fix: restart the RunPod pod, then re-run this script."
     exit 1
 fi
 
