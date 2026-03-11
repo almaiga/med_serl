@@ -33,6 +33,11 @@ JUDGE_PORT="${JUDGE_PORT:-8002}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
 SKIP_SERVER="${SKIP_SERVER:-0}"
 
+# ─── 2-GPU pinning: Judge → GPU 0, Training → GPU 1 ──────────────────────────
+# RTX 6000 Pro: 2×96 GB.  Each process sees only its assigned GPU.
+JUDGE_GPU="${JUDGE_GPU:-0}"
+TRAIN_GPU="${TRAIN_GPU:-1}"
+
 # NOTE: vLLM 0.11.0 requires V1 (AsyncLLM) unconditionally — V0 was removed.
 # Both the judge server and veRL's internal rollout use V1.
 
@@ -120,25 +125,29 @@ fi
 
 # ─── Pre-flight: verify enough GPU memory is free ────────────────────────────
 echo ""
-echo "=== Pre-flight: GPU memory check ==="
+echo "=== Pre-flight: GPU memory check (all GPUs) ==="
 python3 << 'GPU_CHECK_EOF'
 import subprocess, sys
 try:
     result = subprocess.run(
-        ["nvidia-smi", "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"],
+        ["nvidia-smi", "--query-gpu=index,memory.free,memory.total", "--format=csv,noheader,nounits"],
         capture_output=True, text=True, timeout=10
     )
-    free_mb, total_mb = [int(x.strip()) for x in result.stdout.strip().split(",")]
-    free_gb = free_mb / 1024
-    total_gb = total_mb / 1024
-    print(f"  GPU memory: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
-    # Judge (Qwen3-4B bf16) needs ~9 GiB + KV cache overhead
-    if free_gb < 12:
-        print(f"  ERROR: Only {free_gb:.1f} GiB free — need at least 12 GiB for judge server.")
-        print(f"  Run: nvidia-smi  to see what's using GPU memory, then kill those processes.")
+    ok = True
+    for line in result.stdout.strip().splitlines():
+        idx, free_mb, total_mb = [int(x.strip()) for x in line.split(",")]
+        free_gb = free_mb / 1024
+        total_gb = total_mb / 1024
+        print(f"  GPU {idx}: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
+        if free_gb < 10:
+            print(f"  WARNING: GPU {idx} has only {free_gb:.1f} GiB free (need ≥10 GiB).")
+            ok = False
+    if not ok:
+        print("  ERROR: one or more GPUs lack sufficient free memory.")
+        print("  Run: nvidia-smi  to see what's using GPU memory, then kill those processes.")
         sys.exit(1)
     else:
-        print(f"  OK — enough memory for judge server.")
+        print("  OK — all GPUs have enough memory.")
 except Exception as e:
     print(f"  WARNING: Could not check GPU memory: {e}")
 GPU_CHECK_EOF
@@ -267,15 +276,14 @@ snapshot_download('${JUDGE_MODEL}', ignore_patterns=['*.gguf'])
 print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
-        echo "Starting vLLM judge server on port ${JUDGE_PORT} (V1, single-process) ..."
-        python3 -m vllm.entrypoints.openai.api_server \
+        echo "Starting vLLM judge server on GPU ${JUDGE_GPU}, port ${JUDGE_PORT} (V1) ..."
+        CUDA_VISIBLE_DEVICES=$JUDGE_GPU python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.25 \
+            --gpu-memory-utilization 0.50 \
             --enforce-eager \
-            --disable-frontend-multiprocessing \
             --served-model-name "${JUDGE_MODEL}" \
             &
         VLLM_PID=$!
@@ -326,12 +334,10 @@ rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 sleep 2
 echo "Ray state cleaned."
 
-# ── Patch veRL Ray init for Docker ──
-# This must handle FOUR cases:
-#   a) Fresh main_ppo.py (never patched) — apply full patch
-#   b) Already patched but missing object_store_memory — add it
-#   c) Fully patched — no-op
-#   d) Has _plasma_directory (old patch) — remove it (it disables the memory cap)
+# ── Patch veRL Ray init for Docker (idempotent force-replace) ──
+# RunPod cannot expand /dev/shm (no SYS_ADMIN), so we MUST set _plasma_directory
+# to redirect Ray's object store to disk.  This block always writes the canonical
+# patch regardless of the current state of main_ppo.py.
 python3 << 'PATCH_RAY'
 import pathlib, re
 fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
@@ -339,51 +345,42 @@ if not fpath.exists():
     print("SKIP: main_ppo.py not found")
 else:
     code = fpath.read_text()
-    changed = False
 
-    # ── Remove _plasma_directory if present — it makes Ray ignore object_store_memory ──
-    if '_plasma_directory' in code:
-        lines = code.splitlines(keepends=True)
-        code = ''.join(l for l in lines if '_plasma_directory' not in l)
-        changed = True
-        print("REMOVED: _plasma_directory line (object_store_memory cap now enforced)")
-
-    fresh_target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
-    full_replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
-    # ── MedSeRL Docker fix ──
+    CANONICAL = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
+    # ── MedSeRL Docker fix (canonical) ──
     import os as _os
     if _ray_kw.get('num_cpus') is None:
         _ray_kw['num_cpus'] = min(_os.cpu_count() or 4, 8)
     _ray_kw.setdefault('include_dashboard', False)
     _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
     _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
-    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB cap — uses /dev/shm (expanded)
+    _ray_kw.setdefault('object_store_memory', 500_000_000)   # 500 MB
+    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass tiny /dev/shm
     print(f"ray init kwargs (patched): {_ray_kw}")
     ray.init(**_ray_kw)"""
 
-    if "_ray_kw" not in code and fresh_target in code:
-        # Case (a): never patched
-        code = code.replace(fresh_target, full_replacement)
-        changed = True
-        print("PATCHED: main_ppo.py — full Docker-safe Ray defaults")
-    elif "_ray_kw" in code and "object_store_memory" not in code:
-        # Case (b): patched before but missing object_store_memory
-        insert_before = '    print(f"ray init kwargs (patched):'
-        new_lines = (
-            "    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB cap — uses /dev/shm (expanded)\n"
-        )
-        if insert_before in code:
-            code = code.replace(insert_before, new_lines + insert_before)
-            changed = True
-            print("PATCHED: added object_store_memory to existing patch")
-        else:
-            print("WARNING: could not find insertion point — manual check needed")
-    elif not changed:
-        print("main_ppo.py already fully patched")
-
-    if changed:
+    # Match either the fresh line or any previous _ray_kw block
+    fresh = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
+    if fresh in code:
+        code = code.replace(fresh, CANONICAL)
         fpath.write_text(code)
+        print("PATCHED: main_ppo.py — fresh → canonical Docker-safe Ray init")
+    elif "_ray_kw" in code:
+        # Replace the existing _ray_kw block with canonical version
+        pattern = r'_ray_kw = OmegaConf\.to_container.*?ray\.init\(\*\*_ray_kw\)'
+        new_code, n = re.subn(pattern, CANONICAL, code, count=1, flags=re.DOTALL)
+        if n > 0:
+            fpath.write_text(new_code)
+            print("PATCHED: main_ppo.py — replaced existing _ray_kw block with canonical")
+        else:
+            print("WARNING: _ray_kw found but regex did not match — manual check needed")
+    else:
+        print("WARNING: could not find ray.init call — manual check needed")
 PATCH_RAY
+
+# Pin training to GPU 1 (judge is on GPU 0)
+export CUDA_VISIBLE_DEVICES=$TRAIN_GPU
+echo "Training pinned to GPU $TRAIN_GPU (CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES)"
 
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
@@ -414,25 +411,26 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.35 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=1024 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.fsdp_config.param_offload=False \
     actor_rollout_ref.ref.strategy=fsdp2 \
     \
     critic.enable=false \
@@ -459,7 +457,7 @@ python3 -m verl.trainer.main_ppo \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=8 \
     "++ray_kwargs.ray_init._temp_dir=$RAY_TMPDIR_PATH" \
-    ++ray_kwargs.ray_init.object_store_memory=1000000000 \
+    ++ray_kwargs.ray_init.object_store_memory=500000000 \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
