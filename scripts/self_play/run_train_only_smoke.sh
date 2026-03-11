@@ -147,7 +147,8 @@ echo "=== Step 1: veRL Training (rule-based reward, ~${SMOKE_STEPS} steps) ==="
 echo ""
 
 # Final Ray state cleanup right before launch
-ray stop --force 2>/dev/null || true
+# NOTE: ray stop --force is commented out — it kills the RunPod SSH session
+# ray stop --force 2>/dev/null || true
 rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 sleep 2
 
