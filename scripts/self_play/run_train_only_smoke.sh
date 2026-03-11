@@ -66,8 +66,16 @@ echo "=== Cleanup ==="
 #rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 #sleep 2
 
-# Show GPU state (don't kill processes — may be container services on RunPod)
+# Kill stale GPU processes (safe — does NOT affect RunPod SSH)
 if command -v nvidia-smi &>/dev/null; then
+    GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
+    if [ -n "$GPU_PIDS" ]; then
+        echo "  Killing stale GPU processes: $GPU_PIDS"
+        for pid in $GPU_PIDS; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+        sleep 3
+    fi
     nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 fi
 echo "  Cleanup done."
