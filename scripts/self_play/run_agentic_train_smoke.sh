@@ -267,7 +267,7 @@ snapshot_download('${JUDGE_MODEL}', ignore_patterns=['*.gguf'])
 print('Download complete.')
 " || echo "Pre-download skipped (model may already be cached)."
 
-        echo "Starting vLLM judge server on port ${JUDGE_PORT} (V1 engine) ..."
+        echo "Starting vLLM judge server on port ${JUDGE_PORT} (V1, single-process) ..."
         python3 -m vllm.entrypoints.openai.api_server \
             --model "${JUDGE_MODEL}" \
             --port "${JUDGE_PORT}" \
@@ -275,6 +275,7 @@ print('Download complete.')
             --max-model-len 4096 \
             --gpu-memory-utilization 0.25 \
             --enforce-eager \
+            --disable-frontend-multiprocessing \
             --served-model-name "${JUDGE_MODEL}" \
             &
         VLLM_PID=$!
