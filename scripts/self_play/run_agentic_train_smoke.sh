@@ -28,7 +28,7 @@
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
-JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-4B}"
+export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-4B}"
 JUDGE_PORT="${JUDGE_PORT:-8002}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
 SKIP_SERVER="${SKIP_SERVER:-0}"
@@ -133,9 +133,9 @@ try:
     free_gb = free_mb / 1024
     total_gb = total_mb / 1024
     print(f"  GPU memory: {free_gb:.1f} GiB free / {total_gb:.1f} GiB total")
-    # Judge (Qwen3-8B bf16) needs ~18 GiB + KV cache overhead
-    if free_gb < 20:
-        print(f"  ERROR: Only {free_gb:.1f} GiB free — need at least 20 GiB for judge server.")
+    # Judge (Qwen3-4B bf16) needs ~9 GiB + KV cache overhead
+    if free_gb < 12:
+        print(f"  ERROR: Only {free_gb:.1f} GiB free — need at least 12 GiB for judge server.")
         print(f"  Run: nvidia-smi  to see what's using GPU memory, then kill those processes.")
         sys.exit(1)
     else:
@@ -274,7 +274,7 @@ print('Download complete.')
             --port "${JUDGE_PORT}" \
             --dtype bfloat16 \
             --max-model-len 4096 \
-            --gpu-memory-utilization 0.30 \
+            --gpu-memory-utilization 0.25 \
             --enforce-eager \
             --served-model-name "${JUDGE_MODEL}" \
             &
@@ -414,7 +414,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.15 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.35 \
     actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
