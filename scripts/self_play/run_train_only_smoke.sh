@@ -151,10 +151,11 @@ ray stop --force 2>/dev/null || true
 rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 sleep 2
 
-# ── Patch veRL Ray init for Docker (idempotent force-replace) ──
-# RunPod cannot expand /dev/shm (no SYS_ADMIN), so we MUST set _plasma_directory
-# to redirect Ray's object store to disk.  This block always writes the canonical
-# patch regardless of the current state of main_ppo.py.
+# ── Patch veRL Ray init for Docker ──
+# This must handle THREE cases:
+#   a) Fresh main_ppo.py (never patched) — apply full patch
+#   b) Already patched but missing object_store_memory — add it
+#   c) Fully patched — no-op
 python3 << 'PATCH_RAY'
 import pathlib, re
 fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
@@ -162,37 +163,41 @@ if not fpath.exists():
     print("SKIP: main_ppo.py not found")
 else:
     code = fpath.read_text()
-
-    CANONICAL = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
-    # ── MedSeRL Docker fix (canonical) ──
+    fresh_target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
+    full_replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
+    # ── MedSeRL Docker fix ──
     import os as _os
     if _ray_kw.get('num_cpus') is None:
         _ray_kw['num_cpus'] = min(_os.cpu_count() or 4, 8)
     _ray_kw.setdefault('include_dashboard', False)
     _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
     _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
-    _ray_kw.setdefault('object_store_memory', 500_000_000)   # 500 MB
-    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass tiny /dev/shm
+    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB — safe for small /dev/shm
+    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass /dev/shm entirely
     print(f"ray init kwargs (patched): {_ray_kw}")
     ray.init(**_ray_kw)"""
 
-    # Match either the fresh line or any previous _ray_kw block
-    fresh = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
-    if fresh in code:
-        code = code.replace(fresh, CANONICAL)
+    if "_ray_kw" not in code and fresh_target in code:
+        # Case (a): never patched
+        code = code.replace(fresh_target, full_replacement)
         fpath.write_text(code)
-        print("PATCHED: main_ppo.py — fresh → canonical Docker-safe Ray init")
-    elif "_ray_kw" in code:
-        # Replace the existing _ray_kw block with canonical version
-        pattern = r'_ray_kw = OmegaConf\.to_container.*?ray\.init\(\*\*_ray_kw\)'
-        new_code, n = re.subn(pattern, CANONICAL, code, count=1, flags=re.DOTALL)
-        if n > 0:
-            fpath.write_text(new_code)
-            print("PATCHED: main_ppo.py — replaced existing _ray_kw block with canonical")
+        print("PATCHED: main_ppo.py — full Docker-safe Ray defaults")
+    elif "_ray_kw" in code and "object_store_memory" not in code:
+        # Case (b): patched before but missing object_store_memory
+        # Insert the two new lines right before the print(f"ray init kwargs
+        insert_before = '    print(f"ray init kwargs (patched):'
+        new_lines = (
+            "    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB — safe for small /dev/shm\n"
+            "    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass /dev/shm entirely\n"
+        )
+        if insert_before in code:
+            code = code.replace(insert_before, new_lines + insert_before)
+            fpath.write_text(code)
+            print("PATCHED: added object_store_memory + _plasma_directory to existing patch")
         else:
-            print("WARNING: _ray_kw found but regex did not match — manual check needed")
+            print("WARNING: could not find insertion point — manual check needed")
     else:
-        print("WARNING: could not find ray.init call — manual check needed")
+        print("main_ppo.py already fully patched")
 PATCH_RAY
 
 python3 -m verl.trainer.main_ppo \
@@ -224,26 +229,25 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
     actor_rollout_ref.rollout.max_model_len=2048 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=1024 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
     \
     critic.enable=false \
@@ -270,7 +274,7 @@ python3 -m verl.trainer.main_ppo \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=8 \
     "++ray_kwargs.ray_init._temp_dir=$RAY_TMPDIR_PATH" \
-    ++ray_kwargs.ray_init.object_store_memory=500000000 \
+    ++ray_kwargs.ray_init.object_store_memory=1000000000 \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
