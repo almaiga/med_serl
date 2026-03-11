@@ -66,16 +66,8 @@ echo "=== Cleanup ==="
 #rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 #sleep 2
 
-# Kill any remaining GPU processes
+# Show GPU state (don't kill processes — may be container services on RunPod)
 if command -v nvidia-smi &>/dev/null; then
-    GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
-    if [ -n "$GPU_PIDS" ]; then
-        echo "  Killing stale GPU processes: $GPU_PIDS"
-        for pid in $GPU_PIDS; do
-            kill -9 "$pid" 2>/dev/null || true
-        done
-        sleep 3
-    fi
     nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 fi
 echo "  Cleanup done."
@@ -95,18 +87,11 @@ if [ -d /dev/shm ]; then
 fi
 
 # ─── Trap: cleanup on exit ───────────────────────────────────────────────────
+# NOTE: Aggressive cleanup (ray stop, GPU kill) is disabled — it kills RunPod SSH.
+# If you need to free GPU memory manually, run: nvidia-smi and kill specific PIDs.
 cleanup() {
     echo ""
-    echo "Cleaning up GPU processes..."
-    pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
-    pkill -9 -f "vllm.worker" 2>/dev/null || true
-    ray stop --force 2>/dev/null || true
-    if command -v nvidia-smi &>/dev/null; then
-        GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
-        for pid in $GPU_PIDS; do
-            kill -9 "$pid" 2>/dev/null || true
-        done
-    fi
+    echo "Script finished. To free GPU memory, run: nvidia-smi then kill <pid>"
 }
 trap cleanup EXIT
 
@@ -147,9 +132,8 @@ echo "=== Step 1: veRL Training (rule-based reward, ~${SMOKE_STEPS} steps) ==="
 echo ""
 
 # Final Ray state cleanup right before launch
-# NOTE: ray stop --force is commented out — it kills the RunPod SSH session
-# ray stop --force 2>/dev/null || true
-rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
+# NOTE: Only clean workspace ray_tmp — do NOT touch /dev/shm or /tmp (kills RunPod SSH)
+rm -rf "$RAY_TMPDIR_PATH"/* 2>/dev/null || true
 sleep 2
 
 # ── Patch veRL Ray init for Docker ──
