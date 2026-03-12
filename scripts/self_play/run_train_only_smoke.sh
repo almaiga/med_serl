@@ -246,7 +246,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_max_samples=20 \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
-    data.max_response_length=3072 \  # ~2048 thinking budget + 1024 answer buffer
+    data.max_response_length=3072 \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     data.return_raw_chat=True \
@@ -270,12 +270,12 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.top_p=0.85 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
-    actor_rollout_ref.rollout.max_model_len=4096 \  # 1024 prompt + 3072 response
+    actor_rollout_ref.rollout.max_model_len=4096 \
     actor_rollout_ref.rollout.max_num_batched_tokens=5120 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
-    actor_rollout_ref.rollout.response_length=3072 \  # Thinking budget: ~2048, Answer: ~1024 \
+    actor_rollout_ref.rollout.response_length=3072 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.multi_turn.enable=True \
