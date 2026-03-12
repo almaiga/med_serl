@@ -257,16 +257,17 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.use_kl_loss=False \
-    actor_rollout_ref.actor.entropy_coeff=0.01 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
     actor_rollout_ref.rollout.name=sglang \
-    actor_rollout_ref.rollout.temperature=0.6 \
-    actor_rollout_ref.rollout.top_p=0.95 \
-    actor_rollout_ref.rollout.top_k=20 \
+    actor_rollout_ref.rollout.temperature=1.0 \
+    actor_rollout_ref.rollout.top_p=0.85 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
     actor_rollout_ref.rollout.max_model_len=3072 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \

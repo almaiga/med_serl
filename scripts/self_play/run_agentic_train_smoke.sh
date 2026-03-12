@@ -395,7 +395,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_max_samples=20 \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
-    data.max_response_length=1024 \
+    data.max_response_length=2048 \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     \
@@ -406,28 +406,29 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.use_kl_loss=False \
-    actor_rollout_ref.actor.entropy_coeff=0.01 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.temperature=0.7 \
-    actor_rollout_ref.rollout.top_p=0.95 \
-    actor_rollout_ref.rollout.top_k=20 \
+    actor_rollout_ref.rollout.temperature=1.0 \
+    actor_rollout_ref.rollout.top_p=0.85 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
-    actor_rollout_ref.rollout.max_model_len=2048 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
+    actor_rollout_ref.rollout.max_model_len=3072 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=6144 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
-    actor_rollout_ref.rollout.response_length=1024 \
+    actor_rollout_ref.rollout.response_length=2048 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
     \
     critic.enable=false \
