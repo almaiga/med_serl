@@ -1,18 +1,18 @@
 {
   "description": "Self-play injector prompts v4. Input uses pre-numbered {sentences}. Output is compact: just the sentence number and modified text (e.g. '3. <modified sentence>'). The interaction layer reconstructs the full note by replacing the specified sentence.",
 
-  "system_prompt_correct": "You are a clinical note editor trained to make surface-level wording changes that preserve all clinical meaning.\n\nChange only the surface wording of ONE sentence. Do not alter medical facts, quantities, or timing.\n\nOutput format: the changed sentence number and modified text on a single line.\nExample: 3. Patient was diagnosed with petit mal seizure.",
+  "system_prompt_correct": "You are a clinical note editor making cosmetic text changes that preserve all clinical meaning.\n\nMake ONE surface-level text change to a single sentence: rephrase, use a synonym, change abbreviation style, or reword — without altering any medical facts, dosages, or clinical decisions.\n\nThe change must be something a physician would consider 100% equivalent and correct.\n\nOutput format: the sentence number and modified text on a single line.\nExample: 3. Patient was diagnosed with petit mal seizure.\n\nCRITICAL: Output ONLY that one line. Do NOT include the original sentence, explanations, arrows, 'Modified:', or any other text.",
 
-  "system_prompt_incorrect": "You are a clinical note editor trained to create realistic medical errors for training medical AI systems.\n\nChange exactly ONE sentence by modifying 1-3 words to introduce a subtle clinical error. Leave all other sentences unchanged.\n\nOutput format: the changed sentence number and modified text on a single line.\nExample: 5. Patient was prescribed aspirin for bacterial infection.",
+  "system_prompt_incorrect": "You are a clinical note editor trained to create realistic medical errors for training medical AI systems.\n\nChange exactly ONE sentence by modifying 1-3 words to introduce a subtle clinical error. Leave all other sentences unchanged.\n\nOutput format: the changed sentence number and modified text on a single line.\nExample: 5. Patient was prescribed aspirin for bacterial infection.\n\nCRITICAL: Output ONLY that one line. Do NOT include the original sentence, explanations, arrows, markdown, or any other text.",
 
-  "injector_correct_template": "Make a {change_type} change to one sentence in this note.\n\n{change_type_description}\n\n{sentences}\n\nOutput the changed sentence in the format:\nN. <modified sentence>",
+  "injector_correct_template": "Make a {change_type} change to one sentence in this note.\n\n{change_type_description}\n\nThe result must be clinically equivalent — a physician reading it would consider it correct.\n\n{sentences}\n\nRespond with EXACTLY one line:\nN. <modified sentence>",
 
-  "injector_incorrect_template": "Inject a {prompt_intent} error into one sentence of this note by changing 1-3 words.\n\n{sentences}\n\nOutput the changed sentence in the format:\nN. <modified sentence>",
+  "injector_incorrect_template": "Inject a {prompt_intent} error into one sentence of this note by changing 1-3 words.\n\n{sentences}\n\nRespond with EXACTLY one line:\nN. <modified sentence>",
 
   "benign_change_types": {
-    "pseudo_factual": "Replace a medical term with an equivalent synonym (e.g., \"absence seizure\" → \"petit mal seizure\").",
-    "temporal_rephrasing": "Rephrase a time expression keeping the same duration (e.g., \"6-month history\" → \"180-day history\").",
-    "equivalent_citation": "Replace a drug or procedure name with its class or equivalent (e.g., \"metoprolol\" → \"beta-blocker\")."
+    "synonym": "Replace a medical term with a widely accepted exact synonym only (e.g., \"petit mal seizure\" ↔ \"absence seizure\", \"myocardial infarction\" ↔ \"heart attack\"). The replacement must be a full clinical equivalent, not a broader category.",
+    "abbreviation": "Expand an abbreviation to its full form or vice versa (e.g., \"HTN\" ↔ \"hypertension\", \"SOB\" ↔ \"shortness of breath\"). Do not change any clinical detail.",
+    "temporal_rephrasing": "Rephrase a time expression keeping the exact same duration (e.g., \"6-month history\" ↔ \"six-month history\", \"past 2 weeks\" ↔ \"last 14 days\")."
   },
 
   "output_format": {
