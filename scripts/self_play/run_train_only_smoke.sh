@@ -343,4 +343,117 @@ echo ""
 echo "Full log: $SMOKE_LOG"
 echo "Outputs : $OUTPUT_DIR"
 
+# ─── Step 3: Response Quality Analysis ───────────────────────────────────────
+echo ""
+echo "=================================================="
+echo "=== Step 3: Response Quality Analysis ==="
+echo "=================================================="
+
+python3 << PYEOF
+import json, re, sys
+from collections import defaultdict
+from pathlib import Path
+
+log_file = Path("$SMOKE_LOG")
+if not log_file.exists():
+    print("  Log file not found — skipping analysis")
+    sys.exit(0)
+
+def strip_thinking(text):
+    m = re.search(r"<think>(.*?)</think>\s*", text, re.DOTALL)
+    if m:
+        return m.group(1).strip(), text[m.end():].strip()
+    return "", text
+
+def tokens(text):
+    return int(len(text) / 1.4)  # ~1.4 chars/token for medical text
+
+records = []
+for line in log_file.read_text().splitlines():
+    if line.startswith("{") and '"timestamp"' in line:
+        try:
+            records.append(json.loads(line))
+        except Exception:
+            pass
+
+if not records:
+    print("  No JSONL records found in log — model may not have run yet")
+    sys.exit(0)
+
+print(f"\n  Total records : {len(records)}")
+
+# Per-mode breakdown
+by_mode = defaultdict(list)
+for r in records:
+    by_mode[r.get("mode", "?")].append(r)
+for mode, recs in sorted(by_mode.items()):
+    print(f"  Mode '{mode}': {len(recs)} records")
+
+# Analyze injector responses
+inj_stats = []
+for r in records:
+    resp = r.get("injector_response", "")
+    if not resp:
+        continue
+    thinking, answer = strip_thinking(resp)
+    has_open  = "<think>" in resp
+    has_close = "</think>" in resp
+    inj_stats.append({
+        "total_tok":    tokens(resp),
+        "think_tok":    tokens(thinking),
+        "answer_tok":   tokens(answer),
+        "has_open":     has_open,
+        "has_close":    has_close,
+        "truncated":    has_open and not has_close,
+        "answer_empty": len(answer.strip()) == 0,
+    })
+
+if inj_stats:
+    n = len(inj_stats)
+    avg_tot   = sum(s["total_tok"]  for s in inj_stats) / n
+    avg_think = sum(s["think_tok"]  for s in inj_stats) / n
+    avg_ans   = sum(s["answer_tok"] for s in inj_stats) / n
+    max_tot   = max(s["total_tok"]  for s in inj_stats)
+    truncated = sum(1 for s in inj_stats if s["truncated"])
+    no_answer = sum(1 for s in inj_stats if s["answer_empty"])
+    over_bud  = sum(1 for s in inj_stats if s["total_tok"] > 3072)
+
+    print(f"""
+  ── Injector (Phase 1: note modifier) ─────────────────
+  Samples           : {n}
+  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}  (budget: 3072)
+    Thinking avg    : {avg_think:,.0f}  (target: ≤2048)
+    Answer   avg    : {avg_ans:,.0f}   (target: ~300-600)
+  Over budget       : {over_bud}/{n}
+  Truncated (no </think>) : {truncated}/{n}  {'⚠️ ' if truncated else '✅'}
+  Missing answer    : {no_answer}/{n}  {'⚠️ ' if no_answer else '✅'}""")
+
+# Rewards
+rewards = [r.get("reward") for r in records if r.get("reward") is not None]
+if rewards:
+    dist = defaultdict(int)
+    for rv in rewards:
+        dist[round(rv, 1)] += 1
+    print(f"""
+  ── Rewards ────────────────────────────────────────────
+  avg={sum(rewards)/len(rewards):.3f}  min={min(rewards):.1f}  max={max(rewards):.1f}""")
+    for rv in sorted(dist.keys(), reverse=True):
+        bar = "█" * dist[rv]
+        print(f"  {rv:+.1f}  {bar}  ({dist[rv]})")
+
+# Outcomes
+outcomes = defaultdict(int)
+for r in records:
+    outcomes[r.get("outcome", "unknown")] += 1
+if outcomes:
+    print(f"\n  ── Outcomes ───────────────────────────────────────────")
+    for oc, cnt in sorted(outcomes.items(), key=lambda x: -x[1]):
+        print(f"  {oc:20s}: {cnt}")
+
+# Invalid format
+invalid = sum(1 for r in records if not r.get("has_valid_format", True))
+print(f"\n  Invalid format    : {invalid}/{len(records)}  {'⚠️ ' if invalid else '✅'}")
+print()
+PYEOF
+
 exit $TRAIN_EXIT
