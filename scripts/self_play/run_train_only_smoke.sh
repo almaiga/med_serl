@@ -9,6 +9,7 @@
 #   - Cleans stale Ray state to avoid GCS timeout
 #   - Runs veRL PPO/REINFORCE++ for ~5 training steps
 #   - NO judge server, NO UMLS lookups
+#   - Thinking budget: ~2048 tokens, Answer: ~1024 tokens (total: 3072)
 #
 # Usage:
 #   bash scripts/self_play/run_train_only_smoke.sh
