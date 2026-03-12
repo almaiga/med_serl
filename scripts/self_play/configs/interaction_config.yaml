@@ -7,6 +7,7 @@
 # - Turn 2 (Assessor): Model outputs CORRECT or the error sentence number
 # - Zero-sum rewards with 3-tier localization: exact match, detection-only, miss
 # - Hidden CoT: Injector's <think> is stripped before Assessor sees note
+# - Per-turn temperature: Injector 0.6 (creative), Assessor 0.3 (precise)
 
 interaction:
   - name: "medical_game"
@@ -17,6 +18,12 @@ interaction:
       
       # Max turns per episode
       max_turns: 2
+      
+      # Per-turn sampling: Injector = creative, Assessor = precise
+      injector_temperature: 0.6    # Qwen3 official recommendation for thinking mode
+      injector_top_p: 0.95         # Qwen3 official recommendation
+      assessor_temperature: 0.3    # Low temperature for deterministic classification
+      assessor_top_p: 0.95
       
       # Zero-sum reward values
       reward_win: 1.0

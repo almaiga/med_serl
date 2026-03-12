@@ -13,8 +13,8 @@ defaults:
   - _self_
 
 data:
-  max_prompt_length: 2048
-  max_response_length: 4096  # Increased for 2-turn responses (Injector + Assessor)
+  max_prompt_length: 1024
+  max_response_length: 2048  # Shared across 2 turns (Injector ~512 + Assessor ~256 + CoT)
   train_batch_size: 16
   return_raw_chat: True
 
@@ -22,6 +22,8 @@ actor_rollout_ref:
   hybrid_engine: True
   rollout:
     name: sglang  # CRITICAL: sglang required for multi-turn interactions
+    temperature: 0.6       # Default (Injector turn); Assessor overrides via interaction
+    top_p: 0.95            # Qwen3 official recommendation
     multi_turn:
       enable: True
       max_user_turns: 2

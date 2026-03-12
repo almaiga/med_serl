@@ -256,11 +256,13 @@ def detect_truncation(response: str) -> dict:
     # 4. Ends with incomplete sentence
     
     ends_cleanly = response.rstrip().endswith(('.', '!', '?', '"', "'", ')', ']', '}', '>'))
-    has_final_answer = bool(re.search(r'final_answer:', response, re.IGNORECASE))
     
+    # Primary truncation signal: opened <think> but never closed it.
+    # Secondary: very long response that doesn't end with punctuation.
+    # NOTE: We no longer check for 'final_answer:' — injector outputs
+    # never contain that string, causing false-positive truncation.
     is_truncated = (
         missing_closing_think or
-        (has_think_tag and not has_final_answer) or
         (not ends_cleanly and response_chars > 100)  # Long response that doesn't end cleanly
     )
     
@@ -270,7 +272,6 @@ def detect_truncation(response: str) -> dict:
         "missing_closing_think": missing_closing_think,
         "response_chars": response_chars,
         "response_tokens_approx": response_tokens_approx,
-        "has_final_answer": has_final_answer,
         "ends_cleanly": ends_cleanly,
     }
 
@@ -318,6 +319,25 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     # Check format compliance
     has_valid_format = check_format_compliance(solution_str)
     format_bonus = FORMAT_BONUS if has_valid_format else 0.0
+    
+    # ── Guard: If this is a single-turn rollout where only the injector ran,
+    # the solution_str contains a clinical note (not an assessor answer).
+    # Numbers in clinical text (e.g., Na=134) would be mis-parsed as sentence IDs.
+    # Detect this by checking if the response looks like an injector compact output.
+    _looks_like_injector = bool(re.search(
+        r'(?:^|\n)\s*\d+\.\s+\S', solution_str.split('</think>')[-1] if '</think>' in solution_str.lower() else solution_str
+    ))
+    if _looks_like_injector and label == "ERROR" and pred_sid is not None and pred_sid > 20:
+        # Sentence IDs in real notes are 1–~15.  A pred_sid > 20 almost certainly
+        # came from a clinical value (lab result, dose, etc.), not an assessor answer.
+        logger.warning(
+            "Guard: pred_sid=%d looks like a clinical value, not a sentence ID. "
+            "Resetting to UNKNOWN (likely single-turn rollout without assessor).",
+            pred_sid,
+        )
+        label, pred_sid = "UNKNOWN", None
+        has_valid_format = False
+        format_bonus = 0.0
     
     # --- 3-tier reward computation ---
     gt_is_correct = (ground_truth == "CORRECT")

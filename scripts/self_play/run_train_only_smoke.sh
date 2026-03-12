@@ -234,7 +234,7 @@ PATCH_RAY
 
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
-    --config-name="ppo_agentic" \
+    --config-name="ppo_multiturn" \
     \
     algorithm.adv_estimator=reinforce_plus_plus \
     \
@@ -245,9 +245,10 @@ python3 -m verl.trainer.main_ppo \
     data.train_max_samples=20 \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
-    data.max_response_length=1024 \
+    data.max_response_length=2048 \
     data.filter_overlong_prompts=False \
     data.truncation=error \
+    data.return_raw_chat=True \
     \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
@@ -265,19 +266,23 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
-    actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.temperature=0.7 \
+    actor_rollout_ref.rollout.name=sglang \
+    actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=20 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
-    actor_rollout_ref.rollout.max_model_len=2048 \
+    actor_rollout_ref.rollout.max_model_len=3072 \
     actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
-    actor_rollout_ref.rollout.response_length=1024 \
+    actor_rollout_ref.rollout.response_length=2048 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.rollout.multi_turn.enable=True \
+    actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
+    actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
+    actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
     \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \

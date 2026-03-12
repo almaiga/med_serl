@@ -6,6 +6,10 @@ This interaction orchestrates the two-turn self-play game:
 
 The Assessor sees the full modified note (CoT is stripped from Injector output).
 
+Per-turn sampling:
+- Injector: temperature=0.6, top_p=0.95 (Qwen3 recommendation for thinking mode)
+- Assessor: temperature=0.3, top_p=0.95 (lower temperature for precise classification)
+
 Rewards are 3-tier:
 - Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
 - Detection only (error detected but wrong sentence number): +0.3
@@ -14,6 +18,7 @@ Rewards are 3-tier:
 """
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
@@ -28,6 +33,8 @@ from scripts.self_play.cot_parser import (
     parse_injector_output,
     extract_note_for_assessor,
 )
+
+logger = logging.getLogger(__name__)
 
 # Import verl's BaseInteraction
 try:
@@ -44,14 +51,24 @@ REWARD_PARTIAL = 0.3    # Detected error but wrong sentence number
 REWARD_MISS = -1.0      # Missed or wrong classification
 FORMAT_BONUS = 0.2      # Bonus for parseable output format
 
+# Per-turn sampling parameters
+# Injector: moderate creativity for generating plausible modifications
+INJECTOR_TEMPERATURE = 0.6   # Qwen3 official recommendation for thinking mode
+INJECTOR_TOP_P = 0.95        # Qwen3 official recommendation
+# Assessor: low temperature for precise, deterministic classification
+ASSESSOR_TEMPERATURE = 0.3
+ASSESSOR_TOP_P = 0.95
+
 
 class MedicalGameInteraction(BaseInteraction):
     """Two-turn medical error detection + localization game interaction.
     
     Phase 1: Injector modifies a clinical note (benign or error injection)
              Output: "N. <modified sentence>"
+             Sampling: temperature=0.6, top_p=0.95
     Phase 2: Assessor classifies the modified note
              Output: "CORRECT" or "<sentence_number>"
+             Sampling: temperature=0.3, top_p=0.95
     
     Rewards are 3-tier:
     - Exact match: +1.0 + format_bonus
@@ -63,6 +80,12 @@ class MedicalGameInteraction(BaseInteraction):
         super().__init__(config)
         self.name: str = config.get("name", "medical_game")
         self._instance_dict = {}
+        
+        # Per-turn sampling (overridable via config)
+        self.injector_temperature = config.get("injector_temperature", INJECTOR_TEMPERATURE)
+        self.injector_top_p = config.get("injector_top_p", INJECTOR_TOP_P)
+        self.assessor_temperature = config.get("assessor_temperature", ASSESSOR_TEMPERATURE)
+        self.assessor_top_p = config.get("assessor_top_p", ASSESSOR_TOP_P)
         
         # Load detection+localization prompts
         self.detection_prompts = self._load_prompts(
@@ -133,7 +156,12 @@ class MedicalGameInteraction(BaseInteraction):
         messages: List[Dict[str, Any]], 
         **kwargs
     ) -> Tuple[bool, str, float, Dict[str, Any]]:
-        """Process model response and generate next prompt or terminate."""
+        """Process model response and generate next prompt or terminate.
+        
+        Returns (done, next_prompt_or_feedback, reward, info).
+        ``info`` may contain ``sampling_params`` dict to override temperature/top_p
+        for the next generation turn.
+        """
         instance = self._instance_dict[instance_id]
         current_turn = instance["turn"]
         instance["turn"] += 1
@@ -153,7 +181,9 @@ class MedicalGameInteraction(BaseInteraction):
         """Process Phase 1 (Injector) output and prepare Phase 2 (Assessor) prompt.
         
         Parses compact "N. <modified sentence>" output, reconstructs the full
-        note, and passes it to the Assessor.
+        note, and passes it to the Assessor with proper system prompt.
+        
+        Returns sampling_params for the assessor turn (temperature=0.3).
         """
         instance = self._instance_dict[instance_id]
         
@@ -166,7 +196,7 @@ class MedicalGameInteraction(BaseInteraction):
         
         instance["injector_output"] = injector_output
         
-        # Parse compact output
+        # Parse compact output: "N. <modified sentence>"
         parsed = parse_injector_output(injector_output)
         
         if parsed.parse_success:
@@ -175,6 +205,10 @@ class MedicalGameInteraction(BaseInteraction):
                 instance["sentences"], parsed.changed_sentence_id, parsed.modified_text
             )
             instance["modified_sentences"] = modified
+            logger.debug(
+                "Injector parsed: sid=%d, modified=%r",
+                parsed.changed_sentence_id, (parsed.modified_text or "")[:80],
+            )
         else:
             # Fallback: pass original sentences (injector failed to modify)
             instance["modified_sentences"] = extract_note_for_assessor(
@@ -182,11 +216,21 @@ class MedicalGameInteraction(BaseInteraction):
             )
             if not instance["modified_sentences"]:
                 return True, "Invalid output format. Expected 'N. <modified sentence>'.", -1.0, {}
+            logger.warning("Injector parse failed — using fallback note for assessor.")
         
-        # Construct Assessor prompt
+        # Construct Assessor prompt with system context + modified note
         assessor_prompt = self._construct_assessor_prompt(instance["modified_sentences"])
         
-        return False, assessor_prompt, 0.0, {"phase": "injector_complete"}
+        # Pass per-turn sampling params for the assessor turn
+        info = {
+            "phase": "injector_complete",
+            "sampling_params": {
+                "temperature": self.assessor_temperature,
+                "top_p": self.assessor_top_p,
+            },
+        }
+        
+        return False, assessor_prompt, 0.0, info
     
     async def _process_assessor_turn(
         self,
@@ -268,9 +312,22 @@ class MedicalGameInteraction(BaseInteraction):
         return REWARD_MISS, f"Invalid response format. Expected 'CORRECT' or a sentence number."
     
     def _construct_assessor_prompt(self, modified_sentences: str) -> str:
-        """Construct the Assessor's classification prompt using {sentences} template."""
+        """Construct the Assessor's classification prompt.
+        
+        Includes the system-level instructions (output CORRECT or sentence number)
+        prepended to the modified note so the model knows to switch from Injector
+        to Assessor role.  verl's multi-turn system inserts this as the next
+        ``user`` turn in the conversation.
+        """
+        system_prompt = self.detection_prompts.get("system_prompt", "")
         user_template = self.detection_prompts.get("user_template", "{sentences}")
-        return user_template.format(sentences=modified_sentences)
+        user_content = user_template.format(sentences=modified_sentences)
+        
+        # Combine system instructions with the note in a single user message.
+        # The system_prompt already ends with /no_think for Qwen3.
+        if system_prompt:
+            return f"{system_prompt}\n\n{user_content}"
+        return user_content
     
     async def calculate_score(
         self, 
