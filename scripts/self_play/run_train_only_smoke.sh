@@ -350,14 +350,38 @@ echo "=== Step 3: Response Quality Analysis ==="
 echo "=================================================="
 
 python3 << PYEOF
-import json, re, sys
+import json, re, sys, os
 from collections import defaultdict
 from pathlib import Path
 
-log_file = Path("$SMOKE_LOG")
-if not log_file.exists():
-    print("  Log file not found — skipping analysis")
+# Records are written by agentic_reward.py to results/self_play/interactions/
+TRACE_DIR = Path("$PROJECT_ROOT/results/self_play/interactions")
+SMOKE_LOG  = Path("$SMOKE_LOG")
+
+# Find the most recent JSONL file created during this run
+trace_files = sorted(TRACE_DIR.glob("*.jsonl"),
+                     key=lambda p: p.stat().st_mtime, reverse=True) if TRACE_DIR.exists() else []
+
+if not trace_files:
+    print("  No judge_trace JSONL found — checking smoke log for inline records ...")
+    src = SMOKE_LOG
+else:
+    src = trace_files[0]
+    print(f"  Reading: {src.relative_to(Path('$PROJECT_ROOT'))}")
+
+records = []
+for line in src.read_text().splitlines():
+    if line.startswith("{") and '"timestamp"' in line:
+        try:
+            records.append(json.loads(line))
+        except Exception:
+            pass
+
+if not records:
+    print("  No JSONL records found — model may not have produced any rewards yet")
     sys.exit(0)
+
+print(f"  Total records : {len(records)}")
 
 def strip_thinking(text):
     m = re.search(r"<think>(.*?)</think>\s*", text, re.DOTALL)
@@ -367,20 +391,6 @@ def strip_thinking(text):
 
 def tokens(text):
     return int(len(text) / 1.4)  # ~1.4 chars/token for medical text
-
-records = []
-for line in log_file.read_text().splitlines():
-    if line.startswith("{") and '"timestamp"' in line:
-        try:
-            records.append(json.loads(line))
-        except Exception:
-            pass
-
-if not records:
-    print("  No JSONL records found in log — model may not have run yet")
-    sys.exit(0)
-
-print(f"\n  Total records : {len(records)}")
 
 # Per-mode breakdown
 by_mode = defaultdict(list)
