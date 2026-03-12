@@ -284,6 +284,7 @@ python3 -m verl.trainer.main_ppo \
     \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     \
     critic.enable=false \
     \
