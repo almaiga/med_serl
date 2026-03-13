@@ -179,6 +179,10 @@ echo ""
 echo "=== Step 1: veRL Training (rule-based reward, ~${SMOKE_STEPS} steps) ==="
 echo ""
 
+# Export run-specific game log path so ALL Ray workers write to the same file
+GAME_LOG="$OUTPUT_DIR/game_interactions.jsonl"
+export MEDSERL_GAME_LOG="$GAME_LOG"
+
 # Final Ray state cleanup right before launch
 # NOTE: Only clean workspace ray_tmp — do NOT touch /dev/shm or /tmp (kills RunPod SSH)
 rm -rf "$RAY_TMPDIR_PATH"/* 2>/dev/null || true
@@ -357,36 +361,38 @@ from pathlib import Path
 TRACE_DIR = Path("$PROJECT_ROOT/results/self_play/interactions")
 SMOKE_LOG  = Path("$SMOKE_LOG")
 
-# Find the interaction's JSONL from this training run.
-# Two files are created per run:
-#   1. game_*.jsonl OR interactions_*.jsonl — from medical_game_interaction.py (at import)
-#   2. interactions_*.jsonl — from reward_function.py (at first compute_score call, ~60s later)
-# Strategy: prefer game_*.jsonl; if absent, pick the OLDEST file from the current run's
-# time window (the interaction file is created first, reward_fn file is created later).
-if TRACE_DIR.exists():
-    game_files = sorted(TRACE_DIR.glob("game_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    all_files  = sorted(TRACE_DIR.glob("*.jsonl"),      key=lambda p: p.stat().st_mtime, reverse=True)
-else:
-    game_files, all_files = [], []
+# Find the interaction's JSONL for this run.
+# Primary: run-specific path set via MEDSERL_GAME_LOG env var → game_interactions.jsonl in OUTPUT_DIR
+# Fallback: game_*.jsonl in TRACE_DIR, then oldest interactions_*.jsonl in 5-min window
+GAME_LOG = Path("$OUTPUT_DIR/game_interactions.jsonl")
 
-if game_files:
-    src = game_files[0]
-    label = "game (interaction)"
-elif all_files:
-    # Among files created within 5 min of the most recent, pick the OLDEST (= interaction file)
-    latest_mtime = all_files[0].stat().st_mtime
-    run_files = [f for f in all_files if latest_mtime - f.stat().st_mtime < 300]
-    src = run_files[-1]   # oldest in the run window
-    label = "interactions (oldest-in-run = interaction)"
+if GAME_LOG.exists() and GAME_LOG.stat().st_size > 0:
+    src = GAME_LOG
+    label = "game (interaction, run-specific)"
 else:
-    src = None
-    label = None
+    if TRACE_DIR.exists():
+        game_files = sorted(TRACE_DIR.glob("game_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        all_files  = sorted(TRACE_DIR.glob("*.jsonl"),      key=lambda p: p.stat().st_mtime, reverse=True)
+    else:
+        game_files, all_files = [], []
+    if game_files:
+        src = game_files[0]; label = "game (interaction)"
+    elif all_files:
+        latest = all_files[0].stat().st_mtime
+        run_files = [f for f in all_files if latest - f.stat().st_mtime < 300]
+        src = run_files[-1]; label = "interactions (oldest-in-run fallback)"
+    else:
+        src = None; label = None
 
 if src is None:
     print("  No JSONL found — checking smoke log for inline records ...")
     src = SMOKE_LOG
 else:
-    print(f"  Reading ({label}): {src.relative_to(Path('$PROJECT_ROOT'))}")
+    try:
+        rel = src.relative_to(Path("$PROJECT_ROOT"))
+    except ValueError:
+        rel = src.name
+    print(f"  Reading ({label}): {rel}")
 
 records = []
 for line in src.read_text().splitlines():
@@ -526,6 +532,33 @@ for oc, cnt in sorted(outcome_counts.items(), key=lambda x: -x[1]):
     print(f"  {oc:20s}: {cnt}")
 print(f"  Avg reward        : {avg_reward:.3f}")
 print(f"  Invalid format    : {invalid}/{len(records)}")
+
+# Training metrics from smoke log
+import subprocess
+try:
+    grep_out = subprocess.run(
+        ["grep", "-oP", r"critic/score/mean:[0-9e.+\-]+", str(SMOKE_LOG)],
+        capture_output=True, text=True
+    )
+    scores = [float(x.split(":")[1]) for x in grep_out.stdout.strip().split("\n") if x]
+    if scores:
+        print(f"\n  Training critic/score/mean : {scores[0]:.4f} (step 1) → {scores[-1]:.4f} (last step)")
+except Exception:
+    pass
+
+# Sample responses (first 3 records with injector_response or assessor_response)
+sample_recs = [r for r in records if r.get("injector_response") or r.get("assessor_response")][:3]
+if sample_recs:
+    print(f"\n  ── Sample game records ──────────────────────────────")
+    for i, r in enumerate(sample_recs):
+        gt  = r.get("ground_truth", "?")
+        oc  = r.get("outcome", "?")
+        rwd = r.get("reward", 0.0)
+        inj = (r.get("injector_response") or "")[:150].replace("\n", " ↵ ")
+        asm = (r.get("assessor_response") or "")[:80].replace("\n", " ↵ ")
+        print(f"  [{i+1}] gt={gt!r:8} outcome={oc:15} reward={rwd:+.2f}")
+        if inj: print(f"       INJ: {inj!r}")
+        if asm: print(f"       ASM: {asm!r}")
 print()
 PYEOF
 

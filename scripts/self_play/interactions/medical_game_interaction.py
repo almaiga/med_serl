@@ -63,9 +63,17 @@ ASSESSOR_TOP_P = 0.95
 
 
 # JSONL logging — written by the interaction (source of truth for rewards)
-_LOG_DIR = Path(__file__).parent.parent.parent.parent / "results" / "self_play" / "interactions"
+# Use MEDSERL_GAME_LOG env var if set (smoke script exports it before Ray starts,
+# so all Ray workers inherit the same path → all append to the same known file).
+import os as _os
+_env_log = _os.environ.get("MEDSERL_GAME_LOG")
+if _env_log:
+    _LOG_FILE = Path(_env_log)
+    _LOG_DIR  = _LOG_FILE.parent
+else:
+    _LOG_DIR  = Path(__file__).parent.parent.parent.parent / "results" / "self_play" / "interactions"
+    _LOG_FILE = _LOG_DIR / f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
-_LOG_FILE = _LOG_DIR / f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
 _log_lock = threading.Lock()
 
 
@@ -74,8 +82,8 @@ def _write_log(entry: dict) -> None:
         with _log_lock:
             with open(_LOG_FILE, "a") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("_write_log failed (file=%s): %s", _LOG_FILE, e)
 
 
 class MedicalGameInteraction(BaseInteraction):
