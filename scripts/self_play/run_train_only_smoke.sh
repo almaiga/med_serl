@@ -291,7 +291,7 @@ python3 -m verl.trainer.main_ppo \
     \
     reward_model.enable=False \
     \
-    custom_reward_function.path="scripts.self_play.agentic_reward" \
+    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
     custom_reward_function.name=async_compute_score \
     \
     algorithm.use_kl_in_reward=False \
@@ -504,9 +504,6 @@ else:
   1. Check injector outputs for proper 'N. sentence' format
   2. Verify interaction_config.yaml exists and is correct
   3. Test medical_game_interaction.py in isolation""")
-    print(f"\n  ── Outcomes ───────────────────────────────────────────")
-    for oc, cnt in sorted(outcomes.items(), key=lambda x: -x[1]):
-        print(f"  {oc:20s}: {cnt}")
 
 # Invalid format
 invalid = sum(1 for r in records if not r.get("has_valid_format", True))
