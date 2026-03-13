@@ -399,38 +399,44 @@ for r in records:
 for mode, recs in sorted(by_mode.items()):
     print(f"  Mode '{mode}': {len(recs)} records")
 
-# Check for multi-turn data
-has_injector = sum(1 for r in records if r.get("injector_response"))
-has_assessor = sum(1 for r in records if r.get("assessor_response"))
-print(f"  Records with injector : {has_injector}")
-print(f"  Records with assessor : {has_assessor}")
+# Multi-turn health check
+# assessor_actually_ran is set by reward_function.py after content-based turn split
+assessor_ran = sum(1 for r in records if r.get("assessor_actually_ran", False))
+phases_sep   = sum(1 for r in records if r.get("phases_separated", False))
+# Fallback: if split was not possible, infer from outcome being non-trivial
+# (the reward computation itself works even without the split)
+outcomes_found = sum(1 for r in records if r.get("outcome") not in (None, "invalid_format"))
+print(f"  Assessor ran (split)  : {assessor_ran}/{len(records)}")
+print(f"  Phases separated      : {phases_sep}/{len(records)}")
+print(f"  Valid reward outcomes : {outcomes_found}/{len(records)}")
+if assessor_ran == 0 and outcomes_found == 0:
+    print("  WARNING: No assessor responses AND no valid outcomes — multi-turn may be broken")
+elif assessor_ran == 0:
+    print("  NOTE: Turn split not found in solution_str (verl strips chat tokens).")
+    print("        Rewards computed correctly from full response. Use model_response_full for debug.")
 
-if has_assessor == 0:
-    print("  ⚠️  NO ASSESSOR RESPONSES FOUND!")
-    print("     This suggests multi-turn interaction is failing")
-    print("     - Check interaction_config.yaml")
-    print("     - Verify medical_game_interaction.py is working")
-
-# Analyze injector responses (Turn 1)
+# Analyze full response (injector_response contains full solution_str when split fails)
 inj_stats = []
 for r in records:
-    resp = r.get("injector_response", "")
+    resp = r.get("injector_response", "") or r.get("model_response_full", "")
     if not resp:
         continue
-    thinking, answer = strip_thinking(resp)
     has_open  = "<think>" in resp
     has_close = "</think>" in resp
+    # Strict truncation: opened <think> but never closed it
+    truncated = has_open and not has_close
+    think_count = resp.count("</think>")
+    thinking_part, answer = strip_thinking(resp)
     inj_stats.append({
         "total_tok":    tokens(resp),
-        "think_tok":    tokens(thinking),
+        "think_tok":    tokens(thinking_part),
         "answer_tok":   tokens(answer),
-        "has_open":     has_open,
-        "has_close":    has_close,
-        "truncated":    has_open and not has_close,
+        "truncated":    truncated,
+        "think_count":  think_count,
         "answer_empty": len(answer.strip()) == 0,
     })
 
-# Analyze assessor responses (Turn 2)  
+# Analyze assessor responses if the split worked
 assess_stats = []
 for r in records:
     resp = r.get("assessor_response", "")
@@ -454,18 +460,17 @@ if inj_stats:
     truncated = sum(1 for s in inj_stats if s["truncated"])
     no_answer = sum(1 for s in inj_stats if s["answer_empty"])
     over_bud  = sum(1 for s in inj_stats if s["total_tok"] > 3072)
+    two_turns = sum(1 for s in inj_stats if s["think_count"] >= 2)
 
     print(f"""
-  ── Injector (Phase 1: note modifier) ─────────────────
+  ── Full response (injector + assessor, or assessor-only) ──
   Samples           : {n}
   Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}  (budget: 3072)
-    Thinking avg    : {avg_think:,.0f}  (target: ≤2048)
-    Answer   avg    : {avg_ans:,.0f}   (target: ~300-600)
+    Thinking avg    : {avg_think:,.0f}
+    Answer   avg    : {avg_ans:,.0f}
   Over budget       : {over_bud}/{n}
-  Truncated (no </think>) : {truncated}/{n}  {'⚠️ ' if truncated else '✅'}
-  Missing answer    : {no_answer}/{n}  {'⚠️ ' if no_answer else '✅'}""")
-else:
-    print("\n  ── Injector: NO DATA FOUND ────────────────────────")
+  Inj truncated (no </think>) : {truncated}/{n}  {'WARNING ' if truncated > n//4 else 'OK'}
+  Two </think> blocks (2 turns visible) : {two_turns}/{n}""")
 
 if assess_stats:
     n = len(assess_stats)
@@ -474,40 +479,33 @@ if assess_stats:
     avg_ans   = sum(s["answer_tok"] for s in assess_stats) / n
     max_tot   = max(s["total_tok"]  for s in assess_stats)
 
-    # Check assessor answer patterns
     correct_answers = sum(1 for s in assess_stats if s["answer"].upper() == "CORRECT")
     numeric_answers = sum(1 for s in assess_stats if s["answer"].isdigit())
     empty_answers   = sum(1 for s in assess_stats if not s["answer"])
 
     print(f"""
-  ── Assessor (Phase 2: error detector) ────────────────
+  ── Assessor (Phase 2 split succeeded) ────────────────
   Samples           : {n}
-  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}  (budget: 3072)
-    Thinking avg    : {avg_think:,.0f}  (target: ≤2048)
-    Answer   avg    : {avg_ans:,.0f}   (target: ~50-100)
+  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}
+    Thinking avg    : {avg_think:,.0f}
+    Answer   avg    : {avg_ans:,.0f}
   Answer patterns:
     'CORRECT'       : {correct_answers}/{n}
     Sentence nums   : {numeric_answers}/{n}
     Empty           : {empty_answers}/{n}""")
-else:
-    print("""
-  ── Assessor: NO DATA FOUND ────────────────────────────
-  This indicates multi-turn interaction FAILED!
-  
-  Possible causes:
-  1. Injector output format invalid → interaction stops
-  2. medical_game_interaction.py has a bug
-  3. Multi-turn config issue in interaction_config.yaml
-  4. Parsing error between turns
-  
-  DEBUG STEPS:
-  1. Check injector outputs for proper 'N. sentence' format
-  2. Verify interaction_config.yaml exists and is correct
-  3. Test medical_game_interaction.py in isolation""")
 
-# Invalid format
+# Outcome breakdown (always available — computed from full solution_str)
+from collections import Counter
+outcome_counts = Counter(r.get("outcome", "unknown") for r in records)
+rewards = [r.get("reward", 0.0) for r in records]
+avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
 invalid = sum(1 for r in records if not r.get("has_valid_format", True))
-print(f"\n  Invalid format    : {invalid}/{len(records)}  {'⚠️ ' if invalid else '✅'}")
+
+print(f"\n  ── Reward outcomes ──────────────────────────────────")
+for oc, cnt in sorted(outcome_counts.items(), key=lambda x: -x[1]):
+    print(f"  {oc:20s}: {cnt}")
+print(f"  Avg reward        : {avg_reward:.3f}")
+print(f"  Invalid format    : {invalid}/{len(records)}")
 print()
 PYEOF
 

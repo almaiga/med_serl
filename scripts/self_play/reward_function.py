@@ -429,28 +429,48 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     # =========================================================================
     # MULTI-TURN RESPONSE PARSING (for concatenated rollouts)
     # =========================================================================
+    # verl strips chat-template tokens from solution_str, so <|im_start|>
+    # markers are absent.  We use a content-based split instead:
+    #   Pass 1: chat-template tokens (in case they are present)
+    #   Pass 2: count </think> blocks — injector ends at first </think>,
+    #           second <think> opens the assessor turn
+    #   Pass 3: treat whole string as assessor-only (single-turn or fallback)
     injector_response = solution_str
     assessor_response = ""
-    
-    # Try to find the boundary between turns
-    assessor_markers = [
-        r'<\|im_start\|>user\s*\n',
-        r'\nuser\s*\n',
-    ]
-    
     turn_boundary = None
-    for marker in assessor_markers:
-        match = re.search(marker, solution_str, re.IGNORECASE | re.DOTALL)
-        if match:
-            turn_boundary = match.start()
+
+    # Pass 1: chat-template markers (present when verl keeps special tokens)
+    for marker in [r'<\|im_start\|>user\s*\n', r'\nuser\s*\n']:
+        m = re.search(marker, solution_str, re.IGNORECASE | re.DOTALL)
+        if m:
+            turn_boundary = m.start()
+            injector_response = solution_str[:turn_boundary].strip()
+            assessor_response = solution_str[turn_boundary:].strip()
             break
-    
-    if turn_boundary:
-        injector_response = solution_str[:turn_boundary].strip()
-        assessor_response = solution_str[turn_boundary:].strip()
-    else:
+
+    # Pass 2: split on the second <think> block (content-based, no special tokens needed)
+    if not assessor_response:
+        think_opens = [m.start() for m in re.finditer(r'<think>', solution_str, re.IGNORECASE)]
+        think_closes = [m.end() for m in re.finditer(r'</think>', solution_str, re.IGNORECASE)]
+        # Two complete think blocks → two turns
+        if len(think_opens) >= 2 and len(think_closes) >= 2:
+            second_open = think_opens[1]
+            injector_response = solution_str[:second_open].strip()
+            assessor_response = solution_str[second_open:].strip()
+        # One complete + one open (assessor thinking still in progress or assessor has no think)
+        elif len(think_closes) >= 1 and len(think_opens) >= 1:
+            # Content after first </think> that looks like a second turn
+            first_close_end = think_closes[0]
+            tail = solution_str[first_close_end:].strip()
+            # If tail contains another <think> or is non-trivial text, it's the assessor
+            if len(tail) > 20:
+                injector_response = solution_str[:first_close_end].strip()
+                assessor_response = tail
+
+    # Pass 3: <|im_start|>assistant blocks (fallback if special tokens exist)
+    if not assessor_response:
         assistant_blocks = re.findall(
-            r'<\|im_start\|>assistant(.*?)(?=<\|im_end\|>|<\|im_start\|>|$)', 
+            r'<\|im_start\|>assistant(.*?)(?=<\|im_end\|>|<\|im_start\|>|$)',
             solution_str, re.DOTALL
         )
         if len(assistant_blocks) >= 2:
