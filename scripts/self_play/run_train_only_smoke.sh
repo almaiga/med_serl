@@ -357,21 +357,36 @@ from pathlib import Path
 TRACE_DIR = Path("$PROJECT_ROOT/results/self_play/interactions")
 SMOKE_LOG  = Path("$SMOKE_LOG")
 
-# Find the most recent JSONL — prefer game_*.jsonl (from interaction, has correct split data)
-# over interactions_*.jsonl (from reward_function.py, split is unreliable)
-game_files = sorted(TRACE_DIR.glob("game_*.jsonl"),
-                    key=lambda p: p.stat().st_mtime, reverse=True) if TRACE_DIR.exists() else []
-all_files  = sorted(TRACE_DIR.glob("*.jsonl"),
-                    key=lambda p: p.stat().st_mtime, reverse=True) if TRACE_DIR.exists() else []
-trace_files = game_files or all_files
+# Find the interaction's JSONL from this training run.
+# Two files are created per run:
+#   1. game_*.jsonl OR interactions_*.jsonl — from medical_game_interaction.py (at import)
+#   2. interactions_*.jsonl — from reward_function.py (at first compute_score call, ~60s later)
+# Strategy: prefer game_*.jsonl; if absent, pick the OLDEST file from the current run's
+# time window (the interaction file is created first, reward_fn file is created later).
+if TRACE_DIR.exists():
+    game_files = sorted(TRACE_DIR.glob("game_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    all_files  = sorted(TRACE_DIR.glob("*.jsonl"),      key=lambda p: p.stat().st_mtime, reverse=True)
+else:
+    game_files, all_files = [], []
 
-if not trace_files:
+if game_files:
+    src = game_files[0]
+    label = "game (interaction)"
+elif all_files:
+    # Among files created within 5 min of the most recent, pick the OLDEST (= interaction file)
+    latest_mtime = all_files[0].stat().st_mtime
+    run_files = [f for f in all_files if latest_mtime - f.stat().st_mtime < 300]
+    src = run_files[-1]   # oldest in the run window
+    label = "interactions (oldest-in-run = interaction)"
+else:
+    src = None
+    label = None
+
+if src is None:
     print("  No JSONL found — checking smoke log for inline records ...")
     src = SMOKE_LOG
 else:
-    src = trace_files[0]
-    prefix = "game (interaction)" if game_files else "interactions (reward_fn)"
-    print(f"  Reading ({prefix}): {src.relative_to(Path('$PROJECT_ROOT'))}")
+    print(f"  Reading ({label}): {src.relative_to(Path('$PROJECT_ROOT'))}")
 
 records = []
 for line in src.read_text().splitlines():
