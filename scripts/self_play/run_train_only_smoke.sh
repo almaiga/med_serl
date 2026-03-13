@@ -180,7 +180,7 @@ echo "=== Step 1: veRL Training (rule-based reward, ~${SMOKE_STEPS} steps) ==="
 echo ""
 
 # Export run-specific game log path so ALL Ray workers write to the same file
-GAME_LOG="$OUTPUT_DIR/game_interactions.jsonl"
+GAME_LOG="$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl"
 export MEDSERL_GAME_LOG="$GAME_LOG"
 
 # Final Ray state cleanup right before launch
@@ -364,7 +364,7 @@ SMOKE_LOG  = Path("$SMOKE_LOG")
 # Find the interaction's JSONL for this run.
 # Primary: run-specific path set via MEDSERL_GAME_LOG env var → game_interactions.jsonl in OUTPUT_DIR
 # Fallback: game_*.jsonl in TRACE_DIR, then oldest interactions_*.jsonl in 5-min window
-GAME_LOG = Path("$OUTPUT_DIR/game_interactions.jsonl")
+GAME_LOG = Path("$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl")
 
 if GAME_LOG.exists() and GAME_LOG.stat().st_size > 0:
     src = GAME_LOG
