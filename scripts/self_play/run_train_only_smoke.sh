@@ -309,6 +309,8 @@ python3 -m verl.trainer.main_ppo \
     ++ray_kwargs.ray_init.num_cpus=8 \
     "++ray_kwargs.ray_init._temp_dir=$RAY_TMPDIR_PATH" \
     ++ray_kwargs.ray_init.object_store_memory=1000000000 \
+    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
+    custom_reward_function.name="compute_score" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}

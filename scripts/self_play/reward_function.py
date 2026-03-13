@@ -179,19 +179,47 @@ def save_summary():
 
 def parse_final_answer(response: str) -> Tuple[str, Optional[int]]:
     """Extract assessor answer from model response.
-    
+
     Uses shared parse_assessor_answer from utils.py which handles:
     - "CORRECT" → ("CORRECT", None)
     - Bare integer "3" → ("ERROR", 3)
     - "final_answer: 5" → ("ERROR", 5)
     - Invalid → ("UNKNOWN", None)
-    
+
     Returns:
         (label, sentence_id) where label is CORRECT/ERROR/UNKNOWN
     """
     if not response:
         return ("UNKNOWN", None)
     return parse_assessor_answer(response)
+
+
+def _parse_answer_from_tail(text: str) -> Tuple[str, Optional[int]]:
+    """Extract assessor's answer from the LAST part of solution_str.
+
+    In multi-turn rollouts, solution_str = injector_output + assessor_output.
+    The assessor (with /no_think) outputs only "CORRECT" or a bare integer.
+    These appear at the END; the injector's "N. full sentence" is in the middle.
+    Scanning from the tail avoids mis-parsing the injector's sentence number.
+    Falls back to parse_assessor_answer on the full text if nothing found.
+    """
+    if not text:
+        return ("UNKNOWN", None)
+    lines = [l.strip() for l in text.strip().split('\n') if l.strip()]
+    for line in reversed(lines[-10:]):
+        line = re.sub(r'</?think>', '', line, flags=re.IGNORECASE).strip()
+        if not line:
+            continue
+        line = re.sub(
+            r'^(answer|label|output|result|final_answer)\s*[:=]\s*',
+            '', line, flags=re.IGNORECASE
+        ).strip()
+        if re.fullmatch(r'correct', line, re.IGNORECASE):
+            return "CORRECT", None
+        m = re.fullmatch(r'\d+', line)
+        if m and 1 <= int(m.group()) <= 50:
+            return "ERROR", int(m.group())
+    return parse_assessor_answer(text)
 
 
 def check_format_compliance(response: str) -> bool:
@@ -313,8 +341,8 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     # Detect truncation and get token metrics
     truncation_info = detect_truncation(solution_str)
     
-    # Parse model's output using shared parser
-    label, pred_sid = parse_final_answer(solution_str)
+    # Parse model's output from the TAIL of solution_str (assessor answer is last)
+    label, pred_sid = _parse_answer_from_tail(solution_str)
     
     # Check format compliance
     has_valid_format = check_format_compliance(solution_str)
