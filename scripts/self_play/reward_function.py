@@ -448,24 +448,45 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
             assessor_response = solution_str[turn_boundary:].strip()
             break
 
-    # Pass 2: split on the second <think> block (content-based, no special tokens needed)
+    # Pass 2: content-based split (no special tokens needed).
+    #
+    # solution_str = [injector_thinking]</think>[injector_answer]\n[assessor_output]
+    #
+    # The injector outputs a compact "N. <modified sentence>" answer after </think>.
+    # The assessor (with /no_think) outputs "CORRECT" or a bare integer directly.
+    # When the assessor ALSO uses thinking, a second <think> block appears.
     if not assessor_response:
         think_opens = [m.start() for m in re.finditer(r'<think>', solution_str, re.IGNORECASE)]
         think_closes = [m.end() for m in re.finditer(r'</think>', solution_str, re.IGNORECASE)]
-        # Two complete think blocks → two turns
-        if len(think_opens) >= 2 and len(think_closes) >= 2:
-            second_open = think_opens[1]
-            injector_response = solution_str[:second_open].strip()
-            assessor_response = solution_str[second_open:].strip()
-        # One complete + one open (assessor thinking still in progress or assessor has no think)
-        elif len(think_closes) >= 1 and len(think_opens) >= 1:
-            # Content after first </think> that looks like a second turn
+
+        if think_closes:
             first_close_end = think_closes[0]
-            tail = solution_str[first_close_end:].strip()
-            # If tail contains another <think> or is non-trivial text, it's the assessor
-            if len(tail) > 20:
-                injector_response = solution_str[:first_close_end].strip()
-                assessor_response = tail
+
+            # Sub-case A: assessor also uses thinking → second <think> block present
+            later_opens = [p for p in think_opens if p >= first_close_end]
+            if later_opens:
+                second_open = later_opens[0]
+                injector_response = solution_str[:second_open].strip()
+                assessor_response = solution_str[second_open:].strip()
+            else:
+                # Sub-case B: assessor uses /no_think — structure after </think> is:
+                #   "N. <modified sentence>\n<assessor_answer>"
+                # Skip leading whitespace after </think>.
+                tail_start = first_close_end
+                while tail_start < len(solution_str) and solution_str[tail_start] in ' \t\n\r':
+                    tail_start += 1
+                tail = solution_str[tail_start:]
+                if len(tail) > 5:
+                    # Injector compact format: "N. <text>" on the first non-empty line
+                    inj_match = re.match(r'\d+\.\s+[^\n]+', tail)
+                    if inj_match:
+                        split_pos = tail_start + inj_match.end()
+                        injector_response = solution_str[:split_pos].strip()
+                        assessor_response = solution_str[split_pos:].strip()
+                    else:
+                        # No compact answer found; treat full tail as assessor output
+                        injector_response = solution_str[:first_close_end].strip()
+                        assessor_response = tail.strip()
 
     # Pass 3: <|im_start|>assistant blocks (fallback if special tokens exist)
     if not assessor_response:
@@ -483,7 +504,7 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         "response_chars": 0, "response_tokens_approx": 0
     }
     
-    assessor_actually_ran = len(assessor_response) > 10
+    assessor_actually_ran = len(assessor_response) > 3  # "3" or "CORRECT" both qualify
     
     with _stats_lock:
         if turn_boundary is not None or assessor_actually_ran:

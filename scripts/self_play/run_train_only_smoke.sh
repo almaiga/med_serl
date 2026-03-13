@@ -479,9 +479,10 @@ if assess_stats:
     avg_ans   = sum(s["answer_tok"] for s in assess_stats) / n
     max_tot   = max(s["total_tok"]  for s in assess_stats)
 
-    correct_answers = sum(1 for s in assess_stats if s["answer"].upper() == "CORRECT")
-    numeric_answers = sum(1 for s in assess_stats if s["answer"].isdigit())
-    empty_answers   = sum(1 for s in assess_stats if not s["answer"])
+    # assessor may use /no_think so "answer" = the full stripped response
+    correct_answers = sum(1 for s in assess_stats if re.search(r'\bCORRECT\b', s["answer"], re.IGNORECASE))
+    numeric_answers = sum(1 for s in assess_stats if re.search(r'^\s*\d+\s*$', s["answer"]))
+    empty_answers   = sum(1 for s in assess_stats if not s["answer"].strip())
 
     print(f"""
   ── Assessor (Phase 2 split succeeded) ────────────────
