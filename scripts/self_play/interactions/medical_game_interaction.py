@@ -65,7 +65,7 @@ ASSESSOR_TOP_P = 0.95
 # JSONL logging — written by the interaction (source of truth for rewards)
 _LOG_DIR = Path(__file__).parent.parent.parent.parent / "results" / "self_play" / "interactions"
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
-_LOG_FILE = _LOG_DIR / f"interactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+_LOG_FILE = _LOG_DIR / f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
 _log_lock = threading.Lock()
 
 

@@ -357,16 +357,21 @@ from pathlib import Path
 TRACE_DIR = Path("$PROJECT_ROOT/results/self_play/interactions")
 SMOKE_LOG  = Path("$SMOKE_LOG")
 
-# Find the most recent JSONL file created during this run
-trace_files = sorted(TRACE_DIR.glob("*.jsonl"),
-                     key=lambda p: p.stat().st_mtime, reverse=True) if TRACE_DIR.exists() else []
+# Find the most recent JSONL — prefer game_*.jsonl (from interaction, has correct split data)
+# over interactions_*.jsonl (from reward_function.py, split is unreliable)
+game_files = sorted(TRACE_DIR.glob("game_*.jsonl"),
+                    key=lambda p: p.stat().st_mtime, reverse=True) if TRACE_DIR.exists() else []
+all_files  = sorted(TRACE_DIR.glob("*.jsonl"),
+                    key=lambda p: p.stat().st_mtime, reverse=True) if TRACE_DIR.exists() else []
+trace_files = game_files or all_files
 
 if not trace_files:
-    print("  No judge_trace JSONL found — checking smoke log for inline records ...")
+    print("  No JSONL found — checking smoke log for inline records ...")
     src = SMOKE_LOG
 else:
     src = trace_files[0]
-    print(f"  Reading: {src.relative_to(Path('$PROJECT_ROOT'))}")
+    prefix = "game (interaction)" if game_files else "interactions (reward_fn)"
+    print(f"  Reading ({prefix}): {src.relative_to(Path('$PROJECT_ROOT'))}")
 
 records = []
 for line in src.read_text().splitlines():
