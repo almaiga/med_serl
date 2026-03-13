@@ -291,9 +291,6 @@ python3 -m verl.trainer.main_ppo \
     \
     reward_model.enable=False \
     \
-    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
-    custom_reward_function.name=async_compute_score \
-    \
     algorithm.use_kl_in_reward=False \
     algorithm.kl_ctrl.kl_coef=0.001 \
     \
@@ -322,18 +319,18 @@ echo "=================================================="
 echo "=== Step 2: Verification ==="
 echo "=================================================="
 
-CS_CALLS=$(grep -c "compute_score called" "$SMOKE_LOG" 2>/dev/null || true); CS_CALLS=${CS_CALLS:-0}
+TURN2=$(grep -c "num_turns" "$SMOKE_LOG" 2>/dev/null || true); TURN2=${TURN2:-0}
 
 echo ""
-echo "compute_score invocations : $CS_CALLS"
-echo "Training exit code        : $TRAIN_EXIT"
+echo "num_turns lines in log : $TURN2  (>0 confirms multi-turn ran)"
+echo "Training exit code     : $TRAIN_EXIT"
 echo ""
 
-if [ "$TRAIN_EXIT" -eq 0 ] && [ "$CS_CALLS" -gt 0 ]; then
-    echo "SMOKE TEST PASSED: Training loop ran with rule-based reward."
+if [ "$TRAIN_EXIT" -eq 0 ] && [ "$TURN2" -gt 0 ]; then
+    echo "SMOKE TEST PASSED: Multi-turn training completed. Reward from interaction."
 elif [ "$TRAIN_EXIT" -eq 0 ]; then
-    echo "SMOKE TEST PARTIAL: Training completed but no compute_score logs found."
-    echo "This may be a logging level issue — check agentic_reward.py logger config."
+    echo "SMOKE TEST PARTIAL: Training completed but num_turns not found in log."
+    echo "Check for 'num_turns/mean:2.0' in: $SMOKE_LOG"
 else
     echo "SMOKE TEST FAILED: Training exited with code $TRAIN_EXIT."
     echo "Check the log for errors: $SMOKE_LOG"

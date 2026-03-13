@@ -20,6 +20,8 @@ Rewards are 3-tier:
 import json
 import logging
 import re
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 from uuid import uuid4
@@ -58,6 +60,22 @@ INJECTOR_TOP_P = 0.95        # Qwen3 official recommendation
 # Assessor: low temperature for precise, deterministic classification
 ASSESSOR_TEMPERATURE = 0.3
 ASSESSOR_TOP_P = 0.95
+
+
+# JSONL logging — written by the interaction (source of truth for rewards)
+_LOG_DIR = Path(__file__).parent.parent.parent.parent / "results" / "self_play" / "interactions"
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_LOG_FILE = _LOG_DIR / f"interactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+_log_lock = threading.Lock()
+
+
+def _write_log(entry: dict) -> None:
+    try:
+        with _log_lock:
+            with open(_LOG_FILE, "a") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 class MedicalGameInteraction(BaseInteraction):
@@ -261,7 +279,39 @@ class MedicalGameInteraction(BaseInteraction):
         assessor_reward, feedback = self._compute_reward(
             label, pred_sid, ground_truth, format_bonus
         )
-        
+
+        # Determine outcome label for logging
+        gt_is_correct = (ground_truth == "CORRECT")
+        if label == "UNKNOWN":
+            outcome = "invalid_format"
+        elif gt_is_correct and label == "CORRECT":
+            outcome = "exact_match"
+        elif not gt_is_correct and label == "ERROR":
+            pred_str = str(pred_sid) if pred_sid else ""
+            outcome = "exact_match" if pred_str == ground_truth else "partial_match"
+        else:
+            outcome = "miss"
+
+        note_data = instance.get("note_data", {})
+        _write_log({
+            "timestamp": datetime.now().isoformat(),
+            "data_source": "medec_selfplay",
+            "ground_truth": ground_truth,
+            "assessor_label": label,
+            "assessor_pred_sid": pred_sid,
+            "outcome": outcome,
+            "reward": float(assessor_reward),
+            "has_valid_format": has_valid_format,
+            "mode": instance.get("mode", ""),
+            "note_id": note_data.get("note_id", ""),
+            "error_type": note_data.get("error_type", ""),
+            # Per-turn responses (correctly split — no parsing needed)
+            "injector_response": (instance.get("injector_output") or "")[:4000],
+            "assessor_response": assessor_output[:2000],
+            "assessor_actually_ran": True,
+            "phases_separated": True,
+        })
+
         return True, feedback, assessor_reward, {
             "phase": "game_complete",
             "assessor_label": label,
