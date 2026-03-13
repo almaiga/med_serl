@@ -291,7 +291,7 @@ python3 -m verl.trainer.main_ppo \
     \
     reward_model.enable=False \
     \
-    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
+    custom_reward_function.path="scripts.self_play.agentic_reward" \
     custom_reward_function.name=async_compute_score \
     \
     algorithm.use_kl_in_reward=False \
@@ -399,7 +399,19 @@ for r in records:
 for mode, recs in sorted(by_mode.items()):
     print(f"  Mode '{mode}': {len(recs)} records")
 
-# Analyze injector responses
+# Check for multi-turn data
+has_injector = sum(1 for r in records if r.get("injector_response"))
+has_assessor = sum(1 for r in records if r.get("assessor_response"))
+print(f"  Records with injector : {has_injector}")
+print(f"  Records with assessor : {has_assessor}")
+
+if has_assessor == 0:
+    print("  ⚠️  NO ASSESSOR RESPONSES FOUND!")
+    print("     This suggests multi-turn interaction is failing")
+    print("     - Check interaction_config.yaml")
+    print("     - Verify medical_game_interaction.py is working")
+
+# Analyze injector responses (Turn 1)
 inj_stats = []
 for r in records:
     resp = r.get("injector_response", "")
@@ -416,6 +428,21 @@ for r in records:
         "has_close":    has_close,
         "truncated":    has_open and not has_close,
         "answer_empty": len(answer.strip()) == 0,
+    })
+
+# Analyze assessor responses (Turn 2)  
+assess_stats = []
+for r in records:
+    resp = r.get("assessor_response", "")
+    if not resp:
+        continue
+    thinking, answer = strip_thinking(resp)
+    assess_stats.append({
+        "total_tok":    tokens(resp),
+        "think_tok":    tokens(thinking),
+        "answer_tok":   tokens(answer),
+        "has_think":    "<think>" in resp,
+        "answer":       answer.strip(),
     })
 
 if inj_stats:
@@ -437,25 +464,46 @@ if inj_stats:
   Over budget       : {over_bud}/{n}
   Truncated (no </think>) : {truncated}/{n}  {'⚠️ ' if truncated else '✅'}
   Missing answer    : {no_answer}/{n}  {'⚠️ ' if no_answer else '✅'}""")
+else:
+    print("\n  ── Injector: NO DATA FOUND ────────────────────────")
 
-# Rewards
-rewards = [r.get("reward") for r in records if r.get("reward") is not None]
-if rewards:
-    dist = defaultdict(int)
-    for rv in rewards:
-        dist[round(rv, 1)] += 1
+if assess_stats:
+    n = len(assess_stats)
+    avg_tot   = sum(s["total_tok"]  for s in assess_stats) / n
+    avg_think = sum(s["think_tok"]  for s in assess_stats) / n
+    avg_ans   = sum(s["answer_tok"] for s in assess_stats) / n
+    max_tot   = max(s["total_tok"]  for s in assess_stats)
+
+    # Check assessor answer patterns
+    correct_answers = sum(1 for s in assess_stats if s["answer"].upper() == "CORRECT")
+    numeric_answers = sum(1 for s in assess_stats if s["answer"].isdigit())
+    empty_answers   = sum(1 for s in assess_stats if not s["answer"])
+
     print(f"""
-  ── Rewards ────────────────────────────────────────────
-  avg={sum(rewards)/len(rewards):.3f}  min={min(rewards):.1f}  max={max(rewards):.1f}""")
-    for rv in sorted(dist.keys(), reverse=True):
-        bar = "█" * dist[rv]
-        print(f"  {rv:+.1f}  {bar}  ({dist[rv]})")
-
-# Outcomes
-outcomes = defaultdict(int)
-for r in records:
-    outcomes[r.get("outcome", "unknown")] += 1
-if outcomes:
+  ── Assessor (Phase 2: error detector) ────────────────
+  Samples           : {n}
+  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}  (budget: 3072)
+    Thinking avg    : {avg_think:,.0f}  (target: ≤2048)
+    Answer   avg    : {avg_ans:,.0f}   (target: ~50-100)
+  Answer patterns:
+    'CORRECT'       : {correct_answers}/{n}
+    Sentence nums   : {numeric_answers}/{n}
+    Empty           : {empty_answers}/{n}""")
+else:
+    print("""
+  ── Assessor: NO DATA FOUND ────────────────────────────
+  This indicates multi-turn interaction FAILED!
+  
+  Possible causes:
+  1. Injector output format invalid → interaction stops
+  2. medical_game_interaction.py has a bug
+  3. Multi-turn config issue in interaction_config.yaml
+  4. Parsing error between turns
+  
+  DEBUG STEPS:
+  1. Check injector outputs for proper 'N. sentence' format
+  2. Verify interaction_config.yaml exists and is correct
+  3. Test medical_game_interaction.py in isolation""")
     print(f"\n  ── Outcomes ───────────────────────────────────────────")
     for oc, cnt in sorted(outcomes.items(), key=lambda x: -x[1]):
         print(f"  {oc:20s}: {cnt}")
