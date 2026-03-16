@@ -272,6 +272,8 @@ python3 -m verl.trainer.main_ppo \
     ++ray_kwargs.ray_init.num_cpus=8 \
     "++ray_kwargs.ray_init._temp_dir=$RAY_TMPDIR_PATH" \
     ++ray_kwargs.ray_init.object_store_memory=1000000000 \
+    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
+    custom_reward_function.name="interaction_reward_passthrough" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}

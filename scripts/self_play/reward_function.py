@@ -596,6 +596,49 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     return reward
 
 
+def interaction_reward_passthrough(data_source, solution_str, ground_truth, extra_info=None, **kwargs):
+    """Reward function for veRL's RewardLoopWorker in multi-turn interaction mode.
+
+    veRL's naive reward manager populates extra_info with tool_extra_fields,
+    which contains the info dict returned by MedicalGameInteraction._process_assessor_turn:
+        {"phase": "game_complete", "assessor_label": ..., "assessor_pred_sid": ..., "has_valid_format": ...}
+
+    We read the assessor's parsed output directly — no solution_str parsing needed.
+    Falls back to REWARD_MISS if the interaction did not complete both turns.
+    """
+    extra_info = extra_info or {}
+    ground_truth = str(ground_truth) if ground_truth else ""
+
+    phase = extra_info.get("phase")
+    assessor_label = extra_info.get("assessor_label")
+    assessor_pred_sid = extra_info.get("assessor_pred_sid")
+    has_valid_format = extra_info.get("has_valid_format", False)
+    format_bonus = FORMAT_BONUS if has_valid_format else 0.0
+
+    if phase == "game_complete" and assessor_label is not None:
+        gt_is_correct = (ground_truth == "CORRECT")
+
+        if assessor_label == "UNKNOWN":
+            return REWARD_MISS
+
+        if gt_is_correct and assessor_label == "CORRECT":
+            return REWARD_EXACT + format_bonus
+        if gt_is_correct:
+            return REWARD_MISS + format_bonus
+        if not gt_is_correct and assessor_label == "CORRECT":
+            return REWARD_MISS + format_bonus
+        # Not gt_is_correct and assessor says ERROR
+        pred_str = str(assessor_pred_sid) if assessor_pred_sid is not None else ""
+        if pred_str == ground_truth:
+            return REWARD_EXACT + format_bonus
+        if assessor_pred_sid is not None:
+            return REWARD_PARTIAL + format_bonus
+        return REWARD_PARTIAL
+
+    # Interaction did not complete (injector format failure or unexpected state)
+    return REWARD_MISS
+
+
 def print_summary():
     """Print summary statistics to stdout."""
     summary = get_summary_stats()
