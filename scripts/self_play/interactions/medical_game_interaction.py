@@ -112,6 +112,7 @@ class MedicalGameInteraction(BaseInteraction):
         self.injector_top_p = config.get("injector_top_p", INJECTOR_TOP_P)
         self.assessor_temperature = config.get("assessor_temperature", ASSESSOR_TEMPERATURE)
         self.assessor_top_p = config.get("assessor_top_p", ASSESSOR_TOP_P)
+        self.assessor_repetition_penalty = config.get("assessor_repetition_penalty", 1.1)
         
         # Load detection+localization prompts
         self.detection_prompts = self._load_prompts(
@@ -253,6 +254,7 @@ class MedicalGameInteraction(BaseInteraction):
             "sampling_params": {
                 "temperature": self.assessor_temperature,
                 "top_p": self.assessor_top_p,
+                "repetition_penalty": self.assessor_repetition_penalty,
                 "max_new_tokens": self.config.get("assessor_max_new_tokens", 3072),
             },
         }

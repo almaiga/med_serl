@@ -229,10 +229,12 @@ python3 -m verl.trainer.main_ppo \
     \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.rollout.temperature=1.0 \
-    actor_rollout_ref.rollout.top_p=0.85 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
-    actor_rollout_ref.rollout.max_model_len=8192 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=10240 \
+    actor_rollout_ref.rollout.top_p=1.0 \
+    actor_rollout_ref.rollout.top_k=-1 \
+    "+actor_rollout_ref.rollout.repetition_penalty=1.1" \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
+    actor_rollout_ref.rollout.max_model_len=16384 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=20480 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
@@ -270,8 +272,6 @@ python3 -m verl.trainer.main_ppo \
     ++ray_kwargs.ray_init.num_cpus=8 \
     "++ray_kwargs.ray_init._temp_dir=$RAY_TMPDIR_PATH" \
     ++ray_kwargs.ray_init.object_store_memory=1000000000 \
-    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
-    custom_reward_function.name="compute_score" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}

@@ -37,12 +37,13 @@ def tokens(text):
     return int(len(text) / 1.4)  # ~1.4 chars/token for medical text
 
 
-def find_source(project_root: Path, output_dir: Path, smoke_log: Path):
+def find_sources(project_root: Path, output_dir: Path, smoke_log: Path):
+    """Return (list_of_paths, label). Always returns all files from the run window."""
     trace_dir = project_root / "results/self_play/interactions"
     game_log  = project_root / output_dir / "game_interactions.jsonl"
 
     if game_log.exists() and game_log.stat().st_size > 0:
-        return game_log, "game (interaction, run-specific)"
+        return [game_log], "game (interaction, run-specific)"
 
     if trace_dir.exists():
         game_files = sorted(trace_dir.glob("game_*.jsonl"),
@@ -53,23 +54,27 @@ def find_source(project_root: Path, output_dir: Path, smoke_log: Path):
         game_files, all_files = [], []
 
     if game_files:
-        return game_files[0], "game (interaction)"
+        return [game_files[0]], "game (interaction)"
     if all_files:
         latest    = all_files[0].stat().st_mtime
         run_files = [f for f in all_files if latest - f.stat().st_mtime < 300]
-        return run_files[-1], "interactions (oldest-in-run fallback)"
+        return run_files, f"interactions (all {len(run_files)} worker files in run window)"
 
-    return None, None
+    return [], None
 
 
-def load_records(src: Path):
+def load_records(sources):
+    """Load JSONL records from a single path or list of paths."""
+    if isinstance(sources, Path):
+        sources = [sources]
     records = []
-    for line in src.read_text().splitlines():
-        if line.startswith("{") and '"timestamp"' in line:
-            try:
-                records.append(json.loads(line))
-            except Exception:
-                pass
+    for src in sources:
+        for line in src.read_text().splitlines():
+            if line.startswith("{") and '"timestamp"' in line:
+                try:
+                    records.append(json.loads(line))
+                except Exception:
+                    pass
     return records
 
 
@@ -80,19 +85,20 @@ def main():
     slog = Path(args.smoke_log)
     budget = args.max_response_length
 
-    src, label = find_source(root, outdir, slog)
+    sources, label = find_sources(root, outdir, slog)
 
-    if src is None:
+    if not sources:
         print("  No JSONL found — checking smoke log for inline records ...")
-        src = slog
+        sources = [slog]
     else:
-        try:
-            rel = src.relative_to(root)
-        except ValueError:
-            rel = src.name
-        print(f"  Reading ({label}): {rel}")
+        for src in sources:
+            try:
+                rel = src.relative_to(root)
+            except ValueError:
+                rel = src.name
+            print(f"  Reading ({label}): {rel}")
 
-    records = load_records(src)
+    records = load_records(sources)
 
     if not records:
         print("  No JSONL records found — model may not have produced any rewards yet")
