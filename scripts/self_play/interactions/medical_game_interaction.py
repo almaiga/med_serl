@@ -253,6 +253,7 @@ class MedicalGameInteraction(BaseInteraction):
             "sampling_params": {
                 "temperature": self.assessor_temperature,
                 "top_p": self.assessor_top_p,
+                "max_new_tokens": self.config.get("assessor_max_new_tokens", 1024),
             },
         }
         

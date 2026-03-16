@@ -21,6 +21,8 @@
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
+TRAIN_BATCH_SIZE=8
+TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="smoke_trainonly_${TIMESTAMP}"
@@ -189,53 +191,8 @@ rm -rf "$RAY_TMPDIR_PATH"/* 2>/dev/null || true
 sleep 2
 
 # ── Patch veRL Ray init for Docker ──
-# This must handle THREE cases:
-#   a) Fresh main_ppo.py (never patched) — apply full patch
-#   b) Already patched but missing object_store_memory — add it
-#   c) Fully patched — no-op
-python3 << 'PATCH_RAY'
-import pathlib, re
-fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
-if not fpath.exists():
-    print("SKIP: main_ppo.py not found")
-else:
-    code = fpath.read_text()
-    fresh_target = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
-    full_replacement = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
-    # ── MedSeRL Docker fix ──
-    import os as _os
-    if _ray_kw.get('num_cpus') is None:
-        _ray_kw['num_cpus'] = min(_os.cpu_count() or 4, 8)
-    _ray_kw.setdefault('include_dashboard', False)
-    _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
-    _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
-    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB — safe for small /dev/shm
-    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass /dev/shm entirely
-    print(f"ray init kwargs (patched): {_ray_kw}")
-    ray.init(**_ray_kw)"""
-
-    if "_ray_kw" not in code and fresh_target in code:
-        # Case (a): never patched
-        code = code.replace(fresh_target, full_replacement)
-        fpath.write_text(code)
-        print("PATCHED: main_ppo.py — full Docker-safe Ray defaults")
-    elif "_ray_kw" in code and "object_store_memory" not in code:
-        # Case (b): patched before but missing object_store_memory
-        # Insert the two new lines right before the print(f"ray init kwargs
-        insert_before = '    print(f"ray init kwargs (patched):'
-        new_lines = (
-            "    _ray_kw.setdefault('object_store_memory', 1_000_000_000)  # 1 GB — safe for small /dev/shm\n"
-            "    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')  # bypass /dev/shm entirely\n"
-        )
-        if insert_before in code:
-            code = code.replace(insert_before, new_lines + insert_before)
-            fpath.write_text(code)
-            print("PATCHED: added object_store_memory + _plasma_directory to existing patch")
-        else:
-            print("WARNING: could not find insertion point — manual check needed")
-    else:
-        print("main_ppo.py already fully patched")
-PATCH_RAY
+# Handles: fresh / partially-patched / fully-patched main_ppo.py
+python3 "$PROJECT_ROOT/scripts/self_play/patch_verl_ray.py"
 
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
@@ -245,12 +202,12 @@ python3 -m verl.trainer.main_ppo \
     \
     data.train_files="$TRAIN_PARQUET" \
     data.val_files="$VAL_PARQUET" \
-    data.train_batch_size=8 \
+    data.train_batch_size=$TRAIN_BATCH_SIZE \
     data.val_batch_size=8 \
-    data.train_max_samples=20 \
+    data.train_max_samples=$TRAIN_SAMPLES \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
-    data.max_response_length=3072 \
+    data.max_response_length=6144 \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     data.return_raw_chat=True \
@@ -274,12 +231,12 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.top_p=0.85 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.40 \
-    actor_rollout_ref.rollout.max_model_len=4096 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=5120 \
+    actor_rollout_ref.rollout.max_model_len=8192 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=10240 \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
-    actor_rollout_ref.rollout.response_length=3072 \
+    actor_rollout_ref.rollout.response_length=6144 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.multi_turn.enable=True \
@@ -307,7 +264,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
-    trainer.test_freq=99999 \
+    trainer.test_freq=1 \
     trainer.val_before_train=False \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=8 \
@@ -352,214 +309,9 @@ echo "=================================================="
 echo "=== Step 3: Response Quality Analysis ==="
 echo "=================================================="
 
-python3 << PYEOF
-import json, re, sys, os
-from collections import defaultdict
-from pathlib import Path
-
-# Records are written by agentic_reward.py to results/self_play/interactions/
-TRACE_DIR = Path("$PROJECT_ROOT/results/self_play/interactions")
-SMOKE_LOG  = Path("$SMOKE_LOG")
-
-# Find the interaction's JSONL for this run.
-# Primary: run-specific path set via MEDSERL_GAME_LOG env var → game_interactions.jsonl in OUTPUT_DIR
-# Fallback: game_*.jsonl in TRACE_DIR, then oldest interactions_*.jsonl in 5-min window
-GAME_LOG = Path("$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl")
-
-if GAME_LOG.exists() and GAME_LOG.stat().st_size > 0:
-    src = GAME_LOG
-    label = "game (interaction, run-specific)"
-else:
-    if TRACE_DIR.exists():
-        game_files = sorted(TRACE_DIR.glob("game_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-        all_files  = sorted(TRACE_DIR.glob("*.jsonl"),      key=lambda p: p.stat().st_mtime, reverse=True)
-    else:
-        game_files, all_files = [], []
-    if game_files:
-        src = game_files[0]; label = "game (interaction)"
-    elif all_files:
-        latest = all_files[0].stat().st_mtime
-        run_files = [f for f in all_files if latest - f.stat().st_mtime < 300]
-        src = run_files[-1]; label = "interactions (oldest-in-run fallback)"
-    else:
-        src = None; label = None
-
-if src is None:
-    print("  No JSONL found — checking smoke log for inline records ...")
-    src = SMOKE_LOG
-else:
-    try:
-        rel = src.relative_to(Path("$PROJECT_ROOT"))
-    except ValueError:
-        rel = src.name
-    print(f"  Reading ({label}): {rel}")
-
-records = []
-for line in src.read_text().splitlines():
-    if line.startswith("{") and '"timestamp"' in line:
-        try:
-            records.append(json.loads(line))
-        except Exception:
-            pass
-
-if not records:
-    print("  No JSONL records found — model may not have produced any rewards yet")
-    sys.exit(0)
-
-print(f"  Total records : {len(records)}")
-
-def strip_thinking(text):
-    m = re.search(r"<think>(.*?)</think>\s*", text, re.DOTALL)
-    if m:
-        return m.group(1).strip(), text[m.end():].strip()
-    return "", text
-
-def tokens(text):
-    return int(len(text) / 1.4)  # ~1.4 chars/token for medical text
-
-# Per-mode breakdown
-by_mode = defaultdict(list)
-for r in records:
-    by_mode[r.get("mode", "?")].append(r)
-for mode, recs in sorted(by_mode.items()):
-    print(f"  Mode '{mode}': {len(recs)} records")
-
-# Multi-turn health check
-# assessor_actually_ran is set by reward_function.py after content-based turn split
-assessor_ran = sum(1 for r in records if r.get("assessor_actually_ran", False))
-phases_sep   = sum(1 for r in records if r.get("phases_separated", False))
-# Fallback: if split was not possible, infer from outcome being non-trivial
-# (the reward computation itself works even without the split)
-outcomes_found = sum(1 for r in records if r.get("outcome") not in (None, "invalid_format"))
-print(f"  Assessor ran (split)  : {assessor_ran}/{len(records)}")
-print(f"  Phases separated      : {phases_sep}/{len(records)}")
-print(f"  Valid reward outcomes : {outcomes_found}/{len(records)}")
-if assessor_ran == 0 and outcomes_found == 0:
-    print("  WARNING: No assessor responses AND no valid outcomes — multi-turn may be broken")
-elif assessor_ran == 0:
-    print("  NOTE: Turn split not found in solution_str (verl strips chat tokens).")
-    print("        Rewards computed correctly from full response. Use model_response_full for debug.")
-
-# Analyze full response (injector_response contains full solution_str when split fails)
-inj_stats = []
-for r in records:
-    resp = r.get("injector_response", "") or r.get("model_response_full", "")
-    if not resp:
-        continue
-    has_open  = "<think>" in resp
-    has_close = "</think>" in resp
-    # Strict truncation: opened <think> but never closed it
-    truncated = has_open and not has_close
-    think_count = resp.count("</think>")
-    thinking_part, answer = strip_thinking(resp)
-    inj_stats.append({
-        "total_tok":    tokens(resp),
-        "think_tok":    tokens(thinking_part),
-        "answer_tok":   tokens(answer),
-        "truncated":    truncated,
-        "think_count":  think_count,
-        "answer_empty": len(answer.strip()) == 0,
-    })
-
-# Analyze assessor responses if the split worked
-assess_stats = []
-for r in records:
-    resp = r.get("assessor_response", "")
-    if not resp:
-        continue
-    thinking, answer = strip_thinking(resp)
-    assess_stats.append({
-        "total_tok":    tokens(resp),
-        "think_tok":    tokens(thinking),
-        "answer_tok":   tokens(answer),
-        "has_think":    "<think>" in resp,
-        "answer":       answer.strip(),
-    })
-
-if inj_stats:
-    n = len(inj_stats)
-    avg_tot   = sum(s["total_tok"]  for s in inj_stats) / n
-    avg_think = sum(s["think_tok"]  for s in inj_stats) / n
-    avg_ans   = sum(s["answer_tok"] for s in inj_stats) / n
-    max_tot   = max(s["total_tok"]  for s in inj_stats)
-    truncated = sum(1 for s in inj_stats if s["truncated"])
-    no_answer = sum(1 for s in inj_stats if s["answer_empty"])
-    over_bud  = sum(1 for s in inj_stats if s["total_tok"] > 3072)
-    two_turns = sum(1 for s in inj_stats if s["think_count"] >= 2)
-
-    print(f"""
-  ── Full response (injector + assessor, or assessor-only) ──
-  Samples           : {n}
-  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}  (budget: 3072)
-    Thinking avg    : {avg_think:,.0f}
-    Answer   avg    : {avg_ans:,.0f}
-  Over budget       : {over_bud}/{n}
-  Inj truncated (no </think>) : {truncated}/{n}  {'WARNING ' if truncated > n//4 else 'OK'}
-  Two </think> blocks (2 turns visible) : {two_turns}/{n}""")
-
-if assess_stats:
-    n = len(assess_stats)
-    avg_tot   = sum(s["total_tok"]  for s in assess_stats) / n
-    avg_think = sum(s["think_tok"]  for s in assess_stats) / n
-    avg_ans   = sum(s["answer_tok"] for s in assess_stats) / n
-    max_tot   = max(s["total_tok"]  for s in assess_stats)
-
-    # assessor may use /no_think so "answer" = the full stripped response
-    correct_answers = sum(1 for s in assess_stats if re.search(r'\bCORRECT\b', s["answer"], re.IGNORECASE))
-    numeric_answers = sum(1 for s in assess_stats if re.search(r'^\s*\d+\s*$', s["answer"]))
-    empty_answers   = sum(1 for s in assess_stats if not s["answer"].strip())
-
-    print(f"""
-  ── Assessor (Phase 2 split succeeded) ────────────────
-  Samples           : {n}
-  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}
-    Thinking avg    : {avg_think:,.0f}
-    Answer   avg    : {avg_ans:,.0f}
-  Answer patterns:
-    'CORRECT'       : {correct_answers}/{n}
-    Sentence nums   : {numeric_answers}/{n}
-    Empty           : {empty_answers}/{n}""")
-
-# Outcome breakdown (always available — computed from full solution_str)
-from collections import Counter
-outcome_counts = Counter(r.get("outcome", "unknown") for r in records)
-rewards = [r.get("reward", 0.0) for r in records]
-avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
-invalid = sum(1 for r in records if not r.get("has_valid_format", True))
-
-print(f"\n  ── Reward outcomes ──────────────────────────────────")
-for oc, cnt in sorted(outcome_counts.items(), key=lambda x: -x[1]):
-    print(f"  {oc:20s}: {cnt}")
-print(f"  Avg reward        : {avg_reward:.3f}")
-print(f"  Invalid format    : {invalid}/{len(records)}")
-
-# Training metrics from smoke log
-import subprocess
-try:
-    grep_out = subprocess.run(
-        ["grep", "-oP", r"critic/score/mean:[0-9e.+\-]+", str(SMOKE_LOG)],
-        capture_output=True, text=True
-    )
-    scores = [float(x.split(":")[1]) for x in grep_out.stdout.strip().split("\n") if x]
-    if scores:
-        print(f"\n  Training critic/score/mean : {scores[0]:.4f} (step 1) → {scores[-1]:.4f} (last step)")
-except Exception:
-    pass
-
-# Sample responses (first 3 records with injector_response or assessor_response)
-sample_recs = [r for r in records if r.get("injector_response") or r.get("assessor_response")][:3]
-if sample_recs:
-    print(f"\n  ── Sample game records ──────────────────────────────")
-    for i, r in enumerate(sample_recs):
-        gt  = r.get("ground_truth", "?")
-        oc  = r.get("outcome", "?")
-        rwd = r.get("reward", 0.0)
-        inj = (r.get("injector_response") or "")[:150].replace("\n", " ↵ ")
-        asm = (r.get("assessor_response") or "")[:80].replace("\n", " ↵ ")
-        print(f"  [{i+1}] gt={gt!r:8} outcome={oc:15} reward={rwd:+.2f}")
-        if inj: print(f"       INJ: {inj!r}")
-        if asm: print(f"       ASM: {asm!r}")
-print()
-PYEOF
+python3 "$PROJECT_ROOT/scripts/self_play/analyze_smoke_quality.py" \
+    --project-root "$PROJECT_ROOT" \
+    --output-dir   "$OUTPUT_DIR" \
+    --smoke-log    "$SMOKE_LOG"
 
 exit $TRAIN_EXIT
