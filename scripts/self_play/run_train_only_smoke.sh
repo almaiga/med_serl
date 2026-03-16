@@ -310,8 +310,9 @@ echo "=== Step 3: Response Quality Analysis ==="
 echo "=================================================="
 
 python3 "$PROJECT_ROOT/scripts/self_play/analyze_smoke_quality.py" \
-    --project-root "$PROJECT_ROOT" \
-    --output-dir   "$OUTPUT_DIR" \
-    --smoke-log    "$SMOKE_LOG"
+    --project-root         "$PROJECT_ROOT" \
+    --output-dir           "$OUTPUT_DIR" \
+    --smoke-log            "$SMOKE_LOG" \
+    --max-response-length  6144
 
 exit $TRAIN_EXIT

@@ -18,9 +18,11 @@ from pathlib import Path
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--project-root", required=True)
-    p.add_argument("--output-dir",   required=True)
-    p.add_argument("--smoke-log",    required=True)
+    p.add_argument("--project-root",        required=True)
+    p.add_argument("--output-dir",          required=True)
+    p.add_argument("--smoke-log",           required=True)
+    p.add_argument("--max-response-length", type=int, default=6144,
+                   help="Token budget for the full response (all turns combined)")
     return p.parse_args()
 
 
@@ -72,10 +74,11 @@ def load_records(src: Path):
 
 
 def main():
-    args   = parse_args()
-    root   = Path(args.project_root)
+    args = parse_args()
+    root = Path(args.project_root)
     outdir = Path(args.output_dir)
-    slog   = Path(args.smoke_log)
+    slog = Path(args.smoke_log)
+    budget = args.max_response_length
 
     src, label = find_source(root, outdir, slog)
 
@@ -159,13 +162,13 @@ def main():
         avg_ans   = sum(s["answer_tok"] for s in inj_stats) / n
         max_tot   = max(s["total_tok"]  for s in inj_stats)
         truncated = sum(1 for s in inj_stats if s["truncated"])
-        over_bud  = sum(1 for s in inj_stats if s["total_tok"] > 3072)
+        over_bud  = sum(1 for s in inj_stats if s["total_tok"] > budget)
         two_turns = sum(1 for s in inj_stats if s["think_count"] >= 2)
 
         print(f"""
   ── Full response (injector + assessor, or assessor-only) ──
   Samples           : {n}
-  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}  (budget: 3072)
+  Tokens  avg/max   : {avg_tot:,.0f} / {max_tot:,}  (budget: {budget})
     Thinking avg    : {avg_think:,.0f}
     Answer   avg    : {avg_ans:,.0f}
   Over budget       : {over_bud}/{n}
