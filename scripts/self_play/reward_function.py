@@ -635,6 +635,13 @@ def interaction_reward_passthrough(data_source, solution_str, ground_truth, extr
             return REWARD_PARTIAL + format_bonus
         return REWARD_PARTIAL
 
+    # Fallback: veRL's ToolAgentLoop stores per-turn rewards in turn_scores
+    # = [injector_reward (0.0), assessor_reward]
+    # The assessor reward is already correctly computed by _process_assessor_turn.
+    turn_scores = extra_info.get("turn_scores", [])
+    if turn_scores:
+        return float(turn_scores[-1])
+
     # Interaction did not complete (injector format failure or unexpected state)
     return REWARD_MISS
 

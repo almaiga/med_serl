@@ -385,7 +385,7 @@ class MedicalGameInteraction(BaseInteraction):
         user_content = user_template.format(sentences=modified_sentences)
         
         # Combine system instructions with the note in a single user message.
-        # The system_prompt already ends with /no_think for Qwen3.
+        # Thinking is intentionally kept enabled (assessor performs medical reasoning).
         if system_prompt:
             return f"{system_prompt}\n\n{user_content}"
         return user_content
