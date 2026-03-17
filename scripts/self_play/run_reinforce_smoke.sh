@@ -1,32 +1,33 @@
 #!/bin/bash
-# MedSeRL GRPO Chained Smoke Test (MAGIC-style)
+# MedSeRL REINFORCE++ Smoke Test (MAGIC-inspired separated training)
 #
-# Sequential injection → assessment, assessor sees injector's ACTUAL model output.
+# Single-turn REINFORCE++, no sglang multi-turn.
+# Mixed batches: injector + assessor examples in the same training pass.
+# compute_score dispatches rewards by extra_info["role"].
 #
-# Phase A (offline, once): run the base model as injector → capture outputs →
-#   build assessor prompts from those real outputs → save combined parquet.
-# Phase B: standard single-turn vllm GRPO training on the combined parquet,
-#   exactly like run_grpo_smoke.sh — no sglang, no multi-turn complexity.
+# Why REINFORCE++ over GRPO for small experiments:
+#   - n=1 rollout per prompt (no group sampling needed) → simpler, cheaper
+#   - Stable advantage estimates via running baseline, not group comparison
+#   - Less sensitive to batch size (GRPO needs many groups; REINFORCE++ does not)
 #
 # Usage:
-#   bash scripts/self_play/run_train_only_smoke.sh
+#   bash scripts/self_play/run_reinforce_smoke.sh
 #
 # Env overrides:
 #   ACTOR_MODEL   — Model path (default: Qwen/Qwen3-4B)
 #   SMOKE_STEPS   — Max training steps (default: 5)
-#   MAX_PAIRS     — Pairs used for chained data generation (default: 20)
-#   SKIP_DATAGEN  — Set to 1 to reuse existing chained parquet
+#   ROLES         — Data roles: injector / assessor / mixed (default: mixed)
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
-MAX_PAIRS="${MAX_PAIRS:-20}"
-TRAIN_BATCH_SIZE=16
+ROLES="${ROLES:-mixed}"
+TRAIN_BATCH_SIZE=16   # n=1, so batch_size = unique prompts per step
 TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="grpo_chained_${TIMESTAMP}"
-OUTPUT_DIR="outputs/self_play/grpo_chained_${TIMESTAMP}"
+EXPERIMENT_NAME="reinforce_smoke_${TIMESTAMP}"
+OUTPUT_DIR="outputs/self_play/reinforce_smoke_${TIMESTAMP}"
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
@@ -49,8 +50,8 @@ export HYDRA_FULL_ERROR=1
 # Paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
-TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train_chained.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val_chained.parquet"
+TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train_grpo.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val_grpo.parquet"
 SMOKE_LOG="$OUTPUT_DIR/smoke_test.log"
 
 mkdir -p "$OUTPUT_DIR"
@@ -129,48 +130,41 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=================================================="
-echo "MedSeRL GRPO Chained Smoke Test (MAGIC-style)"
-echo "  Phase A: offline injector inference → chained parquet"
-echo "  Phase B: single-turn vllm GRPO training"
+echo "MedSeRL REINFORCE++ Smoke Test (separated, no multi-turn)"
 echo "=================================================="
 echo "Project root : $PROJECT_ROOT"
 echo "Actor model  : $ACTOR_MODEL"
-echo "Max pairs    : $MAX_PAIRS"
+echo "Roles        : $ROLES"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
-# ─── Phase A: Generate chained data ──────────────────────────────────────────
+# ─── Step 0: Ensure data exists ──────────────────────────────────────────────
 echo ""
-echo "=== Phase A: Chained Data Generation ==="
+echo "=== Step 0: Checking Data ==="
 
-if [ "${SKIP_DATAGEN:-0}" = "1" ] && [ -f "$TRAIN_PARQUET" ]; then
-    echo "SKIP_DATAGEN=1 — reusing existing $TRAIN_PARQUET"
+if [ ! -f "$TRAIN_PARQUET" ]; then
+    echo "train_grpo.parquet missing — generating with --roles=$ROLES, MAX_PAIRS=20 ..."
+    python3 "$PROJECT_ROOT/scripts/self_play/preprocess_medec.py" \
+        --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
+        --output "$TRAIN_PARQUET" \
+        --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
+        --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
+        --roles "$ROLES" \
+        --max-pairs 20
 else
-    echo "Running generate_chained_data.py (model=$ACTOR_MODEL, max_pairs=$MAX_PAIRS) ..."
-    python3 "$PROJECT_ROOT/scripts/self_play/generate_chained_data.py" \
-        --model              "$ACTOR_MODEL" \
-        --input              "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
-        --output             "$TRAIN_PARQUET" \
-        --injection-prompts  "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
-        --detection-prompts  "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
-        --max-pairs          "$MAX_PAIRS"
-
-    if [ $? -ne 0 ]; then
-        echo "ERROR: generate_chained_data.py failed. Aborting."
-        exit 1
-    fi
+    echo "train_grpo.parquet found: $TRAIN_PARQUET"
 fi
 
 if [ ! -f "$VAL_PARQUET" ]; then
-    echo "Copying train_chained.parquet → val_chained.parquet"
+    echo "val_grpo.parquet missing — copying train_grpo.parquet"
     cp "$TRAIN_PARQUET" "$VAL_PARQUET"
 else
-    echo "val_chained.parquet found: $VAL_PARQUET"
+    echo "val_grpo.parquet found: $VAL_PARQUET"
 fi
 
-# ─── Phase B: REINFORCE++ Training ───────────────────────────────────────────
+# ─── Step 1: Clean Ray state & launch training ───────────────────────────────
 echo ""
-echo "=== Phase B: veRL REINFORCE++ Training (~${SMOKE_STEPS} steps) ==="
+echo "=== Step 1: veRL REINFORCE++ Training (~${SMOKE_STEPS} steps) ==="
 echo ""
 
 GAME_LOG="$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl"
@@ -204,7 +198,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -235,7 +229,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=1 \
     trainer.critic_warmup=0 \
     trainer.logger=console \
-    trainer.project_name=medserl-grpo-chained \
+    trainer.project_name=medserl-reinforce \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
     trainer.n_gpus_per_node=1 \
@@ -254,24 +248,23 @@ python3 -m verl.trainer.main_ppo \
 
 TRAIN_EXIT=${PIPESTATUS[0]}
 
-# ─── Verification ─────────────────────────────────────────────────────────────
+# ─── Step 2: Verification ────────────────────────────────────────────────────
 echo ""
 echo "=================================================="
-echo "=== Verification ==="
+echo "=== Step 2: Verification ==="
 echo "=================================================="
 
-# critic/score/mean > 0 confirms rewards were computed and advantages are non-trivial
 SCORE_LINE=$(grep "critic/score/mean:" "$SMOKE_LOG" 2>/dev/null | tail -1 || true)
 SCORE_NONZERO=$(echo "$SCORE_LINE" | grep -c "critic/score/mean:[^0]" || true)
 SCORE_NONZERO=${SCORE_NONZERO:-0}
 
 echo ""
-echo "Last critic/score line     : ${SCORE_LINE:-(not found)}"
-echo "Training exit code         : $TRAIN_EXIT"
+echo "Last critic/score line : ${SCORE_LINE:-(not found)}"
+echo "Training exit code     : $TRAIN_EXIT"
 echo ""
 
 if [ "$TRAIN_EXIT" -eq 0 ] && [ "$SCORE_NONZERO" -gt 0 ]; then
-    echo "SMOKE TEST PASSED: Chained GRPO training completed with non-zero rewards."
+    echo "SMOKE TEST PASSED: REINFORCE++ training completed with non-zero rewards."
 elif [ "$TRAIN_EXIT" -eq 0 ]; then
     echo "SMOKE TEST PARTIAL: Training completed — check critic/score/mean in log."
 else
@@ -280,19 +273,20 @@ else
 fi
 
 echo ""
-echo "Full log : $SMOKE_LOG"
-echo "Outputs  : $OUTPUT_DIR"
+echo "Full log      : $SMOKE_LOG"
+echo "Interactions  : $GAME_LOG"
+echo "Outputs       : $OUTPUT_DIR"
 
-# ─── Response Quality Analysis ────────────────────────────────────────────────
+# ─── Step 3: Response Quality Analysis ───────────────────────────────────────
 echo ""
 echo "=================================================="
-echo "=== Response Quality Analysis ==="
+echo "=== Step 3: Response Quality Analysis ==="
 echo "=================================================="
 
 python3 "$PROJECT_ROOT/scripts/self_play/analyze_smoke_quality.py" \
     --project-root        "$PROJECT_ROOT" \
     --output-dir          "$OUTPUT_DIR" \
     --smoke-log           "$SMOKE_LOG" \
-    --max-response-length 3072
+    --max-response-length 6144
 
 exit $TRAIN_EXIT

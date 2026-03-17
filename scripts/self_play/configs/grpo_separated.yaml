@@ -1,7 +1,7 @@
-# MedSeRL Separated GRPO Configuration
+# MedSeRL Separated REINFORCE++ Configuration
 #
 # MAGIC-inspired approach: single model, mixed injector+assessor batches,
-# standard single-turn GRPO (no multi-turn sglang complexity).
+# standard single-turn REINFORCE++ (no multi-turn sglang complexity).
 #
 # Usage:
 #   python -m verl.trainer.main_ppo \
@@ -31,11 +31,11 @@ actor_rollout_ref:
     top_k: -1
     gpu_memory_utilization: 0.6
     tensor_model_parallel_size: 1
-    n: 4   # GRPO requires group size > 1 to compute group-relative advantages
+    n: 1   # REINFORCE++ works with n=1 (no group sampling needed)
     # multi_turn is disabled (default in ppo_trainer base config)
 
 algorithm:
-  adv_estimator: grpo        # Or reinforce_plus_plus if grpo unavailable
+  adv_estimator: reinforce_plus_plus
 
 critic:
   enable: false
