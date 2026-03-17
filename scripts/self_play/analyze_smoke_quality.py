@@ -164,6 +164,99 @@ def _print_assessor(asm_recs):
     print(f"  Pred labels  : {dict(pred_labels)}")
 
 
+def _print_multiturn_game(records):
+    """Per-mode analysis for multi-turn game log records."""
+    n = len(records)
+    rewards = [r.get("reward", 0.0) for r in records]
+    avg_rwd = sum(rewards) / len(rewards) if rewards else 0.0
+
+    by_mode = defaultdict(list)
+    for r in records:
+        by_mode[r.get("mode", "?")].append(r)
+
+    benign_recs = by_mode.get("benign", [])
+    error_recs = by_mode.get("error_injection", [])
+    nb = len(benign_recs)
+    ne = len(error_recs)
+
+    print(f"\n  ── Multi-turn game ({n} records) " + "─" * 26)
+    print(f"  Avg reward   : {avg_rwd:+.3f}")
+    print(f"  Benign games : {nb}   Error injection games : {ne}")
+
+    if nb:
+        bneg_tn = sum(
+            1 for r in benign_recs if r.get("outcome") == "exact_match"
+        )
+        bneg_fp = sum(
+            1 for r in benign_recs
+            if r.get("outcome") in ("miss", "partial_match")
+        )
+        bneg_inv = sum(
+            1 for r in benign_recs if r.get("outcome") == "invalid_format"
+        )
+        bneg_rwd = (
+            sum(r.get("reward", 0.0) for r in benign_recs) / nb
+        )
+        print(
+            f"\n  Benign games (injector benign edit;"
+            f" assessor should say CORRECT) — {nb} samples:"
+        )
+        print(f"    Avg reward                       : {bneg_rwd:+.3f}")
+        print(
+            f"    True negative  (said CORRECT)    :"
+            f" {bneg_tn:3d}/{nb}  {pct(bneg_tn, nb)}"
+        )
+        print(
+            f"    False positive (flagged error)    :"
+            f" {bneg_fp:3d}/{nb}  {pct(bneg_fp, nb)}"
+        )
+        print(
+            f"    Invalid format                    :"
+            f" {bneg_inv:3d}/{nb}  {pct(bneg_inv, nb)}"
+        )
+
+    if ne:
+        err_exact = sum(
+            1 for r in error_recs if r.get("outcome") == "exact_match"
+        )
+        err_partial = sum(
+            1 for r in error_recs if r.get("outcome") == "partial_match"
+        )
+        err_miss = sum(
+            1 for r in error_recs if r.get("outcome") == "miss"
+        )
+        err_inv = sum(
+            1 for r in error_recs if r.get("outcome") == "invalid_format"
+        )
+        err_rwd = (
+            sum(r.get("reward", 0.0) for r in error_recs) / ne
+        )
+        print(
+            f"\n  Error injection games"
+            f" (assessor sees injected note) — {ne} samples:"
+        )
+        print(f"    Avg reward                       : {err_rwd:+.3f}")
+        print(
+            f"    Exact  (correct sentence)        :"
+            f" {err_exact:3d}/{ne}  {pct(err_exact, ne)}"
+        )
+        print(
+            f"    Partial (detected, wrong sent)   :"
+            f" {err_partial:3d}/{ne}  {pct(err_partial, ne)}"
+        )
+        print(
+            f"    Miss   (said CORRECT on error)   :"
+            f" {err_miss:3d}/{ne}  {pct(err_miss, ne)}"
+        )
+        print(
+            f"    Invalid format                   :"
+            f" {err_inv:3d}/{ne}  {pct(err_inv, ne)}"
+        )
+
+    labels = Counter(r.get("assessor_label", "?") for r in records)
+    print(f"\n  Assessor labels: {dict(labels)}")
+
+
 def _print_injector(inj_recs):
     n = len(inj_recs)
     inj_benign = [r for r in inj_recs if r.get("mode") == "benign"]
@@ -301,24 +394,16 @@ def main():
         phases_sep = sum(
             1 for r in records if r.get("phases_separated", False)
         )
-        print("\n  ── Multi-turn game " + "─" * 40)
-        print(f"  Multi-turn phases split : {assessor_ran}/{len(records)}")
-        print(f"  Phases separated        : {phases_sep}/{len(records)}")
+        print(f"\n  Total records          : {len(records)}")
+        print(f"  Assessor ran (turn 2)  : {assessor_ran}/{len(records)}")
         print(f"  Valid reward outcomes   : {outcomes_found}/{len(records)}")
         if assessor_ran == 0 and outcomes_found == 0:
             print(
                 "  WARNING: No assessor responses AND no valid outcomes"
-                " — multi-turn may be broken"
+                " — check game_interactions.jsonl"
             )
-        elif assessor_ran == 0:
-            print(
-                "  NOTE: Turn split not found in solution_str"
-                " (verl strips chat tokens)."
-            )
-            print(
-                "        Rewards computed correctly from full response."
-                " Use model_response_full for debug."
-            )
+        else:
+            _print_multiturn_game(records)
 
     # Multi-turn response analysis (only meaningful for game log records)
     inj_stats = []
