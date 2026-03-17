@@ -1,42 +1,38 @@
 #!/bin/bash
-# MedSeRL GRPO Multi-Turn Smoke Test
+# MedSeRL GRPO Chained Smoke Test (MAGIC-style)
 #
-# Real two-turn self-play interaction with GRPO algorithm:
-#   Turn 1 (Injector): Model modifies a clinical note
-#   Turn 2 (Assessor): Model sees the injector's actual output and evaluates it
+# Sequential injection → assessment, assessor sees injector's ACTUAL model output.
 #
-# Key differences from grpo_smoke (grpo_separated):
-#   - Assessor sees injector's OUTPUT, not a ground-truth MEDEC note
-#   - Multi-turn via sglang + MedicalGameInteraction
-#   - GRPO group comparison: n=2 rollouts per prompt
-#
-# How it works:
-#   - Uses sglang multi-turn with MedicalGameInteraction
-#   - GRPO advantage estimator (n=2 rollouts/prompt for group comparison)
-#   - Rule-based reward from MedicalGameInteraction (no judge server needed)
+# Phase A (offline, once): run the base model as injector → capture outputs →
+#   build assessor prompts from those real outputs → save combined parquet.
+# Phase B: standard single-turn vllm GRPO training on the combined parquet,
+#   exactly like run_grpo_smoke.sh — no sglang, no multi-turn complexity.
 #
 # Usage:
 #   bash scripts/self_play/run_train_only_smoke.sh
 #
 # Env overrides:
-#   ACTOR_MODEL   — Actor model path (default: Qwen/Qwen3-4B)
+#   ACTOR_MODEL   — Model path (default: Qwen/Qwen3-4B)
 #   SMOKE_STEPS   — Max training steps (default: 5)
+#   MAX_PAIRS     — Pairs used for chained data generation (default: 20)
+#   SKIP_DATAGEN  — Set to 1 to reuse existing chained parquet
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
-TRAIN_BATCH_SIZE=4
+MAX_PAIRS="${MAX_PAIRS:-20}"
+TRAIN_BATCH_SIZE=8
 TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="grpo_multiturn_${TIMESTAMP}"
-OUTPUT_DIR="outputs/self_play/grpo_multiturn_${TIMESTAMP}"
+EXPERIMENT_NAME="grpo_chained_${TIMESTAMP}"
+OUTPUT_DIR="outputs/self_play/grpo_chained_${TIMESTAMP}"
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
 mkdir -p "$RAY_TMPDIR_PATH"
 
-# ── GPU visibility — pin GPU 0 and prevent Ray from clearing it in workers ──
+# ── GPU visibility ──
 export CUDA_VISIBLE_DEVICES=0
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 
@@ -53,8 +49,8 @@ export HYDRA_FULL_ERROR=1
 # Paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
-TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val.parquet"
+TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train_chained.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val_chained.parquet"
 SMOKE_LOG="$OUTPUT_DIR/smoke_test.log"
 
 mkdir -p "$OUTPUT_DIR"
@@ -65,13 +61,10 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 # ─── Cleanup: kill stale GPU / Ray processes ──────────────────────────────────
 echo "=== Cleanup ==="
 
-# Kill RunPod's built-in vLLM API server (auto-starts on boot, hogs ~90% GPU)
 pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
 pkill -9 -f "vllm.worker" 2>/dev/null || true
 sleep 2
 
-# Kill stale GPU processes — use SIGTERM first, then SIGKILL only if needed.
-# Immediate SIGKILL can corrupt the CUDA runtime context inside Docker.
 if command -v nvidia-smi &>/dev/null; then
     GPU_PIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
     if [ -n "$GPU_PIDS" ]; then
@@ -80,7 +73,6 @@ if command -v nvidia-smi &>/dev/null; then
             kill "$pid" 2>/dev/null || true
         done
         sleep 5
-        # Only SIGKILL stragglers
         REMAINING=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
         if [ -n "$REMAINING" ]; then
             echo "  SIGKILL remaining: $REMAINING"
@@ -113,90 +105,85 @@ except Exception as e:
 CUDA_RC=$?
 echo "  $CUDA_CHECK"
 if [ $CUDA_RC -ne 0 ]; then
-    echo ""
-    echo "  ERROR: CUDA runtime cannot initialise (driver is fine, runtime is not)."
-    echo "  This usually happens after kill -9 of GPU processes in Docker."
-    echo "  Fix: restart the RunPod pod, then re-run this script."
+    echo "  ERROR: CUDA runtime cannot initialise. Restart the pod and re-run."
     exit 1
 fi
 
-# ─── Expand /dev/shm if too small (Docker default is 64MB) ────────────────────
-# Ray's object store uses /dev/shm for shared-memory IPC.  If it's tiny the GCS
-# server deadlocks during startup → "Deadline Exceeded".
+# ─── Expand /dev/shm if too small ─────────────────────────────────────────────
 if [ -d /dev/shm ]; then
     SHM_SIZE_KB=$(df /dev/shm 2>/dev/null | awk 'NR==2{print $2}')
     if [ -n "$SHM_SIZE_KB" ] && [ "$SHM_SIZE_KB" -lt 1048576 ]; then
         echo "  /dev/shm is only $((SHM_SIZE_KB/1024)) MB — expanding to 16 GB ..."
         mount -o remount,size=16G /dev/shm 2>/dev/null && echo "  /dev/shm expanded." \
-            || echo "  WARNING: could not remount /dev/shm (not root?). Will cap object_store_memory instead."
+            || echo "  WARNING: could not remount /dev/shm (not root?)."
     else
         echo "  /dev/shm is $((SHM_SIZE_KB/1024)) MB — OK."
     fi
 fi
 
-# ─── Trap: cleanup on exit ───────────────────────────────────────────────────
-# NOTE: Aggressive cleanup (ray stop, GPU kill) is disabled — it kills RunPod SSH.
-# If you need to free GPU memory manually, run: nvidia-smi and kill specific PIDs.
+# ─── Trap ─────────────────────────────────────────────────────────────────────
 cleanup() {
     echo ""
-    echo "Script finished. To free GPU memory, run: nvidia-smi then kill <pid>"
+    echo "Script finished. To free GPU memory: nvidia-smi then kill <pid>"
 }
 trap cleanup EXIT
 
 echo "=================================================="
-echo "MedSeRL GRPO Multi-Turn Smoke Test (Injector → Assessor)"
+echo "MedSeRL GRPO Chained Smoke Test (MAGIC-style)"
+echo "  Phase A: offline injector inference → chained parquet"
+echo "  Phase B: single-turn vllm GRPO training"
 echo "=================================================="
 echo "Project root : $PROJECT_ROOT"
 echo "Actor model  : $ACTOR_MODEL"
-echo "Algorithm    : GRPO (n=2, sglang multi-turn)"
+echo "Max pairs    : $MAX_PAIRS"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
-# ─── Step 0: Ensure data exists ──────────────────────────────────────────────
+# ─── Phase A: Generate chained data ──────────────────────────────────────────
 echo ""
-echo "=== Step 0: Checking Data ==="
+echo "=== Phase A: Chained Data Generation ==="
 
-if [ ! -f "$TRAIN_PARQUET" ]; then
-    echo "train.parquet missing — running preprocess_medec.py with MAX_PAIRS=20 ..."
-    python3 "$PROJECT_ROOT/scripts/self_play/preprocess_medec.py" \
-        --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
-        --output "$TRAIN_PARQUET" \
-        --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
-        --max-pairs 20
+if [ "${SKIP_DATAGEN:-0}" = "1" ] && [ -f "$TRAIN_PARQUET" ]; then
+    echo "SKIP_DATAGEN=1 — reusing existing $TRAIN_PARQUET"
 else
-    echo "train.parquet found: $TRAIN_PARQUET"
+    echo "Running generate_chained_data.py (model=$ACTOR_MODEL, max_pairs=$MAX_PAIRS) ..."
+    python3 "$PROJECT_ROOT/scripts/self_play/generate_chained_data.py" \
+        --model              "$ACTOR_MODEL" \
+        --input              "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
+        --output             "$TRAIN_PARQUET" \
+        --injection-prompts  "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
+        --detection-prompts  "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
+        --max-pairs          "$MAX_PAIRS"
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: generate_chained_data.py failed. Aborting."
+        exit 1
+    fi
 fi
 
 if [ ! -f "$VAL_PARQUET" ]; then
-    echo "val.parquet missing — copying train.parquet"
+    echo "Copying train_chained.parquet → val_chained.parquet"
     cp "$TRAIN_PARQUET" "$VAL_PARQUET"
 else
-    echo "val.parquet found: $VAL_PARQUET"
+    echo "val_chained.parquet found: $VAL_PARQUET"
 fi
 
-# ─── Step 1: Clean Ray state & launch training ───────────────────────────────
+# ─── Phase B: GRPO Training ───────────────────────────────────────────────────
 echo ""
-echo "=== Step 1: veRL Training (rule-based reward, ~${SMOKE_STEPS} steps) ==="
+echo "=== Phase B: veRL GRPO Training (~${SMOKE_STEPS} steps) ==="
 echo ""
 
-# Export run-specific game log path so ALL Ray workers write to the same file.
-# Shell-level export covers the main process; the veRL runtime_env below propagates
-# it into Ray remote workers (which otherwise don't inherit parent env vars).
 GAME_LOG="$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl"
 export MEDSERL_GAME_LOG="$GAME_LOG"
 
-# Final Ray state cleanup right before launch
-# NOTE: Only clean workspace ray_tmp — do NOT touch /dev/shm or /tmp (kills RunPod SSH)
 rm -rf "$RAY_TMPDIR_PATH"/* 2>/dev/null || true
 sleep 2
 
-# ── Patch veRL Ray init for Docker ──
-# Handles: fresh / partially-patched / fully-patched main_ppo.py
 python3 "$PROJECT_ROOT/scripts/self_play/patch_verl_ray.py"
 
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
-    --config-name="ppo_multiturn" \
+    --config-name="grpo_separated" \
     \
     algorithm.adv_estimator=grpo \
     \
@@ -207,7 +194,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_max_samples=$TRAIN_SAMPLES \
     data.val_max_samples=8 \
     data.max_prompt_length=1024 \
-    data.max_response_length=6144 \
+    data.max_response_length=3072 \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     data.return_raw_chat=True \
@@ -217,7 +204,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=2 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=4 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -227,40 +214,28 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
-    actor_rollout_ref.rollout.name=sglang \
-    actor_rollout_ref.rollout.temperature=1.0 \
-    actor_rollout_ref.rollout.top_p=1.0 \
+    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.temperature=0.7 \
+    actor_rollout_ref.rollout.top_p=0.9 \
     actor_rollout_ref.rollout.top_k=-1 \
-    "+actor_rollout_ref.rollout.repetition_penalty=1.1" \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
-    actor_rollout_ref.rollout.max_model_len=16384 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=20480 \
-    actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.n=4 \
-    actor_rollout_ref.rollout.prompt_length=1024 \
-    actor_rollout_ref.rollout.response_length=6144 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.multi_turn.enable=True \
-    actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     \
     critic.enable=false \
-    \
     reward_model.enable=False \
-    \
     algorithm.use_kl_in_reward=False \
     algorithm.kl_ctrl.kl_coef=0.001 \
     \
     trainer.total_epochs=1 \
     trainer.critic_warmup=0 \
     trainer.logger=console \
-    trainer.project_name=medserl-grpo-multiturn \
+    trainer.project_name=medserl-grpo-chained \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
     trainer.n_gpus_per_node=1 \
@@ -274,48 +249,48 @@ python3 -m verl.trainer.main_ppo \
     ++ray_kwargs.ray_init.object_store_memory=1000000000 \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$GAME_LOG" \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
-    custom_reward_function.name="interaction_reward_passthrough" \
+    custom_reward_function.name="compute_score" \
     2>&1 | tee "$SMOKE_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
 
-# ─── Step 2: Verification ────────────────────────────────────────────────────
+# ─── Verification ─────────────────────────────────────────────────────────────
 echo ""
 echo "=================================================="
-echo "=== Step 2: Verification ==="
+echo "=== Verification ==="
 echo "=================================================="
 
-TURN2=$(grep -c "num_turns" "$SMOKE_LOG" 2>/dev/null || true); TURN2=${TURN2:-0}
+REWARD_HITS=$(grep -c "compute_score called" "$SMOKE_LOG" 2>/dev/null || true)
+REWARD_HITS=${REWARD_HITS:-0}
 
 echo ""
-echo "num_turns lines in log : $TURN2  (>0 confirms multi-turn ran)"
-echo "Training exit code     : $TRAIN_EXIT"
+echo "compute_score calls in log : $REWARD_HITS  (>0 confirms rewards reached)"
+echo "Training exit code         : $TRAIN_EXIT"
 echo ""
 
-if [ "$TRAIN_EXIT" -eq 0 ] && [ "$TURN2" -gt 0 ]; then
-    echo "SMOKE TEST PASSED: Multi-turn training completed. Reward from interaction."
+if [ "$TRAIN_EXIT" -eq 0 ] && [ "$REWARD_HITS" -gt 0 ]; then
+    echo "SMOKE TEST PASSED: Chained GRPO training completed with rewards."
 elif [ "$TRAIN_EXIT" -eq 0 ]; then
-    echo "SMOKE TEST PARTIAL: Training completed but num_turns not found in log."
-    echo "Check for 'num_turns/mean:2.0' in: $SMOKE_LOG"
+    echo "SMOKE TEST PARTIAL: Training completed but reward calls not found in log."
 else
     echo "SMOKE TEST FAILED: Training exited with code $TRAIN_EXIT."
-    echo "Check the log for errors: $SMOKE_LOG"
+    echo "Check: $SMOKE_LOG"
 fi
 
 echo ""
-echo "Full log: $SMOKE_LOG"
-echo "Outputs : $OUTPUT_DIR"
+echo "Full log : $SMOKE_LOG"
+echo "Outputs  : $OUTPUT_DIR"
 
-# ─── Step 3: Response Quality Analysis ───────────────────────────────────────
+# ─── Response Quality Analysis ────────────────────────────────────────────────
 echo ""
 echo "=================================================="
-echo "=== Step 3: Response Quality Analysis ==="
+echo "=== Response Quality Analysis ==="
 echo "=================================================="
 
 python3 "$PROJECT_ROOT/scripts/self_play/analyze_smoke_quality.py" \
-    --project-root         "$PROJECT_ROOT" \
-    --output-dir           "$OUTPUT_DIR" \
-    --smoke-log            "$SMOKE_LOG" \
-    --max-response-length  6144
+    --project-root        "$PROJECT_ROOT" \
+    --output-dir          "$OUTPUT_DIR" \
+    --smoke-log           "$SMOKE_LOG" \
+    --max-response-length 3072
 
 exit $TRAIN_EXIT

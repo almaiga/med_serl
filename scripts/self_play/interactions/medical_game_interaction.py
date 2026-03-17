@@ -63,27 +63,45 @@ ASSESSOR_TOP_P = 0.95
 
 
 # JSONL logging — written by the interaction (source of truth for rewards)
-# Use MEDSERL_GAME_LOG env var if set (smoke script exports it before Ray starts,
-# so all Ray workers inherit the same path → all append to the same known file).
+# Log path is resolved lazily at first write so that MEDSERL_GAME_LOG set via
+# Ray runtime_env.env_vars is always picked up (env vars from runtime_env arrive
+# before the worker executes tasks, but after the module may have been imported).
 import os as _os
-_env_log = _os.environ.get("MEDSERL_GAME_LOG")
-if _env_log:
-    _LOG_FILE = Path(_env_log)
-    _LOG_DIR  = _LOG_FILE.parent
-else:
-    _LOG_DIR  = Path(__file__).parent.parent.parent.parent / "results" / "self_play" / "interactions"
-    _LOG_FILE = _LOG_DIR / f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
-_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_FALLBACK_LOG_DIR = Path(__file__).parent.parent.parent.parent / "results" / "self_play" / "interactions"
 _log_lock = threading.Lock()
+_resolved_log_file: "Path | None" = None  # resolved on first write
+
+
+def _get_log_file() -> Path:
+    """Resolve the log file path once, lazily, so runtime_env env vars are seen."""
+    global _resolved_log_file
+    if _resolved_log_file is not None:
+        return _resolved_log_file
+    env_log = _os.environ.get("MEDSERL_GAME_LOG")
+    if env_log:
+        p = Path(env_log)
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _resolved_log_file = p
+            print(f"[MedicalGameInteraction] game log → {p} (from MEDSERL_GAME_LOG)", flush=True)
+            return _resolved_log_file
+        except Exception as e:
+            print(f"[MedicalGameInteraction] WARNING: cannot create {p.parent}: {e} — using fallback", flush=True)
+    _FALLBACK_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _resolved_log_file = _FALLBACK_LOG_DIR / f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    print(f"[MedicalGameInteraction] game log → {_resolved_log_file} (fallback)", flush=True)
+    return _resolved_log_file
 
 
 def _write_log(entry: dict) -> None:
     try:
+        log_file = _get_log_file()
         with _log_lock:
-            with open(_LOG_FILE, "a") as f:
+            with open(log_file, "a") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
-        logger.warning("_write_log failed (file=%s): %s", _LOG_FILE, e)
+        print(f"[MedicalGameInteraction] _write_log FAILED: {e}", flush=True)
+        logger.warning("_write_log failed: %s", e)
 
 
 class MedicalGameInteraction(BaseInteraction):
