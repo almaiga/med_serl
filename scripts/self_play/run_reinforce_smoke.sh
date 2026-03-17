@@ -204,6 +204,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
+    actor_rollout_ref.actor.clip_grad=1.0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
@@ -254,16 +255,16 @@ echo "=================================================="
 echo "=== Step 2: Verification ==="
 echo "=================================================="
 
-SCORE_LINE=$(grep "critic/score/mean:" "$SMOKE_LOG" 2>/dev/null | tail -1 || true)
-SCORE_NONZERO=$(echo "$SCORE_LINE" | grep -c "critic/score/mean:[^0]" || true)
-SCORE_NONZERO=${SCORE_NONZERO:-0}
+SCORE_VALS=$(grep -o "critic/score/mean:[0-9.-]*" "$SMOKE_LOG" 2>/dev/null | cut -d: -f2 | grep -v '^0\.0*$' | wc -l || true)
+SCORE_VALS=${SCORE_VALS:-0}
+LAST_SCORE=$(grep -o "critic/score/mean:[0-9.-]*" "$SMOKE_LOG" 2>/dev/null | tail -1 | cut -d: -f2 || true)
 
 echo ""
-echo "Last critic/score line : ${SCORE_LINE:-(not found)}"
+echo "Last critic/score/mean : ${LAST_SCORE:-(not found)}"
 echo "Training exit code     : $TRAIN_EXIT"
 echo ""
 
-if [ "$TRAIN_EXIT" -eq 0 ] && [ "$SCORE_NONZERO" -gt 0 ]; then
+if [ "$TRAIN_EXIT" -eq 0 ] && [ "$SCORE_VALS" -gt 0 ]; then
     echo "SMOKE TEST PASSED: REINFORCE++ training completed with non-zero rewards."
 elif [ "$TRAIN_EXIT" -eq 0 ]; then
     echo "SMOKE TEST PARTIAL: Training completed — check critic/score/mean in log."

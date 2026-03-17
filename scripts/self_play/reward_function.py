@@ -40,11 +40,40 @@ from scripts.self_play.utils import parse_assessor_answer, strip_thinking, parse
 logger = logging.getLogger(__name__)
 
 
-# Global log file path - creates new file per training run
-LOG_DIR = Path(__file__).parent.parent.parent / "results" / "self_play" / "interactions"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOG_DIR / f"interactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
-SUMMARY_FILE = LOG_DIR / f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+# Log file resolved lazily on first write so MEDSERL_GAME_LOG (set via Ray
+# runtime_env.env_vars) is always visible — same pattern as medical_game_interaction.py.
+_DEFAULT_LOG_DIR = Path(__file__).parent.parent.parent / "results" / "self_play" / "interactions"
+_DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_resolved_log_file: "Path | None" = None
+_resolved_summary_file: "Path | None" = None
+
+
+def _get_log_files():
+    global _resolved_log_file, _resolved_summary_file
+    if _resolved_log_file is not None:
+        return _resolved_log_file, _resolved_summary_file
+    env_log = os.environ.get("MEDSERL_GAME_LOG")
+    if env_log:
+        base = Path(env_log).parent
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            _resolved_log_file = base / f"interactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            _resolved_summary_file = base / f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            return _resolved_log_file, _resolved_summary_file
+        except Exception:
+            pass
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    _resolved_log_file = _DEFAULT_LOG_DIR / f"interactions_{ts}.jsonl"
+    _resolved_summary_file = _DEFAULT_LOG_DIR / f"summary_{ts}.json"
+    return _resolved_log_file, _resolved_summary_file
+
+
+# Keep module-level aliases for backward compat with any code that reads LOG_FILE directly
+def _log_file() -> Path:
+    return _get_log_files()[0]
+
+
+LOG_DIR = _DEFAULT_LOG_DIR  # kept for any external imports
 
 # Reward values (3-tier)
 REWARD_EXACT = 1.0     # Exact match (correct label + sentence)
@@ -176,7 +205,7 @@ def save_summary():
     summary = get_summary_stats()
     summary["timestamp"] = datetime.now().isoformat()
     try:
-        with open(SUMMARY_FILE, 'w') as f:
+        with open(_get_log_files()[1], 'w') as f:
             json.dump(summary, f, indent=2)
     except Exception:
         pass
@@ -471,7 +500,7 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     }
 
     try:
-        with open(LOG_FILE, 'a') as f:
+        with open(_get_log_files()[0], 'a') as f:
             f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
     except Exception as e:
         try:
