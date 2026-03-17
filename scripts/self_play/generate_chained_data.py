@@ -149,14 +149,24 @@ def run_vllm_inference(model_path: str, chat_inputs: list[list[dict]]) -> list[s
     sampling = SamplingParams(
         temperature=0.7,
         top_p=0.9,
-        max_tokens=256,  # injector output is short: "N. sentence"
+        max_tokens=256,  # short: "N. sentence" only (thinking disabled)
     )
 
-    # apply chat template
-    prompts = [
-        tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-        for msgs in chat_inputs
-    ]
+    # Disable thinking for Qwen3 — Phase A only needs "N. sentence", not CoT.
+    # enable_thinking=False adds /no_think token so the model skips <think> blocks.
+    def _apply(msgs):
+        try:
+            return tokenizer.apply_chat_template(
+                msgs, tokenize=False, add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            # Older tokenizer that doesn't support enable_thinking
+            return tokenizer.apply_chat_template(
+                msgs, tokenize=False, add_generation_prompt=True,
+            )
+
+    prompts = [_apply(msgs) for msgs in chat_inputs]
     outputs = llm.generate(prompts, sampling)
     return [o.outputs[0].text.strip() for o in outputs]
 
@@ -182,7 +192,6 @@ def make_injector_row(pair, idx, mode, messages, meta, ground_truth, data_source
             "corrected_sentence": pair.get("corrected_sentence", ""),
             "mode": mode,
         },
-        "interaction_kwargs": {},
     }
 
 
@@ -215,7 +224,6 @@ def make_assessor_row(pair, idx, mode, detection_prompts,
             "mode": mode,
             "chained": True,  # mark: assessor saw model-generated injector output
         },
-        "interaction_kwargs": {},
     }
 
 
