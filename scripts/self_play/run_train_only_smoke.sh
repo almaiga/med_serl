@@ -25,7 +25,7 @@
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
-TRAIN_BATCH_SIZE=8
+TRAIN_BATCH_SIZE=4
 TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -217,7 +217,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=2 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -236,7 +236,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.max_model_len=16384 \
     actor_rollout_ref.rollout.max_num_batched_tokens=20480 \
     actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.n=2 \
+    actor_rollout_ref.rollout.n=4 \
     actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=6144 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \

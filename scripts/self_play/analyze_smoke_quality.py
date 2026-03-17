@@ -42,34 +42,76 @@ def tokens(text):
 
 
 def find_sources(project_root: Path, output_dir: Path, smoke_log: Path):
-    """Return (list_of_paths, label)."""
-    trace_dir = project_root / "results/self_play/interactions"
-    game_log = project_root / output_dir / "game_interactions.jsonl"
+    """Return (list_of_paths, label).
 
+    Priority:
+      1. game_interactions.jsonl in the run output_dir (multi-turn)
+      2. Any *.jsonl in the run output_dir
+      3. game_*.jsonl in results/self_play/interactions/ after run start
+      4. interactions_*.jsonl after run start (GRPO-separated)
+    """
+    # Determine when this run started (smoke_log created ~ run start)
+    import time as _time
+    if smoke_log.exists():
+        run_start = smoke_log.stat().st_mtime
+    else:
+        run_start = _time.time() - 3600  # fall back to 1h ago
+
+    # 1. Run-specific game log (MEDSERL_GAME_LOG path)
+    game_log = output_dir / "game_interactions.jsonl"
+    if not game_log.is_absolute():
+        game_log = project_root / game_log
     if game_log.exists() and game_log.stat().st_size > 0:
         return [game_log], "game (interaction, run-specific)"
 
-    if trace_dir.exists():
-        game_files = sorted(
-            trace_dir.glob("game_*.jsonl"),
+    # 2. Any jsonl files written inside the output_dir itself
+    out_abs = (
+        output_dir if output_dir.is_absolute()
+        else project_root / output_dir
+    )
+    if out_abs.exists():
+        out_files = sorted(
+            out_abs.glob("*.jsonl"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-        all_files = sorted(
-            trace_dir.glob("*.jsonl"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-    else:
-        game_files, all_files = [], []
+        if out_files:
+            return out_files, f"output_dir jsonl ({len(out_files)} files)"
 
+    # Shared interaction log directory
+    trace_dir = project_root / "results/self_play/interactions"
+    if not trace_dir.exists():
+        return [], None
+
+    all_trace = sorted(
+        trace_dir.glob("*.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    # 3. game_*.jsonl files created after this run started
+    game_files = [
+        f for f in all_trace
+        if f.name.startswith("game_") and f.stat().st_mtime >= run_start
+    ]
     if game_files:
-        return [game_files[0]], "game (interaction)"
-    if all_files:
-        latest = all_files[0].stat().st_mtime
-        run_files = [f for f in all_files if latest - f.stat().st_mtime < 300]
-        return run_files, f"interactions (all {len(run_files)} worker files)"
+        return [game_files[0]], "game (interaction, this run)"
 
+    # 4. interactions_*.jsonl created after this run started (GRPO-separated)
+    run_files = [
+        f for f in all_trace
+        if f.stat().st_mtime >= run_start
+    ]
+    if run_files:
+        label = f"interactions ({len(run_files)} worker files, this run)"
+        return run_files, label
+
+    print(
+        "  WARNING: No interaction files found for this run."
+        " Showing most recent file (may be from a previous run):"
+    )
+    if all_trace:
+        return [all_trace[0]], f"STALE: {all_trace[0].name}"
     return [], None
 
 
