@@ -1,15 +1,19 @@
 #!/bin/bash
-# MedSeRL Training-Only Smoke Test (NO judge server)
+# MedSeRL GRPO Multi-Turn Smoke Test
 #
-# Purpose: Fast iteration on the veRL training loop without waiting 14+ min
-#          for the judge server to start. Uses pure rule-based reward only.
+# Real two-turn self-play interaction with GRPO algorithm:
+#   Turn 1 (Injector): Model modifies a clinical note
+#   Turn 2 (Assessor): Model sees the injector's actual output and evaluates it
+#
+# Key differences from grpo_smoke (grpo_separated):
+#   - Assessor sees injector's OUTPUT, not a ground-truth MEDEC note
+#   - Multi-turn via sglang + MedicalGameInteraction
+#   - GRPO group comparison: n=2 rollouts per prompt
 #
 # How it works:
-#   - Sets UMLS_WEIGHT=0 so agentic_reward.py short-circuits to rule-based scoring
-#   - Cleans stale Ray state to avoid GCS timeout
-#   - Runs veRL PPO/REINFORCE++ for ~5 training steps
-#   - NO judge server, NO UMLS lookups
-#   - Thinking budget: ~2048 tokens, Answer: ~1024 tokens (total: 3072)
+#   - Uses sglang multi-turn with MedicalGameInteraction
+#   - GRPO advantage estimator (n=2 rollouts/prompt for group comparison)
+#   - Rule-based reward from MedicalGameInteraction (no judge server needed)
 #
 # Usage:
 #   bash scripts/self_play/run_train_only_smoke.sh
@@ -25,14 +29,8 @@ TRAIN_BATCH_SIZE=8
 TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="smoke_trainonly_${TIMESTAMP}"
-OUTPUT_DIR="outputs/self_play/smoke_trainonly_${TIMESTAMP}"
-
-# NOTE: Do NOT set VLLM_USE_V1=0 here — veRL's internal vLLM rollout requires V1.
-# No judge server in this script, so no V0 override needed at all.
-
-# Skip judge entirely — pure rule-based reward
-export UMLS_WEIGHT=0
+EXPERIMENT_NAME="grpo_multiturn_${TIMESTAMP}"
+OUTPUT_DIR="outputs/self_play/grpo_multiturn_${TIMESTAMP}"
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
@@ -146,11 +144,11 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=================================================="
-echo "MedSeRL Training-Only Smoke Test (NO JUDGE)"
+echo "MedSeRL GRPO Multi-Turn Smoke Test (Injector → Assessor)"
 echo "=================================================="
 echo "Project root : $PROJECT_ROOT"
 echo "Actor model  : $ACTOR_MODEL"
-echo "UMLS_WEIGHT  : $UMLS_WEIGHT (rule-based only)"
+echo "Algorithm    : GRPO (n=2, sglang multi-turn)"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
@@ -200,7 +198,7 @@ python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_multiturn" \
     \
-    algorithm.adv_estimator=reinforce_plus_plus \
+    algorithm.adv_estimator=grpo \
     \
     data.train_files="$TRAIN_PARQUET" \
     data.val_files="$VAL_PARQUET" \
@@ -238,7 +236,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.max_model_len=16384 \
     actor_rollout_ref.rollout.max_num_batched_tokens=20480 \
     actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.n=1 \
+    actor_rollout_ref.rollout.n=2 \
     actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=6144 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
@@ -262,7 +260,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=1 \
     trainer.critic_warmup=0 \
     trainer.logger=console \
-    trainer.project_name=medserl-smoke \
+    trainer.project_name=medserl-grpo-multiturn \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
     trainer.n_gpus_per_node=1 \
