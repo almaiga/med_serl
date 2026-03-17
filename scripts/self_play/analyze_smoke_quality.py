@@ -113,18 +113,51 @@ def main():
     for mode, recs in sorted(by_mode.items()):
         print(f"  Mode '{mode}': {len(recs)} records")
 
-    # Multi-turn health check
-    assessor_ran   = sum(1 for r in records if r.get("assessor_actually_ran", False))
-    phases_sep     = sum(1 for r in records if r.get("phases_separated", False))
+    # ── Detect run type: GRPO-separated vs multi-turn ────────────────────────
+    # GRPO-separated: records come from reward_function.py::compute_score and
+    #   have a "role" field ("injector" or "assessor") for each example.
+    # Multi-turn: records come from MedicalGameInteraction and have
+    #   "assessor_actually_ran" / "phases_separated" fields.
+    roles_present  = {r.get("role") for r in records if r.get("role")}
+    is_grpo_sep    = bool(roles_present & {"injector", "assessor"})
     outcomes_found = sum(1 for r in records if r.get("outcome") not in (None, "invalid_format"))
-    print(f"  Assessor ran (split)  : {assessor_ran}/{len(records)}")
-    print(f"  Phases separated      : {phases_sep}/{len(records)}")
-    print(f"  Valid reward outcomes : {outcomes_found}/{len(records)}")
-    if assessor_ran == 0 and outcomes_found == 0:
-        print("  WARNING: No assessor responses AND no valid outcomes — multi-turn may be broken")
-    elif assessor_ran == 0:
-        print("  NOTE: Turn split not found in solution_str (verl strips chat tokens).")
-        print("        Rewards computed correctly from full response. Use model_response_full for debug.")
+
+    if is_grpo_sep:
+        # ── GRPO separated: role-based breakdown ─────────────────────────────
+        by_role = defaultdict(list)
+        for r in records:
+            by_role[r.get("role", "unknown")].append(r)
+
+        print(f"\n  ── GRPO Separated (single-turn, mixed roles) ────────────────")
+        print(f"  Valid reward outcomes : {outcomes_found}/{len(records)}")
+        for role in ("injector", "assessor", "unknown"):
+            recs = by_role.get(role, [])
+            if not recs:
+                continue
+            mode_counts = Counter(r.get("mode", "?") for r in recs)
+            mode_str = ", ".join(f"{m}={c}" for m, c in sorted(mode_counts.items()))
+            role_rewards = [r.get("reward", 0.0) for r in recs]
+            role_avg = sum(role_rewards) / len(role_rewards)
+            role_outcomes = Counter(r.get("outcome", "?") for r in recs)
+            exact = role_outcomes.get("exact_match", 0)
+            miss  = role_outcomes.get("miss", 0)
+            inv   = role_outcomes.get("invalid_format", 0)
+            print(f"  {role:8s}: {len(recs):3d} records  avg_reward={role_avg:+.3f}"
+                  f"  exact={exact}  miss={miss}  invalid={inv}")
+            print(f"            modes: {mode_str}")
+    else:
+        # ── Multi-turn: phase-split health check ──────────────────────────────
+        assessor_ran = sum(1 for r in records if r.get("assessor_actually_ran", False))
+        phases_sep   = sum(1 for r in records if r.get("phases_separated", False))
+        print(f"\n  ── Multi-turn game ───────────────────────────────────────────")
+        print(f"  Multi-turn phases split : {assessor_ran}/{len(records)}")
+        print(f"  Phases separated        : {phases_sep}/{len(records)}")
+        print(f"  Valid reward outcomes   : {outcomes_found}/{len(records)}")
+        if assessor_ran == 0 and outcomes_found == 0:
+            print("  WARNING: No assessor responses AND no valid outcomes — multi-turn may be broken")
+        elif assessor_ran == 0:
+            print("  NOTE: Turn split not found in solution_str (verl strips chat tokens).")
+            print("        Rewards computed correctly from full response. Use model_response_full for debug.")
 
     # Analyze full response
     inj_stats = []
@@ -226,21 +259,31 @@ def main():
     except Exception:
         pass
 
-    # Sample records
-    sample_recs = [r for r in records if r.get("injector_response") or r.get("assessor_response")][:3]
+    # Sample records — show one from each role (or first 3 if no roles)
+    if is_grpo_sep:
+        sample_recs = []
+        for role in ("assessor", "injector"):
+            role_recs = [r for r in records if r.get("role") == role]
+            if role_recs:
+                sample_recs.append(role_recs[0])
+    else:
+        sample_recs = [r for r in records if r.get("injector_response") or r.get("assessor_response")][:3]
+
     if sample_recs:
-        print(f"\n  ── Sample game records ──────────────────────────────")
+        print(f"\n  ── Sample records ───────────────────────────────────")
         for i, r in enumerate(sample_recs):
-            gt  = r.get("ground_truth", "?")
-            oc  = r.get("outcome", "?")
-            rwd = r.get("reward", 0.0)
-            inj = (r.get("injector_response") or "")[:150].replace("\n", " ↵ ")
+            gt   = r.get("ground_truth", "?")
+            oc   = r.get("outcome", "?")
+            rwd  = r.get("reward", 0.0)
+            role = r.get("role", "")
+            role_tag = f" role={role}" if role else ""
+            print(f"  [{i+1}]{role_tag} gt={gt!r:8} outcome={oc:15} reward={rwd:+.2f}")
+            inj = (r.get("injector_response") or r.get("model_response") or "")[:150].replace("\n", " ↵ ")
             asm = (r.get("assessor_response") or "")[:80].replace("\n", " ↵ ")
-            print(f"  [{i+1}] gt={gt!r:8} outcome={oc:15} reward={rwd:+.2f}")
             if inj:
-                print(f"       INJ: {inj!r}")
+                print(f"       resp: {inj!r}")
             if asm:
-                print(f"       ASM: {asm!r}")
+                print(f"       ASM : {asm!r}")
     print()
 
 

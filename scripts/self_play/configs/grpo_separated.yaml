@@ -31,7 +31,7 @@ actor_rollout_ref:
     top_k: -1
     gpu_memory_utilization: 0.6
     tensor_model_parallel_size: 1
-    n: 1
+    n: 4   # GRPO requires group size > 1 to compute group-relative advantages
     # multi_turn is disabled (default in ppo_trainer base config)
 
 algorithm:
