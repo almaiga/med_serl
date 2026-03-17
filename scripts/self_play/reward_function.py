@@ -12,6 +12,13 @@ Role dispatch in compute_score (via extra_info["role"]):
   "assessor" (default): 3-tier reward based on detection accuracy
   "injector": format + sentence-placement reward using MEDEC ground truth
 
+Reward design (inspired by selfplay-redteaming, github.com/mickelliu/selfplay-redteaming):
+  - reward_type = general_sum: each role receives its own independent reward
+    (injector is NOT penalised by -assessor_reward by default; use ZERO_SUM=1 for that)
+  - remove_ties: samples where |reward| < TIES_THRESHOLD are returned as 0.0 so that
+    near-zero advantages don't add noisy gradients (set REMOVE_TIES=0 to disable)
+  - normalize_reward: handled upstream by reinforce_plus_plus advantage whitening in veRL
+
 3-tier assessor rewards:
 - Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
 - Detection only (error detected but wrong sentence number): +0.3
@@ -80,6 +87,12 @@ REWARD_EXACT = 1.0     # Exact match (correct label + sentence)
 REWARD_PARTIAL = 0.3   # Detected error but wrong sentence number
 REWARD_MISS = -1.0     # Missed, false positive, or invalid
 FORMAT_BONUS = 0.2     # Bonus for parseable output format
+
+# Remove-ties: samples with |reward| below this threshold are zeroed out
+# so near-zero advantages don't add noisy gradients (selfplay-redteaming).
+# Disable by setting env var REMOVE_TIES=0.
+TIES_THRESHOLD = 0.1
+_REMOVE_TIES = os.environ.get("REMOVE_TIES", "1") != "0"
 
 # Global statistics tracker (thread-safe)
 _stats_lock = threading.Lock()
@@ -373,6 +386,12 @@ def _compute_assessor_reward(
 def _compute_injector_reward(solution_str: str, extra_info: dict) -> tuple:
     """Proxy reward for injector role using MEDEC ground-truth sentence IDs.
 
+    If extra_info["zero_sum_reward"] is set (written by generate_chained_data.py
+    --zero-sum), that pre-computed adversarial reward is used instead of the
+    MEDEC proxy.  This implements true zero-sum coupling: the injector's reward
+    is -assessor_reward (error mode) or +assessor_reward (benign mode), computed
+    from an offline second inference pass in Phase A.
+
     Returns (reward, outcome, pred_sid, has_valid_format).
     """
     sid, modified_text = parse_injector_compact(solution_str)
@@ -380,6 +399,19 @@ def _compute_injector_reward(solution_str: str, extra_info: dict) -> tuple:
     if sid is None or modified_text is None:
         return REWARD_MISS, "invalid_format", None, False
 
+    # Zero-sum pre-computed reward from Phase A (--zero-sum flag)
+    zs_reward = extra_info.get("zero_sum_reward")
+    if zs_reward is not None:
+        # Determine outcome label from reward magnitude
+        if float(zs_reward) >= REWARD_EXACT:
+            outcome = "exact_match"
+        elif float(zs_reward) > 0:
+            outcome = "partial_match"
+        else:
+            outcome = "miss"
+        return float(zs_reward), outcome, sid, True
+
+    # MEDEC-proxy fallback (standard chained / non-zero-sum runs)
     mode = extra_info.get("mode", "error_injection")
     if mode == "benign":
         # Any valid benign edit is rewarded
@@ -508,6 +540,11 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
                 f.write(f"{datetime.now().isoformat()} Error: {e}\n")
         except Exception:
             pass
+
+    # Remove ties: zero out samples where |reward| is too small to provide
+    # a meaningful gradient signal (selfplay-redteaming: remove_ties=True).
+    if _REMOVE_TIES and abs(reward) < TIES_THRESHOLD:
+        reward = 0.0
 
     return reward
 

@@ -224,26 +224,34 @@ class MedicalGameInteraction(BaseInteraction):
         messages: List[Dict[str, Any]]
     ) -> Tuple[bool, str, float, Dict[str, Any]]:
         """Process Phase 1 (Injector) output and prepare Phase 2 (Assessor) prompt.
-        
+
         Parses compact "N. <modified sentence>" output, reconstructs the full
         note, and passes it to the Assessor with proper system prompt.
-        
+
+        The injector receives a per-turn proxy reward (MEDEC ground-truth based)
+        applied to its tokens immediately, matching the compute_score(role="injector")
+        logic in reward_function.py:
+          - Valid format, benign mode          : +1.2  (REWARD_EXACT + FORMAT_BONUS)
+          - Valid format, correct sentence      : +1.2
+          - Valid format, wrong sentence        : +0.5  (REWARD_PARTIAL + FORMAT_BONUS)
+          - Invalid format / early termination  : -1.0  (REWARD_MISS)
+
         Returns sampling_params for the assessor turn (temperature=0.3).
         """
         instance = self._instance_dict[instance_id]
-        
+
         # Extract Injector's response (last assistant message)
         injector_output = ""
         for msg in reversed(messages):
             if msg.get("role") == "assistant":
                 injector_output = msg.get("content", "")
                 break
-        
+
         instance["injector_output"] = injector_output
-        
+
         # Parse compact output: "N. <modified sentence>"
         parsed = parse_injector_output(injector_output)
-        
+
         if parsed.parse_success:
             instance["changed_sid"] = parsed.changed_sentence_id
             modified = reconstruct_note(
@@ -254,21 +262,29 @@ class MedicalGameInteraction(BaseInteraction):
                 "Injector parsed: sid=%d, modified=%r",
                 parsed.changed_sentence_id, (parsed.modified_text or "")[:80],
             )
+            # MEDEC-proxy reward: reward injector for correct sentence placement
+            injector_reward = self._compute_injector_proxy_reward(
+                parsed.changed_sentence_id, instance
+            )
         else:
             # Fallback: pass original sentences (injector failed to modify)
             instance["modified_sentences"] = extract_note_for_assessor(
                 injector_output, instance["sentences"]
             )
             if not instance["modified_sentences"]:
-                return True, "Invalid output format. Expected 'N. <modified sentence>'.", -1.0, {}
+                return True, "Invalid output format. Expected 'N. <modified sentence>'.", REWARD_MISS, {}
             logger.warning("Injector parse failed — using fallback note for assessor.")
-        
+            injector_reward = REWARD_MISS  # penalise invalid format
+
+        instance["injector_reward"] = injector_reward
+
         # Construct Assessor prompt with system context + modified note
         assessor_prompt = self._construct_assessor_prompt(instance["modified_sentences"])
-        
+
         # Pass per-turn sampling params for the assessor turn
         info = {
             "phase": "injector_complete",
+            "injector_reward": injector_reward,
             "sampling_params": {
                 "temperature": self.assessor_temperature,
                 "top_p": self.assessor_top_p,
@@ -276,8 +292,30 @@ class MedicalGameInteraction(BaseInteraction):
                 "max_new_tokens": self.config.get("assessor_max_new_tokens", 3072),
             },
         }
-        
-        return False, assessor_prompt, 0.0, info
+
+        # Return the injector's per-turn reward so verl applies it to injector tokens.
+        return False, assessor_prompt, injector_reward, info
+
+    def _compute_injector_proxy_reward(self, changed_sid: int, instance: dict) -> float:
+        """MEDEC-proxy reward for the injector's sentence placement quality.
+
+        Mirrors the compute_score(role="injector") logic in reward_function.py
+        so both training paths (chained-data and multi-turn) assign consistent
+        injector rewards.
+        """
+        mode = instance.get("mode", "error_injection")
+        if mode == "benign":
+            # Any valid benign edit is rewarded identically
+            return REWARD_EXACT + FORMAT_BONUS  # +1.2
+
+        note_data = instance.get("note_data", {})
+        expected_sid = note_data.get("error_sentence_id")
+        if expected_sid is not None and changed_sid == int(expected_sid):
+            return REWARD_EXACT + FORMAT_BONUS   # +1.2 — correct sentence
+        elif expected_sid is not None:
+            return REWARD_PARTIAL + FORMAT_BONUS # +0.5 — valid format, wrong sentence
+        else:
+            return REWARD_PARTIAL + FORMAT_BONUS # +0.5 — no GT available, reward valid format
     
     async def _process_assessor_turn(
         self,
@@ -321,6 +359,16 @@ class MedicalGameInteraction(BaseInteraction):
         else:
             outcome = "miss"
 
+        # Zero-sum adversarial signal:
+        #   error mode:  injector "wins" when assessor misses → injector_retroactive = +R
+        #                injector "loses" when assessor detects → injector_retroactive = -R
+        #   benign mode: cooperative — both get the same direction signal
+        mode = instance.get("mode", "error_injection")
+        if mode == "error_injection":
+            injector_retroactive = -assessor_reward  # zero-sum
+        else:
+            injector_retroactive = assessor_reward   # cooperative on benign notes
+
         note_data = instance.get("note_data", {})
         _write_log({
             "timestamp": datetime.now().isoformat(),
@@ -331,9 +379,12 @@ class MedicalGameInteraction(BaseInteraction):
             "outcome": outcome,
             "reward": float(assessor_reward),
             "has_valid_format": has_valid_format,
-            "mode": instance.get("mode", ""),
+            "mode": mode,
             "note_id": note_data.get("note_id", ""),
             "error_type": note_data.get("error_type", ""),
+            # Per-turn rewards for analysis / future retroactive assignment
+            "injector_reward": float(instance.get("injector_reward", 0.0)),
+            "injector_retroactive_reward": float(injector_retroactive),
             # Per-turn responses (correctly split — no parsing needed)
             "injector_response": (instance.get("injector_output") or "")[:4000],
             "assessor_response": assessor_output[:2000],
@@ -347,6 +398,9 @@ class MedicalGameInteraction(BaseInteraction):
             "assessor_pred_sid": pred_sid,
             "ground_truth": ground_truth,
             "has_valid_format": has_valid_format,
+            # Zero-sum injector penalty — available for retroactive reward assignment
+            # if the verl tool_agent_loop is extended to support per-turn retroactive rewards.
+            "injector_retroactive_reward": float(injector_retroactive),
         }
     
     def _compute_reward(

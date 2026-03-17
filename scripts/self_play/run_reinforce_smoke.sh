@@ -22,7 +22,7 @@
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 SMOKE_STEPS="${SMOKE_STEPS:-5}"
 ROLES="${ROLES:-mixed}"
-TRAIN_BATCH_SIZE=16   # n=1, so batch_size = unique prompts per step
+TRAIN_BATCH_SIZE=32   # 2 GPUs → double the batch; n=1 so batch_size = unique prompts per step
 TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -34,7 +34,7 @@ RAY_TMPDIR_PATH="/workspace/ray_tmp"
 mkdir -p "$RAY_TMPDIR_PATH"
 
 # ── GPU visibility ──
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 
 # ── Ray env vars for RunPod Docker ──
@@ -195,16 +195,14 @@ python3 -m verl.trainer.main_ppo \
     \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
-    actor_rollout_ref.model.use_remove_padding=False \
+    actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.use_kl_loss=True \
-    actor_rollout_ref.actor.kl_loss_coef=0.001 \
-    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.entropy_coeff=0 \
-    actor_rollout_ref.actor.clip_grad=1.0 \
+    +actor_rollout_ref.actor.clip_grad=1.0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
@@ -217,6 +215,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    +actor_rollout_ref.rollout.stop_when_truncated=True \
     \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
@@ -225,7 +224,6 @@ python3 -m verl.trainer.main_ppo \
     critic.enable=false \
     reward_model.enable=False \
     algorithm.use_kl_in_reward=False \
-    algorithm.kl_ctrl.kl_coef=0.001 \
     \
     trainer.total_epochs=1 \
     trainer.critic_warmup=0 \
@@ -233,7 +231,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name=medserl-reinforce \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
-    trainer.n_gpus_per_node=1 \
+    trainer.n_gpus_per_node=2 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=1 \
