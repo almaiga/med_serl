@@ -4,19 +4,24 @@ Following verl documentation format:
 https://verl.readthedocs.io/en/latest/preparation/reward_function.html
 
 Medical Error Detection + Localization Self-Play Game (adapted from SeRL paper arXiv:2506.07468):
-- Single model plays both roles (Injector and Assessor)
+- Single model plays both roles (Injector and Assessor) in separate GRPO passes
 - Injector: Modifies clinical note (benign edit OR error injection)
 - Assessor: Outputs CORRECT (no error) or an integer sentence number (error location)
 
-3-tier rewards:
+Role dispatch in compute_score (via extra_info["role"]):
+  "assessor" (default): 3-tier reward based on detection accuracy
+  "injector": format + sentence-placement reward using MEDEC ground truth
+
+3-tier assessor rewards:
 - Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
 - Detection only (error detected but wrong sentence number): +0.3
 - Miss (wrong classification or unparseable): -1.0
-- Format bonus: +0.2 for valid output format (CORRECT or bare integer)
+- Format bonus: +0.2 for valid output format
 
-Note: In our implementation, each example is assessed independently.
-The "Injector" already produced its output (the modified note in training data).
-The model acts as "Assessor" and classifies/localizes - this is what we reward.
+Injector rewards (proxy using MEDEC ground truth):
+- Correct sentence + valid format: +1.2
+- Wrong sentence + valid format:   +0.5
+- Invalid format:                  -1.0
 """
 
 import json
@@ -30,7 +35,7 @@ from collections import defaultdict
 import threading
 from difflib import SequenceMatcher
 
-from scripts.self_play.utils import parse_assessor_answer, strip_thinking
+from scripts.self_play.utils import parse_assessor_answer, strip_thinking, parse_injector_compact
 
 logger = logging.getLogger(__name__)
 
@@ -304,110 +309,104 @@ def detect_truncation(response: str) -> dict:
     }
 
 
+def _compute_assessor_reward(
+    solution_str: str,
+    ground_truth: str,
+) -> tuple:
+    """3-tier reward for assessor role. Returns (reward, outcome, label, pred_sid)."""
+    label, pred_sid = _parse_answer_from_tail(solution_str)
+    has_valid_format = check_format_compliance(solution_str)
+    format_bonus = FORMAT_BONUS if has_valid_format else 0.0
+
+    gt_is_correct = (ground_truth == "CORRECT")
+
+    if gt_is_correct and label == "CORRECT":
+        reward, outcome = REWARD_EXACT + format_bonus, "exact_match"
+    elif gt_is_correct and label != "CORRECT":
+        reward, outcome = REWARD_MISS + format_bonus, "miss"
+    elif not gt_is_correct and label == "CORRECT":
+        reward, outcome = REWARD_MISS + format_bonus, "miss"
+    elif not gt_is_correct and label == "ERROR":
+        pred_str = str(pred_sid) if pred_sid else ""
+        if pred_str == ground_truth:
+            reward, outcome = REWARD_EXACT + format_bonus, "exact_match"
+        elif pred_sid is not None:
+            reward, outcome = REWARD_PARTIAL + format_bonus, "partial_match"
+        else:
+            reward, outcome = REWARD_PARTIAL, "partial_match"
+    else:
+        reward, outcome = REWARD_MISS, "invalid_format"
+        has_valid_format = False
+
+    return reward, outcome, label, pred_sid, has_valid_format
+
+
+def _compute_injector_reward(solution_str: str, extra_info: dict) -> tuple:
+    """Proxy reward for injector role using MEDEC ground-truth sentence IDs.
+
+    Returns (reward, outcome, pred_sid, has_valid_format).
+    """
+    sid, modified_text = parse_injector_compact(solution_str)
+
+    if sid is None or modified_text is None:
+        return REWARD_MISS, "invalid_format", None, False
+
+    mode = extra_info.get("mode", "error_injection")
+    if mode == "benign":
+        # Any valid benign edit is rewarded
+        return REWARD_EXACT + FORMAT_BONUS, "exact_match", sid, True
+
+    expected_sid = extra_info.get("error_sentence_id")
+    if expected_sid is not None and sid == int(expected_sid):
+        return REWARD_EXACT + FORMAT_BONUS, "exact_match", sid, True
+    elif expected_sid is not None:
+        return REWARD_PARTIAL + FORMAT_BONUS, "partial_match", sid, True
+    else:
+        # No ground-truth sentence ID available — reward valid format
+        return REWARD_PARTIAL + FORMAT_BONUS, "partial_match", sid, True
+
+
 def compute_score(data_source, solution_str, ground_truth, extra_info=None):
-    """Compute 3-tier reward score for medical error detection + localization.
-    
-    This is called by verl's RewardManager after rollout.
-    
-    3-tier reward (adapted from SeRL paper arXiv:2506.07468):
-    - Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
-    - Detection only (error detected but wrong sentence number): +0.3
-    - Miss (wrong classification or unparseable): -1.0
-    - Format bonus: +0.2 for valid output format
-    
-    Args:
-        data_source (str): Dataset identifier (e.g., 'medec_selfplay')
-        solution_str (str): The model's generated response
-        ground_truth (str): "CORRECT" or str(sentence_id) from data
-        extra_info (dict): Additional information from dataset
-        
-    Returns:
-        float: Reward score (Assessor perspective)
+    """Compute reward for medical self-play training.
+
+    Dispatches by extra_info["role"]:
+      "assessor" (default): 3-tier detection/localization reward
+      "injector":           format + sentence-placement proxy reward
+
+    Called by verl's RewardManager after each rollout.
     """
     global _stats
-    
-    # Smoke-test sentinel — confirms real model rollouts reach the reward function
+
     logger.info(
-        "compute_score called: source=%s gt=%s solution=%r...",
-        data_source, ground_truth, (solution_str or "")[:80],
+        "compute_score called: source=%s role=%s gt=%s solution=%r...",
+        data_source,
+        (extra_info or {}).get("role", "assessor"),
+        ground_truth,
+        (solution_str or "")[:80],
     )
-    
-    # Ensure we have valid inputs
+
     solution_str = solution_str or ""
     ground_truth = str(ground_truth) if ground_truth else ""
     extra_info = make_serializable(extra_info) if extra_info else {}
+    role = extra_info.get("role", "assessor")
     mode = extra_info.get("mode", "unknown")
-    
-    # Detect truncation and get token metrics
+
     truncation_info = detect_truncation(solution_str)
-    
-    # Parse model's output from the TAIL of solution_str (assessor answer is last)
-    label, pred_sid = _parse_answer_from_tail(solution_str)
-    
-    # Check format compliance
-    has_valid_format = check_format_compliance(solution_str)
-    format_bonus = FORMAT_BONUS if has_valid_format else 0.0
-    
-    # ── Guard: If this is a single-turn rollout where only the injector ran,
-    # the solution_str contains a clinical note (not an assessor answer).
-    # Numbers in clinical text (e.g., Na=134) would be mis-parsed as sentence IDs.
-    # Detect this by checking if the response looks like an injector compact output.
-    _looks_like_injector = bool(re.search(
-        r'(?:^|\n)\s*\d+\.\s+\S', solution_str.split('</think>')[-1] if '</think>' in solution_str.lower() else solution_str
-    ))
-    if _looks_like_injector and label == "ERROR" and pred_sid is not None and pred_sid > 20:
-        # Sentence IDs in real notes are 1–~15.  A pred_sid > 20 almost certainly
-        # came from a clinical value (lab result, dose, etc.), not an assessor answer.
-        logger.warning(
-            "Guard: pred_sid=%d looks like a clinical value, not a sentence ID. "
-            "Resetting to UNKNOWN (likely single-turn rollout without assessor).",
-            pred_sid,
-        )
-        label, pred_sid = "UNKNOWN", None
-        has_valid_format = False
-        format_bonus = 0.0
-    
-    # --- 3-tier reward computation ---
-    gt_is_correct = (ground_truth == "CORRECT")
-    
-    if gt_is_correct and label == "CORRECT":
-        # Exact match: note is correct, assessor says CORRECT
-        reward = REWARD_EXACT + format_bonus
-        outcome = "exact_match"
-    elif gt_is_correct and label != "CORRECT":
-        # False positive: note is correct, assessor flagged a sentence
-        reward = REWARD_MISS + format_bonus
-        outcome = "miss"
-    elif not gt_is_correct and label == "CORRECT":
-        # Missed error: note has error, assessor said CORRECT
-        reward = REWARD_MISS + format_bonus
-        outcome = "miss"
-    elif not gt_is_correct and label == "ERROR":
-        # Detected error - check sentence number
-        pred_str = str(pred_sid) if pred_sid else ""
-        if pred_str == ground_truth:
-            # Exact sentence match
-            reward = REWARD_EXACT + format_bonus
-            outcome = "exact_match"
-        elif pred_sid is not None:
-            # Detected error but wrong sentence number → partial credit
-            reward = REWARD_PARTIAL + format_bonus
-            outcome = "partial_match"
-        else:
-            # Detected error but no sentence number
-            reward = REWARD_PARTIAL
-            outcome = "partial_match"
+
+    # --- Role dispatch ---
+    if role == "injector":
+        reward, outcome, pred_sid, has_valid_format = _compute_injector_reward(solution_str, extra_info)
+        label = "injector"
     else:
-        # UNKNOWN / unparseable
-        reward = REWARD_MISS
-        outcome = "invalid_format"
-    
-    # Update global statistics (thread-safe)
+        reward, outcome, label, pred_sid, has_valid_format = _compute_assessor_reward(
+            solution_str, ground_truth
+        )
+
+    # --- Update statistics (thread-safe) ---
     with _stats_lock:
         _stats["total_interactions"] += 1
         _stats["total_reward"] += reward
-        
-        # Token/truncation metrics
+
         resp_chars = truncation_info["response_chars"]
         _stats["total_response_chars"] += resp_chars
         _stats["total_response_tokens_approx"] += truncation_info["response_tokens_approx"]
@@ -421,8 +420,7 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
             _stats["responses_with_think_tags"] += 1
         if truncation_info["missing_closing_think"]:
             _stats["responses_missing_closing_think"] += 1
-        
-        # Outcome tracking
+
         if outcome == "exact_match":
             _stats["exact_match"] += 1
         elif outcome == "partial_match":
@@ -431,8 +429,7 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
             _stats["miss"] += 1
         else:
             _stats["invalid_format"] += 1
-        
-        # Mode-specific
+
         if mode == "benign":
             _stats["benign_count"] += 1
             _stats["benign_reward"] += reward
@@ -449,201 +446,41 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
                 _stats["error_partial"] += 1
             else:
                 _stats["error_missed"] += 1
-        
-        # Save summary every 100 interactions
+
         if _stats["total_interactions"] % 100 == 0:
             save_summary()
-    
-    # =========================================================================
-    # MULTI-TURN RESPONSE PARSING (for concatenated rollouts)
-    # =========================================================================
-    # verl strips chat-template tokens from solution_str, so <|im_start|>
-    # markers are absent.  We use a content-based split instead:
-    #   Pass 1: chat-template tokens (in case they are present)
-    #   Pass 2: count </think> blocks — injector ends at first </think>,
-    #           second <think> opens the assessor turn
-    #   Pass 3: treat whole string as assessor-only (single-turn or fallback)
-    injector_response = solution_str
-    assessor_response = ""
-    turn_boundary = None
 
-    # Pass 1: chat-template markers (present when verl keeps special tokens)
-    for marker in [r'<\|im_start\|>user\s*\n', r'\nuser\s*\n']:
-        m = re.search(marker, solution_str, re.IGNORECASE | re.DOTALL)
-        if m:
-            turn_boundary = m.start()
-            injector_response = solution_str[:turn_boundary].strip()
-            assessor_response = solution_str[turn_boundary:].strip()
-            break
-
-    # Pass 2: content-based split (no special tokens needed).
-    #
-    # solution_str = [injector_thinking]</think>[injector_answer]\n[assessor_output]
-    #
-    # The injector outputs a compact "N. <modified sentence>" answer after </think>.
-    # The assessor (with /no_think) outputs "CORRECT" or a bare integer directly.
-    # When the assessor ALSO uses thinking, a second <think> block appears.
-    if not assessor_response:
-        think_opens = [m.start() for m in re.finditer(r'<think>', solution_str, re.IGNORECASE)]
-        think_closes = [m.end() for m in re.finditer(r'</think>', solution_str, re.IGNORECASE)]
-
-        if think_closes:
-            first_close_end = think_closes[0]
-
-            # Sub-case A: assessor also uses thinking → second <think> block present
-            later_opens = [p for p in think_opens if p >= first_close_end]
-            if later_opens:
-                second_open = later_opens[0]
-                injector_response = solution_str[:second_open].strip()
-                assessor_response = solution_str[second_open:].strip()
-            else:
-                # Sub-case B: assessor uses /no_think — structure after </think> is:
-                #   "N. <modified sentence>\n<assessor_answer>"
-                # Skip leading whitespace after </think>.
-                tail_start = first_close_end
-                while tail_start < len(solution_str) and solution_str[tail_start] in ' \t\n\r':
-                    tail_start += 1
-                tail = solution_str[tail_start:]
-                if len(tail) > 5:
-                    # Injector compact format: "N. <text>" on the first non-empty line
-                    inj_match = re.match(r'\d+\.\s+[^\n]+', tail)
-                    if inj_match:
-                        split_pos = tail_start + inj_match.end()
-                        injector_response = solution_str[:split_pos].strip()
-                        assessor_response = solution_str[split_pos:].strip()
-                    else:
-                        # No compact answer found; treat full tail as assessor output
-                        injector_response = solution_str[:first_close_end].strip()
-                        assessor_response = tail.strip()
-
-    # Pass 3: <|im_start|>assistant blocks (fallback if special tokens exist)
-    if not assessor_response:
-        assistant_blocks = re.findall(
-            r'<\|im_start\|>assistant(.*?)(?=<\|im_end\|>|<\|im_start\|>|$)',
-            solution_str, re.DOTALL
-        )
-        if len(assistant_blocks) >= 2:
-            injector_response = assistant_blocks[0].strip()
-            assessor_response = assistant_blocks[-1].strip()
-    
-    injector_truncation = detect_truncation(injector_response)
-    assessor_truncation = detect_truncation(assessor_response) if assessor_response else {
-        "is_truncated": False, "has_think_tag": False, "missing_closing_think": False,
-        "response_chars": 0, "response_tokens_approx": 0
-    }
-    
-    assessor_actually_ran = len(assessor_response) > 3  # "3" or "CORRECT" both qualify
-    
-    with _stats_lock:
-        if turn_boundary is not None or assessor_actually_ran:
-            _stats["phases_separated_count"] += 1
-        if assessor_actually_ran:
-            _stats["assessor_actually_ran_count"] += 1
-        if injector_truncation.get("is_truncated", False):
-            _stats["injector_truncated_count"] += 1
-        if assessor_truncation.get("is_truncated", False):
-            _stats["assessor_truncated_count"] += 1
-        _stats["injector_total_chars"] += injector_truncation.get("response_chars", 0)
-        _stats["assessor_total_chars"] += assessor_truncation.get("response_chars", 0)
-    
-    # Build log entry
+    # --- Log interaction ---
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "data_source": str(data_source),
-        
-        # Game outcome
+        "role": role,
         "ground_truth": ground_truth,
-        "assessor_label": label,
-        "assessor_pred_sid": pred_sid,
+        "pred_label": label,
+        "pred_sid": pred_sid,
         "outcome": outcome,
         "reward": float(reward),
         "has_valid_format": has_valid_format,
-        
-        # Mode info
         "mode": mode,
         "note_id": extra_info.get("note_id", ""),
         "error_type": extra_info.get("error_type", ""),
-        
-        # Token metrics
         "response_chars": truncation_info["response_chars"],
-        "response_tokens_approx": truncation_info["response_tokens_approx"],
         "is_truncated": truncation_info["is_truncated"],
         "has_think_tag": truncation_info["has_think_tag"],
-        
-        # Phase separation
-        "phases_separated": turn_boundary is not None or assessor_actually_ran,
-        "assessor_actually_ran": assessor_actually_ran,
-        "injector_response_chars": injector_truncation["response_chars"],
-        "assessor_response_chars": assessor_truncation["response_chars"],
-        
-        # Truncated responses for debugging
-        "injector_response": injector_response[:4000],
-        "assessor_response": assessor_response[:2000],
-        "model_response_full": solution_str[:8000],
+        "model_response": solution_str[:4000],
     }
-    
+
     try:
         with open(LOG_FILE, 'a') as f:
             f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
     except Exception as e:
         try:
-            error_log = LOG_DIR / "reward_errors.log"
-            with open(error_log, 'a') as f:
+            with open(LOG_DIR / "reward_errors.log", 'a') as f:
                 f.write(f"{datetime.now().isoformat()} Error: {e}\n")
-        except:
+        except Exception:
             pass
-    
+
     return reward
-
-
-def interaction_reward_passthrough(data_source, solution_str, ground_truth, extra_info=None, **kwargs):
-    """Reward function for veRL's RewardLoopWorker in multi-turn interaction mode.
-
-    veRL's naive reward manager populates extra_info with tool_extra_fields,
-    which contains the info dict returned by MedicalGameInteraction._process_assessor_turn:
-        {"phase": "game_complete", "assessor_label": ..., "assessor_pred_sid": ..., "has_valid_format": ...}
-
-    We read the assessor's parsed output directly — no solution_str parsing needed.
-    Falls back to REWARD_MISS if the interaction did not complete both turns.
-    """
-    extra_info = extra_info or {}
-    ground_truth = str(ground_truth) if ground_truth else ""
-
-    phase = extra_info.get("phase")
-    assessor_label = extra_info.get("assessor_label")
-    assessor_pred_sid = extra_info.get("assessor_pred_sid")
-    has_valid_format = extra_info.get("has_valid_format", False)
-    format_bonus = FORMAT_BONUS if has_valid_format else 0.0
-
-    if phase == "game_complete" and assessor_label is not None:
-        gt_is_correct = (ground_truth == "CORRECT")
-
-        if assessor_label == "UNKNOWN":
-            return REWARD_MISS
-
-        if gt_is_correct and assessor_label == "CORRECT":
-            return REWARD_EXACT + format_bonus
-        if gt_is_correct:
-            return REWARD_MISS + format_bonus
-        if not gt_is_correct and assessor_label == "CORRECT":
-            return REWARD_MISS + format_bonus
-        # Not gt_is_correct and assessor says ERROR
-        pred_str = str(assessor_pred_sid) if assessor_pred_sid is not None else ""
-        if pred_str == ground_truth:
-            return REWARD_EXACT + format_bonus
-        if assessor_pred_sid is not None:
-            return REWARD_PARTIAL + format_bonus
-        return REWARD_PARTIAL
-
-    # Fallback: veRL's ToolAgentLoop stores per-turn rewards in turn_scores
-    # = [injector_reward (0.0), assessor_reward]
-    # The assessor reward is already correctly computed by _process_assessor_turn.
-    turn_scores = extra_info.get("turn_scores", [])
-    if turn_scores:
-        return float(turn_scores[-1])
-
-    # Interaction did not complete (injector format failure or unexpected state)
-    return REWARD_MISS
 
 
 def print_summary():
@@ -668,12 +505,6 @@ def print_summary():
     print(f"Error Detection Rate: {summary.get('error_detect_rate', 0):.2%} ({summary.get('error_count', 0)} samples)")
     print(f"Error Localization Accuracy: {summary.get('error_localize_accuracy', 0):.2%}")
     print(f"  Exact: {summary.get('error_exact', 0)} | Partial: {summary.get('error_partial', 0)} | Missed: {summary.get('error_missed', 0)}")
-    print("-"*70)
-    print("PHASE SEPARATION (Multi-Turn):")
-    print(f"  Phases Separated: {summary.get('phases_separated_rate', 0):.2%}")
-    print(f"  Assessor Actually Ran: {summary.get('assessor_actually_ran_rate', 0):.2%}")
-    print(f"  Injector Truncated: {summary.get('injector_truncated_count', 0)}")
-    print(f"  Assessor Truncated: {summary.get('assessor_truncated_count', 0)}")
     print("-"*70)
     print("TOKEN/GENERATION METRICS:")
     print(f"  Avg Response Length: {summary.get('avg_response_chars', 0):.0f} chars (~{summary.get('avg_response_tokens_approx', 0):.0f} tokens)")

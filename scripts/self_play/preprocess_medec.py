@@ -1,9 +1,13 @@
 """Preprocess MEDEC data for self-play training with verl.
 
 Converts JSONL data to verl-compatible format.
-For each note pair, generates 2 examples:
-1. Benign mode (ground_truth="CORRECT") - only uses correct_note
-2. Error mode (ground_truth=str(sentence_id)) - error at a specific sentence
+For each note pair, generates up to 4 examples (controlled by --roles flag):
+  injector role (2 per pair):
+    1. Benign mode (ground_truth="CORRECT") - model makes a surface edit
+    2. Error mode (ground_truth=str(sentence_id)) - model injects an error
+  assessor role (2 per pair):
+    3. Benign assessor (ground_truth="CORRECT") - model detects no error
+    4. Error assessor (ground_truth=str(sentence_id)) - model localizes error
 
 Notes are pre-numbered (1-indexed) so the assessor can output a sentence number.
 Error sentence IDs are computed by matching error_sentence text against the note.
@@ -84,6 +88,7 @@ def create_benign_example(
             "ground_truth": "CORRECT"
         },
         "extra_info": {
+            "role": "injector",
             "note_id": f"{note_id}-benign",
             "correct_note": pair["correct_note"],
             "sentences": sentences,
@@ -149,6 +154,7 @@ def create_error_example(
             "ground_truth": ground_truth,
         },
         "extra_info": {
+            "role": "injector",
             "note_id": f"{note_id}-error",
             "correct_note": pair["correct_note"],
             "incorrect_note": pair["incorrect_note"],
@@ -171,59 +177,132 @@ def create_error_example(
     }
 
 
+def create_assessor_example(
+    pair: dict,
+    detection_prompts: dict,
+    idx: int,
+    mode: str,
+    data_source: str = "medec_selfplay",
+) -> dict:
+    """Create an assessor-role example using ground-truth MEDEC notes.
+
+    Args:
+        mode: "benign" → correct_note, ground_truth="CORRECT"
+              "error"  → incorrect_note, ground_truth=str(sentence_id)
+    """
+    system_prompt = detection_prompts["system_prompt"]
+    user_template = detection_prompts["user_template"]
+
+    if mode == "benign":
+        note_text = pair["correct_note"]
+        sentences = number_sentences(note_text)
+        ground_truth = "CORRECT"
+        error_sentence_id = None
+        note_suffix = "benign"
+    else:
+        note_text = pair["incorrect_note"]
+        sentences = number_sentences(note_text)
+        error_sentence_text = pair.get("error_sentence", "")
+        error_sentence_id = find_error_sentence_id(note_text, error_sentence_text)
+        ground_truth = str(error_sentence_id) if error_sentence_id else "INCORRECT"
+        note_suffix = "error"
+
+    user_prompt = user_template.format(sentences=sentences)
+    note_id = pair.get("note_id", f"selfplay-{idx}")
+
+    return {
+        "data_source": data_source,
+        "prompt": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "ability": "medical_error_detection",
+        "reward_model": {
+            "style": "rule",
+            "ground_truth": ground_truth,
+        },
+        "extra_info": {
+            "role": "assessor",
+            "note_id": f"{note_id}-assessor-{note_suffix}",
+            "correct_note": pair["correct_note"],
+            "incorrect_note": pair.get("incorrect_note", ""),
+            "sentences": sentences,
+            "error_type": pair.get("error_type", ""),
+            "error_sentence": pair.get("error_sentence", ""),
+            "error_sentence_id": error_sentence_id,
+            "corrected_sentence": pair.get("corrected_sentence", ""),
+            "mode": mode,
+        },
+        "interaction_kwargs": {},
+    }
+
+
 def convert_to_parquet(
     input_path: Path,
     output_path: Path,
     injection_prompts_path: str = "configs/prompts/error_injection_prompts_v4.json",
+    detection_prompts_path: str = "configs/prompts/detection_localization_prompts.json",
     data_source: str = "medec_selfplay",
     max_pairs: int = None,
+    roles: str = "mixed",
 ) -> None:
     """Convert JSONL to Parquet format for verl.
-    
-    Each pair generates 2 examples (1 benign + 1 error).
-    
+
     Args:
-        max_pairs: If set, limit to this many pairs (generates 2x examples).
-    
+        roles: Which role examples to generate:
+            "injector" — 2 per pair (benign + error injector prompts)
+            "assessor" — 2 per pair (benign + error detection prompts)
+            "mixed"    — 4 per pair (all of the above)  [default]
+        max_pairs: If set, limit to this many pairs.
+
     IMPORTANT: verl expects 'prompt' as a native list of dicts, NOT a JSON string.
     See: https://github.com/volcengine/verl/blob/main/verl/utils/dataset/rl_dataset.py
     """
-    
     pairs = load_jsonl(input_path)
     print(f"Loaded {len(pairs)} pairs from {input_path}")
-    
-    # Limit pairs if requested
+
     if max_pairs is not None and max_pairs < len(pairs):
         pairs = pairs[:max_pairs]
-        print(f"Limited to {len(pairs)} pairs (will generate {len(pairs) * 2} examples)")
-    
-    # Load prompts from config
+        examples_per_pair = {"injector": 2, "assessor": 2, "mixed": 4}[roles]
+        print(f"Limited to {len(pairs)} pairs (will generate ~{len(pairs) * examples_per_pair} examples)")
+
     injection_prompts = load_prompts(injection_prompts_path)
-    print(f"Loaded prompts from {injection_prompts_path}")
-    
-    # Generate 2 examples per pair
+    print(f"Loaded injection prompts from {injection_prompts_path}")
+
+    detection_prompts = None
+    if roles in ("assessor", "mixed"):
+        detection_prompts = load_prompts(detection_prompts_path)
+        print(f"Loaded detection prompts from {detection_prompts_path}")
+
     verl_examples = []
     missing_sid_count = 0
     for idx, pair in enumerate(pairs):
         if not pair.get("correct_note") or not pair.get("incorrect_note"):
             print(f"Warning: Skipping pair {idx} - missing required fields")
             continue
-            
-        # Benign example (CORRECT)
-        benign_ex = create_benign_example(pair, injection_prompts, idx, data_source)
-        verl_examples.append(benign_ex)
-        
-        # Error example (sentence number)
-        error_ex = create_error_example(pair, injection_prompts, idx, data_source)
-        verl_examples.append(error_ex)
 
-        if error_ex["extra_info"]["error_sentence_id"] is None:
-            missing_sid_count += 1
-    
-    error_count = len(verl_examples) // 2
-    print(f"Generated {len(verl_examples)} examples ({error_count} benign + {error_count} error)")
+        if roles in ("injector", "mixed"):
+            benign_ex = create_benign_example(pair, injection_prompts, idx, data_source)
+            verl_examples.append(benign_ex)
+            error_ex = create_error_example(pair, injection_prompts, idx, data_source)
+            verl_examples.append(error_ex)
+            if error_ex["extra_info"]["error_sentence_id"] is None:
+                missing_sid_count += 1
+
+        if roles in ("assessor", "mixed"):
+            assessor_benign = create_assessor_example(pair, detection_prompts, idx, "benign", data_source)
+            verl_examples.append(assessor_benign)
+            assessor_error = create_assessor_example(pair, detection_prompts, idx, "error", data_source)
+            verl_examples.append(assessor_error)
+            if assessor_error["extra_info"]["error_sentence_id"] is None:
+                missing_sid_count += 1
+
+    role_counts = {r: sum(1 for e in verl_examples if e["extra_info"].get("role") == r)
+                   for r in ("injector", "assessor")}
+    print(f"Generated {len(verl_examples)} examples "
+          f"(injector: {role_counts['injector']}, assessor: {role_counts['assessor']})")
     if missing_sid_count:
-        print(f"Warning: {missing_sid_count}/{error_count} error examples could not resolve error_sentence_id")
+        print(f"Warning: {missing_sid_count} error examples could not resolve error_sentence_id")
     
     # Use HuggingFace datasets for proper serialization
     from datasets import Dataset
@@ -247,21 +326,14 @@ def convert_to_parquet(
     
     # Print sample for verification
     if verl_examples:
-        print("\n--- Sample BENIGN example ---")
-        sample = verl_examples[0]
-        print(f"ground_truth: {sample['reward_model']['ground_truth']}")
-        print(f"mode: {sample['extra_info']['mode']}")
-        print(f"change_type: {sample['extra_info'].get('change_type', 'N/A')}")
-        user_content = sample['prompt'][1]['content']
-        print(f"prompt preview (user): {user_content[:400]}...")
-        
-        print("\n--- Sample ERROR example ---")
-        sample = verl_examples[1]
-        print(f"ground_truth: {sample['reward_model']['ground_truth']}")
-        print(f"mode: {sample['extra_info']['mode']}")
-        print(f"error_sentence_id: {sample['extra_info']['error_sentence_id']}")
-        user_content = sample['prompt'][1]['content']
-        print(f"prompt preview (user): {user_content[:400]}...")
+        for sample in verl_examples[:4]:
+            role = sample["extra_info"].get("role", "?")
+            mode = sample["extra_info"].get("mode", "?")
+            gt = sample["reward_model"]["ground_truth"]
+            sid = sample["extra_info"].get("error_sentence_id")
+            user_content = sample["prompt"][1]["content"]
+            print(f"\n--- role={role} mode={mode} gt={gt} sid={sid} ---")
+            print(f"prompt preview: {user_content[:300]}...")
     
     # Verify the saved file
     print("\n--- Verifying saved parquet ---")
@@ -274,7 +346,7 @@ def convert_to_parquet(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Preprocess MEDEC data for self-play training (generates 2 examples per pair)"
+        description="Preprocess MEDEC data for self-play training"
     )
     parser.add_argument(
         "--input",
@@ -295,6 +367,12 @@ def main():
         help="Path to injection prompts JSON",
     )
     parser.add_argument(
+        "--detection-prompts",
+        type=str,
+        default="configs/prompts/detection_localization_prompts.json",
+        help="Path to detection/assessor prompts JSON",
+    )
+    parser.add_argument(
         "--data-source",
         type=str,
         default="medec_selfplay",
@@ -304,16 +382,25 @@ def main():
         "--max-pairs",
         type=int,
         default=None,
-        help="Max number of pairs to process (each generates 2 examples)",
+        help="Max number of pairs to process",
     )
-    
+    parser.add_argument(
+        "--roles",
+        type=str,
+        default="mixed",
+        choices=["injector", "assessor", "mixed"],
+        help="Which role examples to generate: injector (2/pair), assessor (2/pair), mixed (4/pair)",
+    )
+
     args = parser.parse_args()
     convert_to_parquet(
-        args.input, 
-        args.output, 
+        args.input,
+        args.output,
         args.injection_prompts,
+        args.detection_prompts,
         args.data_source,
         args.max_pairs,
+        args.roles,
     )
 
 

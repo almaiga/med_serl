@@ -1,0 +1,41 @@
+# MedSeRL Separated GRPO Configuration
+#
+# MAGIC-inspired approach: single model, mixed injector+assessor batches,
+# standard single-turn GRPO (no multi-turn sglang complexity).
+#
+# Usage:
+#   python -m verl.trainer.main_ppo \
+#     --config-path=<path> --config-name=grpo_separated \
+#     [CLI overrides]
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  max_prompt_length: 1024
+  max_response_length: 3072   # Injector: ~2048 CoT + ~128 answer; Assessor: ~256
+  train_batch_size: 16
+  return_raw_chat: True
+
+actor_rollout_ref:
+  hybrid_engine: True
+  rollout:
+    name: vllm               # Standard vllm — no multi-turn needed
+    temperature: 0.7
+    top_p: 0.9
+    top_k: -1
+    gpu_memory_utilization: 0.6
+    tensor_model_parallel_size: 1
+    n: 1
+    # multi_turn is disabled (default in ppo_trainer base config)
+
+algorithm:
+  adv_estimator: grpo        # Or reinforce_plus_plus if grpo unavailable
+
+critic:
+  enable: false
