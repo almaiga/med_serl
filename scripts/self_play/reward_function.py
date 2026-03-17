@@ -483,6 +483,69 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     return reward
 
 
+def interaction_reward_passthrough(
+    data_source, solution_str, ground_truth, extra_info=None
+):
+    """Reward function for multi-turn MedicalGameInteraction training.
+
+    The patched tool_agent_loop.py stores the interaction's final info
+    dict in agent_data.extra_fields, which verl maps to extra_info here.
+
+    If extra_info contains phase='game_complete' (written by
+    MedicalGameInteraction._process_assessor_turn), we read the assessor
+    verdict directly from there.  Otherwise we fall back to parsing the
+    tail of solution_str for the assessor's answer.
+    """
+    extra_info = extra_info or {}
+    ground_truth = str(ground_truth) if ground_truth else ""
+
+    # Primary path: interaction stored its verdict in extra_fields
+    if extra_info.get("phase") == "game_complete":
+        label = extra_info.get("assessor_label", "UNKNOWN")
+        has_fmt = extra_info.get("has_valid_format", False)
+        pred_sid = extra_info.get("assessor_pred_sid")
+        fmt_bonus = FORMAT_BONUS if has_fmt else 0.0
+        gt_correct = ground_truth == "CORRECT"
+
+        if label == "UNKNOWN":
+            return REWARD_MISS
+        if gt_correct and label == "CORRECT":
+            return REWARD_EXACT + fmt_bonus
+        if gt_correct and label != "CORRECT":
+            return REWARD_MISS + fmt_bonus
+        if not gt_correct and label == "CORRECT":
+            return REWARD_MISS + fmt_bonus
+        # not gt_correct and error detected
+        pred_str = str(pred_sid) if pred_sid is not None else "?"
+        if pred_str == ground_truth:
+            return REWARD_EXACT + fmt_bonus
+        if pred_sid is not None:
+            return REWARD_PARTIAL + fmt_bonus
+        return REWARD_PARTIAL
+
+    # Fallback: parse the last assessor answer out of solution_str
+    # (multi-turn solution_str contains both turns concatenated)
+    label, pred_sid = parse_final_answer(solution_str or "")
+    has_fmt = label != "UNKNOWN"
+    fmt_bonus = FORMAT_BONUS if has_fmt else 0.0
+    gt_correct = ground_truth == "CORRECT"
+
+    if label == "UNKNOWN":
+        return REWARD_MISS
+    if gt_correct and label == "CORRECT":
+        return REWARD_EXACT + fmt_bonus
+    if gt_correct and label != "CORRECT":
+        return REWARD_MISS + fmt_bonus
+    if not gt_correct and label == "CORRECT":
+        return REWARD_MISS + fmt_bonus
+    pred_str = str(pred_sid) if pred_sid is not None else "?"
+    if pred_str == ground_truth:
+        return REWARD_EXACT + fmt_bonus
+    if pred_sid is not None:
+        return REWARD_PARTIAL + fmt_bonus
+    return REWARD_PARTIAL
+
+
 def print_summary():
     """Print summary statistics to stdout."""
     summary = get_summary_stats()
