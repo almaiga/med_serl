@@ -149,7 +149,7 @@ def run_vllm_inference(model_path: str, chat_inputs: list[list[dict]]) -> list[s
     sampling = SamplingParams(
         temperature=0.7,
         top_p=0.9,
-        max_tokens=256,  # short: "N. sentence" only (thinking disabled)
+        max_tokens=3072,  # match run_grpo_smoke.sh max_response_length
     )
 
     # Disable thinking for Qwen3 — Phase A only needs "N. sentence", not CoT.
