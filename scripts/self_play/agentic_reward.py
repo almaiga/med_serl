@@ -294,8 +294,8 @@ async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict)
         "temperature": params.get("temperature", 0.1),
         "max_tokens": params.get("max_tokens", 512),
         "top_p": params.get("top_p", 0.95),
-        # Disable Qwen3 thinking mode — we need structured JSON, not <think> tags
-        "chat_template_kwargs": {"enable_thinking": False},
+        # Note: <think> tags are stripped downstream via strip_thinking()
+        # so we don't need to disable thinking mode here.
     }
     try:
         async with session.post(

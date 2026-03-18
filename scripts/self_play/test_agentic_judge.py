@@ -431,7 +431,7 @@ async def run_full_test(examples: List[Dict], responses: List[str]) -> Dict[str,
             probe_payload = {
                 "model": JUDGE_MODEL,
                 "messages": [{"role": "user", "content": "test"}],
-                "max_tokens": 1,
+                "max_tokens": 32,
             }
             async with session.post(
                 JUDGE_URL,
