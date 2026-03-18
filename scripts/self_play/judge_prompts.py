@@ -100,27 +100,31 @@ def format_evidence_for_prompt(evidence_list: list) -> str:
     
     lines = []
     for ev in evidence_list:
+        if not isinstance(ev, dict):
+            continue
         name = ev.get("entity_name", "unknown")
         cui = ev.get("cui", "N/A")
         sem_type = ev.get("semantic_type", "N/A")
         synonyms = ev.get("synonyms", [])
         relations = ev.get("relations", [])
         source = ev.get("source", "UMLS")
-        
+
         # Entity header from config template
         line = fmt.get("entity_template", "Entity: {entity_name}").format(
             entity_name=name, cui=cui, semantic_type=sem_type, source=source
         )
-        
+
         if synonyms:
             syn_str = ", ".join(synonyms[:max_synonyms])
             line += "\n" + fmt.get("synonyms_template", "  Synonyms: {synonyms}").format(
                 synonyms=syn_str
             )
-        
+
         if relations:
             rel_strs = []
             for rel in relations[:max_relations]:
+                if not isinstance(rel, dict):
+                    continue
                 rel_strs.append(
                     f"{rel.get('relation', '?')} → {rel.get('related_name', '?')} "
                     f"(CUI: {rel.get('related_cui', '?')})"
@@ -128,7 +132,7 @@ def format_evidence_for_prompt(evidence_list: list) -> str:
             line += "\n" + fmt.get("relations_template", "  Relations: {relations}").format(
                 relations="; ".join(rel_strs)
             )
-        
+
         lines.append(line)
     
     return "\n".join(lines)

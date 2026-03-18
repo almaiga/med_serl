@@ -355,8 +355,10 @@ def load_interactions(
             except (ValueError, TypeError):
                 pass
 
-        # Enrich assessor records with full note context for the UMLS judge
-        if role_filter == "assessor" and mode not in ("benign", ""):
+        # Enrich assessor records with full note context for the UMLS judge.
+        # Always fetch correct_note — needed for benign false-positive verification
+        # (judge checks if the sentence the model flagged is actually clinically wrong).
+        if role_filter == "assessor":
             # Try exact note_id match first, then fallback pool
             parquet_ctx = note_map.get(note_id, {})
             if not parquet_ctx and fallback_parquet_entries:
@@ -364,6 +366,11 @@ def load_interactions(
                 parquet_ctx = fallback_parquet_entries[i % len(fallback_parquet_entries)]
 
             correct_note = parquet_ctx.get("correct_note", "")
+            if correct_note:
+                extra_info["correct_note"] = correct_note
+
+        # Error-specific enrichment (modified sentence + original sentence)
+        if role_filter == "assessor" and mode not in ("benign", ""):
             incorrect_note = parquet_ctx.get("incorrect_note", "")
 
             # Modified sentence: parse the injector's compact output "N. <text>"
@@ -384,9 +391,6 @@ def load_interactions(
                 if 1 <= error_sid <= len(sents):
                     corrected_sentence = sents[error_sid - 1]
 
-            # Write enriched fields into extra_info
-            if correct_note:
-                extra_info["correct_note"] = correct_note
             if incorrect_note:
                 extra_info["incorrect_note"] = incorrect_note
             if modified_sentence:
