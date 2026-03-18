@@ -670,13 +670,20 @@ async def _judge_pipeline(
     )
     trace["step3_verdict"] = verdict
 
-    # Convert verdict to a score, factoring in location accuracy
+    # Convert verdict to a SIGNED score in [-1, +1].
+    # PASS  → positive (UMLS agrees with/endorses the assessor's detection)
+    # FAIL  → negative (UMLS disagrees — assessor missed or hallucinated an error)
+    # ABSTAIN → neutral (no evidence either way)
+    #
+    # The signed value is used additively in compute_score:
+    #   R = rule_score + UMLS_WEIGHT * umls_score
+    # This ensures UMLS can both reward AND penalize, keeping the reward math sane.
     if verdict["verdict"] == "PASS":
-        umls_score = verdict["score"]
+        umls_score = verdict["score"]           # +0.0 .. +1.0
     elif verdict["verdict"] == "FAIL":
-        umls_score = 1.0 - verdict["score"]
+        umls_score = -verdict["score"]          # -1.0 .. 0.0
     else:
-        # ABSTAIN — no opinion, score 0
+        # ABSTAIN — no evidence, leave rule_score unchanged
         umls_score = 0.0
 
     trace["umls_score"] = umls_score
@@ -802,8 +809,13 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None,
         logger.warning(f"Judge pipeline failed: {e}")
         umls_score, trace = 0.0, {"skipped": True, "skip_reason": f"error: {e}"}
 
-    # Step C: Compute hybrid score
-    final_score = RULE_WEIGHT * rule_score + UMLS_WEIGHT * umls_score
+    # Step C: Compute hybrid score.
+    # umls_score is signed: PASS→+[0,1], FAIL→-[0,1], ABSTAIN→0.
+    # Formula: R = rule_score + UMLS_WEIGHT * umls_score
+    # (NOT a weighted average — UMLS is an additive bonus/penalty on top of rule)
+    # This means UMLS FAIL can push a correct detection below its rule reward,
+    # and UMLS PASS can amplify a detection above the rule reward.
+    final_score = rule_score + UMLS_WEIGHT * umls_score
 
     # Step D: Log the trace
     _log_trace(

@@ -303,9 +303,20 @@ def load_interactions(
     print(f"  Sample assessor note_ids: {sample_assess_nids[:5]}")
     print(f"  Sample injector note_ids: {sample_inj_nids[:5]}")
 
-    # Select up to n target records (keep duplicates — do NOT collapse by note_id)
-    target_records = [r for r in all_records if r.get("role", "assessor") == role_filter][:n]
-    print(f"  Using {len(target_records)} '{role_filter}' records (n={n})")
+    # Deduplicate by note_id — take the last record per unique note (most recent training step).
+    # Without this, GRPO rollouts repeat the same note up to n_steps times, inflating counts
+    # and making metrics meaningless (e.g. 100% detection on 6 notes × 10 rollouts each).
+    role_records = [r for r in all_records if r.get("role", "assessor") == role_filter]
+    by_note: dict = {}
+    anon_count = 0
+    for rec in role_records:
+        nid = str(rec.get("note_id", ""))
+        if not nid:
+            nid = f"__anon_{anon_count}"
+            anon_count += 1
+        by_note[nid] = rec  # last seen wins (most recent training step)
+    target_records = list(by_note.values())[:n]
+    print(f"  Using {len(target_records)} '{role_filter}' records (deduplicated from {len(role_records)}, n={n})")
 
     # Load note context from parquet (for UMLS judge enrichment)
     note_map = _load_parquet_note_map(parquet_path or "")
