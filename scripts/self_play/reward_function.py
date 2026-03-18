@@ -333,13 +333,10 @@ def detect_truncation(response: str) -> dict:
     ends_cleanly = response.rstrip().endswith(('.', '!', '?', '"', "'", ')', ']', '}', '>'))
     
     # Primary truncation signal: opened <think> but never closed it.
-    # Secondary: very long response that doesn't end with punctuation.
-    # NOTE: We no longer check for 'final_answer:' — injector outputs
-    # never contain that string, causing false-positive truncation.
-    is_truncated = (
-        missing_closing_think or
-        (not ends_cleanly and response_chars > 100)  # Long response that doesn't end cleanly
-    )
+    # NOTE: The secondary "not ends_cleanly and > 100 chars" check was removed
+    # because assessors correctly answer "3" or "CORRECT" — neither ends with
+    # standard punctuation — causing 100% false-positive truncation reports.
+    is_truncated = missing_closing_think
     
     return {
         "is_truncated": is_truncated,

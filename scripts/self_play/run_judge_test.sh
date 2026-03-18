@@ -38,7 +38,8 @@ if [ -z "$INTERACTIONS" ]; then
     INTERACTIONS=$(find \
         "$PROJECT_ROOT/results/self_play/interactions" \
         "$PROJECT_ROOT/outputs/self_play" \
-        -name "interactions_*.jsonl" 2>/dev/null | sort | tail -1)
+        -name "interactions_*.jsonl" 2>/dev/null \
+        -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
 fi
 
 if [ -z "$INTERACTIONS" ]; then
