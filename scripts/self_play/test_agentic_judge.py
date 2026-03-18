@@ -279,39 +279,55 @@ def load_interactions(
                 except json.JSONDecodeError:
                     continue
 
-    # Group by note_id; keep most-recent record per (note_id, role)
-    by_note: dict = {}
-    for rec in all_records:
+    # Split by role
+    assessor_records = [r for r in all_records if r.get("role", "assessor") == "assessor"]
+    injector_records = [r for r in all_records if r.get("role") == "injector"]
+
+    # Build injector lookup: note_id → most-recent injector record
+    injector_by_note: dict = {}
+    for rec in injector_records:
         nid = str(rec.get("note_id", ""))
-        role = rec.get("role", "assessor")
-        if nid not in by_note:
-            by_note[nid] = {}
-        by_note[nid][role] = rec  # last one wins
+        injector_by_note[nid] = rec  # last one wins
 
-    # Collect note_ids that have the requested role
-    target_items = [
-        (nid, roles) for nid, roles in by_note.items() if role_filter in roles
-    ][:n]
-
-    total_injector = sum(1 for _, roles in by_note.items() if "injector" in roles)
-    total_assessor = sum(1 for _, roles in by_note.items() if "assessor" in roles)
+    # Diagnostic: sample note_ids
+    sample_assess_nids = list({str(r.get("note_id", "")) for r in assessor_records[:20]})
+    sample_inj_nids = list(injector_by_note.keys())[:5]
     print(
-        f"  Interactions file: {len(all_records)} records, "
-        f"{len(by_note)} unique note_ids "
-        f"(injector={total_injector}, assessor={total_assessor})"
+        f"  Interactions file: {len(all_records)} total records "
+        f"(assessor={len(assessor_records)}, injector={len(injector_records)})"
     )
-    print(f"  Using {len(target_items)} '{role_filter}' records")
+    print(f"  Sample assessor note_ids: {sample_assess_nids[:5]}")
+    print(f"  Sample injector note_ids: {sample_inj_nids[:5]}")
+
+    # Select up to n target records (keep duplicates — do NOT collapse by note_id)
+    target_records = [r for r in all_records if r.get("role", "assessor") == role_filter][:n]
+    print(f"  Using {len(target_records)} '{role_filter}' records (n={n})")
 
     # Load note context from parquet (for UMLS judge enrichment)
     note_map = _load_parquet_note_map(parquet_path or "")
 
+    # Diagnostic: check note_id overlap between interactions and parquet
+    parquet_nids = set(note_map.keys())
+    interact_nids = {str(r.get("note_id", "")) for r in target_records}
+    overlap = parquet_nids & interact_nids
+    print(
+        f"  Parquet note_ids: {len(parquet_nids)} | "
+        f"Interactions note_ids: {len(interact_nids)} | "
+        f"Overlap: {len(overlap)}"
+    )
+    if not overlap and parquet_nids and interact_nids:
+        print(f"  WARNING: No note_id overlap! Parquet samples: {list(parquet_nids)[:3]} "
+              f"vs Interactions samples: {list(interact_nids)[:3]}")
+        print("  Judge will fall back to parquet's first error_sentence as best-effort.")
+
+    # If no overlap, build a fallback pool from parquet for error records
+    fallback_parquet_entries = list(note_map.values()) if not overlap else []
+
     examples, responses = [], []
     n_enriched = 0
 
-    for i, (note_id, roles) in enumerate(target_items):
-        rec = roles[role_filter]
-        injector_rec = roles.get("injector", {})
-
+    for i, rec in enumerate(target_records):
+        note_id = str(rec.get("note_id", f"rec-{i}"))
         mode = rec.get("mode", "error_injection")
         gt = rec.get("ground_truth", "CORRECT")
         model_response = rec.get("model_response", "")
@@ -328,7 +344,7 @@ def load_interactions(
 
         # error_sentence_id from ground_truth for rule scorer
         error_sid = None
-        if mode != "benign" and gt not in ("CORRECT", "", None):
+        if mode not in ("benign", "") and gt not in ("CORRECT", "", None):
             try:
                 error_sid = int(gt)
                 extra_info["error_sentence_id"] = error_sid
@@ -336,13 +352,19 @@ def load_interactions(
                 pass
 
         # Enrich assessor records with full note context for the UMLS judge
-        if role_filter == "assessor" and mode != "benign":
+        if role_filter == "assessor" and mode not in ("benign", ""):
+            # Try exact note_id match first, then fallback pool
             parquet_ctx = note_map.get(note_id, {})
+            if not parquet_ctx and fallback_parquet_entries:
+                # Use a cycling entry from the parquet as best-effort context
+                parquet_ctx = fallback_parquet_entries[i % len(fallback_parquet_entries)]
+
             correct_note = parquet_ctx.get("correct_note", "")
             incorrect_note = parquet_ctx.get("incorrect_note", "")
 
             # Modified sentence: parse the injector's compact output "N. <text>"
             modified_sentence = ""
+            injector_rec = injector_by_note.get(note_id, {})
             if injector_rec:
                 inj_resp = injector_rec.get("model_response", "")
                 _, modified_sentence = parse_injector_compact(inj_resp)
@@ -382,7 +404,7 @@ def load_interactions(
         responses.append(model_response)
 
     print(
-        f"  Judge context enriched: {n_enriched}/{len(target_items)} records "
+        f"  Judge context enriched: {n_enriched}/{len(target_records)} records "
         f"have modified_sentence for UMLS analysis"
     )
 
