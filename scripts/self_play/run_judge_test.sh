@@ -27,12 +27,16 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # ── Find most recent interactions file ───────────────────────────────────────
 if [ -z "$INTERACTIONS" ]; then
-    INTERACTIONS=$(find "$PROJECT_ROOT/outputs/self_play" -name "interactions_*.jsonl" \
-        2>/dev/null | sort | tail -1)
+    # Check both reward_function.py's default log dir and outputs/
+    INTERACTIONS=$(find \
+        "$PROJECT_ROOT/results/self_play/interactions" \
+        "$PROJECT_ROOT/outputs/self_play" \
+        -name "interactions_*.jsonl" 2>/dev/null | sort | tail -1)
 fi
 
 if [ -z "$INTERACTIONS" ]; then
-    echo "ERROR: No interactions_*.jsonl found under outputs/self_play/"
+    echo "ERROR: No interactions_*.jsonl found."
+    echo "Searched: results/self_play/interactions/ and outputs/self_play/"
     echo "Run a smoke test first: bash scripts/self_play/run_reinforce_smoke.sh"
     exit 1
 fi
