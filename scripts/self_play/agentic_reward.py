@@ -339,10 +339,11 @@ async def _extract_entities(sentence: str) -> List[Dict[str, str]]:
             return []
 
         # Strip thinking tags if present
-        _, content = strip_thinking(content)
+        thinking, stripped = strip_thinking(content)
 
-        # Robust JSON extraction — find the first [...] in the response
-        entities = _extract_json_array(content)
+        # Robust JSON extraction — try stripped first, then full content
+        # (handles truncated <think> blocks where </think> never appeared)
+        entities = _extract_json_array(stripped) or _extract_json_array(content)
         if entities is None:
             logger.warning(f"Entity extraction: no JSON array found in: {content[:300]}")
             return []
@@ -418,11 +419,11 @@ async def _adjudicate(
             logger.warning("Adjudication: LLM returned empty")
             return default_result
 
-        # Strip thinking tags
-        _, content = strip_thinking(content)
+        # Strip thinking tags (fallback: search full content if </think> missing)
+        _, stripped = strip_thinking(content)
 
-        # Robust JSON extraction — find the first {...} in the response
-        verdict = _extract_json_object(content)
+        # Robust JSON extraction — try stripped first, then full content
+        verdict = _extract_json_object(stripped) or _extract_json_object(content)
         if verdict is None:
             logger.warning(f"Adjudication: no JSON object found in: {content[:300]}")
             return default_result
