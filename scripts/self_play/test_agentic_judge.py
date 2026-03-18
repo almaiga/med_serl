@@ -184,12 +184,68 @@ def load_parquet_examples(path: str, n: int = 50) -> List[Dict[str, Any]]:
 # Load from real game_interactions.jsonl
 # =============================================================================
 
+def _load_parquet_note_map(parquet_path: str) -> dict:
+    """Load note_id → {correct_note, incorrect_note, error_sentence, corrected_sentence, error_type}
+    from a verl Parquet dataset.  Returns empty dict on failure.
+    """
+    note_map: dict = {}
+    if not parquet_path:
+        return note_map
+    p = Path(parquet_path)
+    if not p.exists():
+        # Try to find the parquet automatically
+        candidates = sorted(
+            (PROJECT_ROOT / "data_processed" / "self_play").glob("*.parquet")
+        )
+        if candidates:
+            p = candidates[0]
+            print(f"  Auto-detected parquet: {p}")
+        else:
+            print(f"  WARNING: Parquet not found at {parquet_path} and no auto-detect hit")
+            return note_map
+    try:
+        import pandas as pd
+        df = pd.read_parquet(p)
+        print(f"  Loading note context from {p} ({len(df)} rows) ...")
+        for _, row in df.iterrows():
+            ei = row.get("extra_info", {})
+            if isinstance(ei, str):
+                try:
+                    ei = json.loads(ei)
+                except json.JSONDecodeError:
+                    ei = {}
+            if not isinstance(ei, dict):
+                ei = {}
+            nid = str(ei.get("note_id", ""))
+            if not nid or nid in note_map:
+                continue
+            note_map[nid] = {
+                "correct_note": ei.get("correct_note", ""),
+                "incorrect_note": ei.get("incorrect_note", ""),
+                "error_sentence": ei.get("error_sentence", ""),
+                "corrected_sentence": ei.get("corrected_sentence", ""),
+                "error_type": ei.get("error_type", ""),
+            }
+        print(f"  Loaded {len(note_map)} unique note contexts from parquet")
+    except Exception as e:
+        print(f"  WARNING: Could not load parquet ({e})")
+    return note_map
+
+
 def load_interactions(
     path: str,
     n: int = 50,
     role_filter: str = "assessor",
+    parquet_path: str = None,
 ) -> tuple:
     """Load real model responses from a game_interactions.jsonl produced by training.
+
+    For assessor role: joins each assessor record with its matching injector
+    record (same note_id) to reconstruct the full context needed by the UMLS
+    judge pipeline:
+        - error_sentence: the injector's modified sentence text
+        - corrected_sentence: the original sentence from the parquet correct_note
+        - correct_note / incorrect_note: full notes from parquet
 
     Returns (examples, responses) in the same format expected by run_dry_test /
     run_full_test, so all existing test logic works unchanged.
@@ -198,15 +254,19 @@ def load_interactions(
         path: Path (or glob) to one or more interactions_*.jsonl files.
         n: Max records to load.
         role_filter: Only load records with this role ("assessor" or "injector").
+        parquet_path: Path to the verl Parquet dataset for note context.
+                      Auto-detected from data_processed/self_play/ if None.
     """
     import glob
+    from scripts.self_play.utils import parse_injector_compact, split_sentences
 
     # Support glob patterns
     paths = sorted(glob.glob(path)) if "*" in path or "?" in path else [path]
     if not paths:
         raise FileNotFoundError(f"No files matched: {path}")
 
-    records = []
+    # Load ALL records (both roles) so we can join injector ↔ assessor
+    all_records: list = []
     for p in paths:
         with open(p) as f:
             for line in f:
@@ -215,39 +275,101 @@ def load_interactions(
                     continue
                 try:
                     rec = json.loads(line)
+                    all_records.append(rec)
                 except json.JSONDecodeError:
                     continue
-                if rec.get("role", "assessor") == role_filter:
-                    records.append(rec)
-        if len(records) >= n:
-            break
 
-    records = records[:n]
-    print(f"  Loaded {len(records)} '{role_filter}' records from {len(paths)} file(s)")
+    # Group by note_id; keep most-recent record per (note_id, role)
+    by_note: dict = {}
+    for rec in all_records:
+        nid = str(rec.get("note_id", ""))
+        role = rec.get("role", "assessor")
+        if nid not in by_note:
+            by_note[nid] = {}
+        by_note[nid][role] = rec  # last one wins
+
+    # Collect note_ids that have the requested role
+    target_items = [
+        (nid, roles) for nid, roles in by_note.items() if role_filter in roles
+    ][:n]
+
+    total_injector = sum(1 for _, roles in by_note.items() if "injector" in roles)
+    total_assessor = sum(1 for _, roles in by_note.items() if "assessor" in roles)
+    print(
+        f"  Interactions file: {len(all_records)} records, "
+        f"{len(by_note)} unique note_ids "
+        f"(injector={total_injector}, assessor={total_assessor})"
+    )
+    print(f"  Using {len(target_items)} '{role_filter}' records")
+
+    # Load note context from parquet (for UMLS judge enrichment)
+    note_map = _load_parquet_note_map(parquet_path or "")
 
     examples, responses = [], []
-    for i, rec in enumerate(records):
+    n_enriched = 0
+
+    for i, (note_id, roles) in enumerate(target_items):
+        rec = roles[role_filter]
+        injector_rec = roles.get("injector", {})
+
         mode = rec.get("mode", "error_injection")
         gt = rec.get("ground_truth", "CORRECT")
-        note_id = rec.get("note_id", f"rec-{i}")
         model_response = rec.get("model_response", "")
         data_source = rec.get("data_source", "medec_selfplay")
 
-        extra_info = {
-            "role": rec.get("role", role_filter),
+        extra_info: dict = {
+            "role": role_filter,
             "mode": mode,
             "note_id": note_id,
             "error_type": rec.get("error_type", ""),
-            # Preserve pre-computed rule reward for reference
             "_logged_rule_reward": rec.get("reward"),
             "_logged_outcome": rec.get("outcome"),
         }
-        # For error modes, pass error_sentence_id so the rule-based scorer works
+
+        # error_sentence_id from ground_truth for rule scorer
+        error_sid = None
         if mode != "benign" and gt not in ("CORRECT", "", None):
             try:
-                extra_info["error_sentence_id"] = int(gt)
+                error_sid = int(gt)
+                extra_info["error_sentence_id"] = error_sid
             except (ValueError, TypeError):
                 pass
+
+        # Enrich assessor records with full note context for the UMLS judge
+        if role_filter == "assessor" and mode != "benign":
+            parquet_ctx = note_map.get(note_id, {})
+            correct_note = parquet_ctx.get("correct_note", "")
+            incorrect_note = parquet_ctx.get("incorrect_note", "")
+
+            # Modified sentence: parse the injector's compact output "N. <text>"
+            modified_sentence = ""
+            if injector_rec:
+                inj_resp = injector_rec.get("model_response", "")
+                _, modified_sentence = parse_injector_compact(inj_resp)
+                modified_sentence = modified_sentence or ""
+            # Fallback to parquet error_sentence
+            if not modified_sentence:
+                modified_sentence = parquet_ctx.get("error_sentence", "")
+
+            # Original (corrected) sentence at error_sentence_id
+            corrected_sentence = parquet_ctx.get("corrected_sentence", "")
+            if not corrected_sentence and correct_note and error_sid is not None:
+                sents = split_sentences(correct_note)
+                if 1 <= error_sid <= len(sents):
+                    corrected_sentence = sents[error_sid - 1]
+
+            # Write enriched fields into extra_info
+            if correct_note:
+                extra_info["correct_note"] = correct_note
+            if incorrect_note:
+                extra_info["incorrect_note"] = incorrect_note
+            if modified_sentence:
+                extra_info["error_sentence"] = modified_sentence
+            if corrected_sentence:
+                extra_info["corrected_sentence"] = corrected_sentence
+
+            if modified_sentence or corrected_sentence:
+                n_enriched += 1
 
         examples.append({
             "data_source": data_source,
@@ -258,6 +380,11 @@ def load_interactions(
             "note_id": note_id,
         })
         responses.append(model_response)
+
+    print(
+        f"  Judge context enriched: {n_enriched}/{len(target_items)} records "
+        f"have modified_sentence for UMLS analysis"
+    )
 
     return examples, responses
 
@@ -598,6 +725,9 @@ def main():
                              "Uses real model responses instead of simulated ones.")
     parser.add_argument("--role", type=str, default="assessor",
                         help="Role to load when using --from-interactions (default: assessor)")
+    parser.add_argument("--parquet", type=str, default=None,
+                        help="Path to verl Parquet dataset for note context enrichment "
+                             "(auto-detected from data_processed/self_play/ if not set)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Test plumbing only (no UMLS/LLM calls)")
     parser.add_argument("--extraction-only", action="store_true",
@@ -607,7 +737,12 @@ def main():
     # ── Load data ──────────────────────────────────────────────────────────────
     if args.from_interactions:
         print(f"Loading real model outputs from {args.from_interactions} (role={args.role}) ...")
-        examples, responses = load_interactions(args.from_interactions, n=args.n, role_filter=args.role)
+        examples, responses = load_interactions(
+            args.from_interactions,
+            n=args.n,
+            role_filter=args.role,
+            parquet_path=args.parquet,
+        )
         print(f"  {len(examples)} records loaded")
     else:
         print(f"Loading {args.n} examples from {args.data} (simulated responses) ...")

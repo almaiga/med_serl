@@ -18,12 +18,19 @@
 #   N_EXAMPLES       — Number of examples to test (default: 30)
 #   INTERACTIONS     — Explicit path to interactions JSONL (auto-detected if unset)
 #   ROLE             — Which role to test: assessor or injector (default: assessor)
+#   PARQUET          — Path to verl Parquet for note context (auto-detected if unset)
 
 N_EXAMPLES="${N_EXAMPLES:-30}"
 ROLE="${ROLE:-assessor}"
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+
+# Auto-detect parquet for judge context enrichment
+if [ -z "$PARQUET" ]; then
+    PARQUET=$(find "$PROJECT_ROOT/data_processed/self_play" \
+        -name "train_grpo.parquet" -o -name "train.parquet" 2>/dev/null | head -1)
+fi
 
 # ── Find most recent interactions file ───────────────────────────────────────
 if [ -z "$INTERACTIONS" ]; then
@@ -44,6 +51,7 @@ fi
 echo "=================================================="
 echo "  MedSeRL Judge Test"
 echo "  Interactions : $INTERACTIONS"
+echo "  Parquet      : ${PARQUET:-(none — no note context enrichment)}"
 echo "  N examples   : $N_EXAMPLES"
 echo "  Role filter  : $ROLE"
 echo "  Judge URL    : ${JUDGE_VLLM_URL:-http://localhost:8002/v1/chat/completions}"
@@ -83,10 +91,14 @@ else
 fi
 echo ""
 
+PARQUET_FLAG=""
+[ -n "$PARQUET" ] && PARQUET_FLAG="--parquet $PARQUET"
+
 python3 -m scripts.self_play.test_agentic_judge \
     --from-interactions "$INTERACTIONS" \
     --n "$N_EXAMPLES" \
     --role "$ROLE" \
+    $PARQUET_FLAG \
     $DRY_RUN_FLAG
 
 EXIT_CODE=$?
