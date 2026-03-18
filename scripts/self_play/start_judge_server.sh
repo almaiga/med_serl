@@ -12,7 +12,7 @@
 #   JUDGE_PORT    — port to listen on (default: 8002)
 #   GPU_MEM_UTIL  — vLLM gpu_memory_utilization (default: 0.85)
 
-JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-4B}"
+JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-8002}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
 

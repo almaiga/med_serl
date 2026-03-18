@@ -165,7 +165,7 @@ def _extract_json_object(text: str) -> Optional[dict]:
 # Fallback vLLM judge server endpoint (standalone/testing mode only)
 # In native GenRM mode, reward_router_address is injected by veRL.
 JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "http://localhost:8002/v1/chat/completions")
-JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-4B")
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
 
 # Hybrid scoring weights (must sum to 1.0)
 RULE_WEIGHT = float(os.getenv("RULE_WEIGHT", "0.6"))
