@@ -38,7 +38,12 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.self_play.reward_function import compute_score as rule_compute_score
-from scripts.self_play.utils import parse_assessor_answer, strip_thinking, split_sentences, find_error_sentence_id
+from scripts.self_play.utils import (
+    parse_assessor_answer,
+    parse_injector_compact,
+    split_sentences,
+    find_error_sentence_id,
+)
 from scripts.self_play.judge_prompts import (
     get_config,
     get_extraction_system_prompt,
@@ -258,7 +263,6 @@ def load_interactions(
                       Auto-detected from data_processed/self_play/ if None.
     """
     import glob
-    from scripts.self_play.utils import parse_injector_compact, split_sentences
 
     # Support glob patterns
     paths = sorted(glob.glob(path)) if "*" in path or "?" in path else [path]
