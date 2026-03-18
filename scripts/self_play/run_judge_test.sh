@@ -59,7 +59,22 @@ else
     echo "=== FULL TEST (judge server + UMLS) ==="
     if [ -z "$JUDGE_VLLM_URL" ]; then
         echo "  WARNING: JUDGE_VLLM_URL not set, defaulting to http://localhost:8002"
-        echo "  Set it to your judge pod's URL: export JUDGE_VLLM_URL=http://<ip>:8002/v1/chat/completions"
+        echo "  Set it to your judge pod's internal DNS URL:"
+        echo "    export JUDGE_VLLM_URL=http://<judge-pod-id>.runpod.internal:8002/v1/chat/completions"
+        echo "  Both pods must have Global Networking enabled in RunPod dashboard."
+    fi
+
+    # Pre-flight connectivity check
+    MODELS_URL="${JUDGE_VLLM_URL:-http://localhost:8002/v1/chat/completions}"
+    MODELS_URL="${MODELS_URL%/chat/completions}/models"
+    echo "  Checking judge server at $MODELS_URL ..."
+    if curl -sf --max-time 8 "$MODELS_URL" > /dev/null 2>&1; then
+        echo "  ✓ Judge server reachable"
+    else
+        echo "  ✗ Cannot reach judge server."
+        echo "    Is Global Networking enabled on both pods?"
+        echo "    Is the judge server running? (bash scripts/self_play/start_judge_server.sh)"
+        exit 1
     fi
 fi
 echo ""
