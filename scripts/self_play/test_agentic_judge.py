@@ -1,24 +1,26 @@
 """
 Test harness for the Agentic UMLS Judge.
 
-Loads N examples from the self-play Parquet dataset, simulates assessor
-responses, runs both the rule-based and agentic reward functions, and
-compares the scores. Also validates the 3-step pipeline (Extract → Retrieve
-→ Adjudicate) with detailed traces.
+Loads N examples from either:
+  a) A self-play Parquet dataset (simulated responses), or
+  b) A real game_interactions.jsonl from a training run (--from-interactions)
+
+Runs both rule-based and agentic reward functions and compares scores.
 
 Usage:
-    # Requires: UMLS_API_KEY env var, vLLM judge server running (standalone mode)
-    # In production, veRL natively manages the judge via GenRM (no server needed)
+    # Quick dry-run (no UMLS/LLM — tests plumbing only)
+    python -m scripts.self_play.test_agentic_judge --dry-run --n 10
 
-    # Quick smoke test (5 examples, no UMLS/LLM — tests plumbing only)
-    python -m scripts.self_play.test_agentic_judge --dry-run --n 5
+    # Full test on real smoke-test outputs (judge server on separate instance)
+    JUDGE_VLLM_URL=http://<judge-pod-ip>:8002/v1/chat/completions \\
+    python -m scripts.self_play.test_agentic_judge \\
+        --from-interactions outputs/self_play/reinforce_smoke_*/interactions_*.jsonl \\
+        --n 30
 
-    # Full test with UMLS + judge LLM (50 examples, standalone vLLM)
-    python -m scripts.self_play.test_agentic_judge --n 50
-
-    # Custom vLLM endpoint
-    JUDGE_VLLM_URL=http://localhost:8002/v1/chat/completions \\
-    python -m scripts.self_play.test_agentic_judge --n 50
+    # Dry-run on real outputs (no judge server needed)
+    python -m scripts.self_play.test_agentic_judge \\
+        --from-interactions outputs/self_play/reinforce_smoke_*/interactions_*.jsonl \\
+        --dry-run --n 20
 """
 
 import argparse
@@ -179,6 +181,88 @@ def load_parquet_examples(path: str, n: int = 50) -> List[Dict[str, Any]]:
 
 
 # =============================================================================
+# Load from real game_interactions.jsonl
+# =============================================================================
+
+def load_interactions(
+    path: str,
+    n: int = 50,
+    role_filter: str = "assessor",
+) -> tuple:
+    """Load real model responses from a game_interactions.jsonl produced by training.
+
+    Returns (examples, responses) in the same format expected by run_dry_test /
+    run_full_test, so all existing test logic works unchanged.
+
+    Args:
+        path: Path (or glob) to one or more interactions_*.jsonl files.
+        n: Max records to load.
+        role_filter: Only load records with this role ("assessor" or "injector").
+    """
+    import glob
+
+    # Support glob patterns
+    paths = sorted(glob.glob(path)) if "*" in path or "?" in path else [path]
+    if not paths:
+        raise FileNotFoundError(f"No files matched: {path}")
+
+    records = []
+    for p in paths:
+        with open(p) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("role", "assessor") == role_filter:
+                    records.append(rec)
+        if len(records) >= n:
+            break
+
+    records = records[:n]
+    print(f"  Loaded {len(records)} '{role_filter}' records from {len(paths)} file(s)")
+
+    examples, responses = [], []
+    for i, rec in enumerate(records):
+        mode = rec.get("mode", "error_injection")
+        gt = rec.get("ground_truth", "CORRECT")
+        note_id = rec.get("note_id", f"rec-{i}")
+        model_response = rec.get("model_response", "")
+        data_source = rec.get("data_source", "medec_selfplay")
+
+        extra_info = {
+            "role": rec.get("role", role_filter),
+            "mode": mode,
+            "note_id": note_id,
+            "error_type": rec.get("error_type", ""),
+            # Preserve pre-computed rule reward for reference
+            "_logged_rule_reward": rec.get("reward"),
+            "_logged_outcome": rec.get("outcome"),
+        }
+        # For error modes, pass error_sentence_id so the rule-based scorer works
+        if mode != "benign" and gt not in ("CORRECT", "", None):
+            try:
+                extra_info["error_sentence_id"] = int(gt)
+            except (ValueError, TypeError):
+                pass
+
+        examples.append({
+            "data_source": data_source,
+            "prompt": [],
+            "ground_truth": str(gt) if gt is not None else "CORRECT",
+            "extra_info": extra_info,
+            "mode": mode,
+            "note_id": note_id,
+        })
+        responses.append(model_response)
+
+    return examples, responses
+
+
+# =============================================================================
 # Simulated assessor responses
 # =============================================================================
 
@@ -253,8 +337,10 @@ def run_dry_test(examples: List[Dict], responses: List[str]) -> Dict[str, Any]:
             "assessor_pred_sid": pred_sid,
             "rule_score": rule_score,
         })
+        logged = ex["extra_info"].get("_logged_rule_reward")
+        logged_str = f"  logged={logged:+.2f}" if logged is not None else ""
         print(f"  [{i:3d}] {str(ex['mode']):16s} gt={str(ex['ground_truth']):8s} "
-              f"pred={label:8s}({pred_sid}) rule={rule_score:+.2f}")
+              f"pred={label:8s}({pred_sid}) rule={rule_score:+.2f}{logged_str}")
 
     # Summary
     scores = [r["rule_score"] for r in results]
@@ -506,30 +592,41 @@ def main():
     parser.add_argument("--n", type=int, default=50, help="Number of examples to test")
     parser.add_argument("--data", type=str,
                         default=str(PROJECT_ROOT / "data_processed" / "self_play" / "train.parquet"),
-                        help="Path to Parquet dataset")
+                        help="Path to Parquet dataset (used when --from-interactions is not set)")
+    parser.add_argument("--from-interactions", type=str, default=None,
+                        help="Path (or glob) to game_interactions.jsonl from a training run. "
+                             "Uses real model responses instead of simulated ones.")
+    parser.add_argument("--role", type=str, default="assessor",
+                        help="Role to load when using --from-interactions (default: assessor)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Test plumbing only (no UMLS/LLM calls)")
     parser.add_argument("--extraction-only", action="store_true",
                         help="Test Step 1 (entity extraction) only")
     args = parser.parse_args()
 
-    print(f"Loading {args.n} examples from {args.data}...")
-    examples = load_parquet_examples(args.data, n=args.n)
-    print(f"Loaded {len(examples)} examples")
+    # ── Load data ──────────────────────────────────────────────────────────────
+    if args.from_interactions:
+        print(f"Loading real model outputs from {args.from_interactions} (role={args.role}) ...")
+        examples, responses = load_interactions(args.from_interactions, n=args.n, role_filter=args.role)
+        print(f"  {len(examples)} records loaded")
+    else:
+        print(f"Loading {args.n} examples from {args.data} (simulated responses) ...")
+        examples = load_parquet_examples(args.data, n=args.n)
+        print(f"Loaded {len(examples)} examples")
+        responses = simulate_assessor_responses(examples)
 
     # Show mode distribution
-    modes = {}
+    modes: dict = {}
     for ex in examples:
         modes[ex["mode"]] = modes.get(ex["mode"], 0) + 1
     print(f"Mode distribution: {modes}")
 
+    # ── Run selected test mode ─────────────────────────────────────────────────
     if args.dry_run:
-        responses = simulate_assessor_responses(examples)
         run_dry_test(examples, responses)
     elif args.extraction_only:
         asyncio.run(test_extraction_only(examples))
     else:
-        responses = simulate_assessor_responses(examples)
         asyncio.run(run_full_test(examples, responses))
 
 
