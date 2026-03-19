@@ -197,18 +197,27 @@ GPU_CHECK_EOF
 [ $? -ne 0 ] && { echo "ABORTING: Not enough GPU memory."; exit 1; }
 
 # ─── Pre-flight: Judge connectivity check ────────────────────────────────────
+# Normalize the URL: strip any path and reconstruct /v1/models endpoint
+JUDGE_BASE_URL=$(echo "$JUDGE_VLLM_URL" | sed 's|/v1/.*||; s|/$||')
+JUDGE_MODELS_URL="${JUDGE_BASE_URL}/v1/models"
+# Also normalise completions URL in case caller set a bare base or wrong suffix
+export JUDGE_VLLM_URL="${JUDGE_BASE_URL}/v1/chat/completions"
+
 echo ""
-echo "=== Pre-flight: Judge connectivity (${JUDGE_VLLM_URL%/chat/completions}/models) ==="
-JUDGE_MODELS_URL="${JUDGE_VLLM_URL%/chat/completions}/models"
+echo "=== Pre-flight: Judge connectivity ($JUDGE_MODELS_URL) ==="
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "$JUDGE_MODELS_URL" 2>/dev/null || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
     echo "  Judge reachable — HTTP $HTTP_CODE OK"
+    echo "  JUDGE_VLLM_URL normalised to: $JUDGE_VLLM_URL"
 else
     echo "  ERROR: Judge returned HTTP $HTTP_CODE (expected 200)."
+    echo "  Tried: $JUDGE_MODELS_URL"
+    echo ""
     echo "  Check that:"
-    echo "    1. The judge pod is running (bash scripts/self_play/start_judge_server.sh)"
+    echo "    1. The judge pod is running: bash scripts/self_play/start_judge_server.sh"
     echo "    2. Both pods have RunPod Global Networking enabled"
-    echo "    3. JUDGE_VLLM_URL is correct: $JUDGE_VLLM_URL"
+    echo "    3. JUDGE_VLLM_URL format: http://<pod-id>.runpod.internal:8002/v1/chat/completions"
+    echo "       Got: $JUDGE_VLLM_URL"
     exit 1
 fi
 
