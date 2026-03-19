@@ -422,7 +422,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_batched_tokens=6144 \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.load_format=safetensors \
-    ++actor_rollout_ref.rollout.attention_backend=flashinfer \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=1024 \
     actor_rollout_ref.rollout.response_length=2048 \
