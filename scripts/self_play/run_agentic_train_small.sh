@@ -142,6 +142,33 @@ else:
         print(f"  PATCHED: widened {n} ImportError → (ImportError, OSError)")
 PATCH_EOF
 
+# ─── Pre-flight: Fix veRL fsdp_workers.py backend string bug ─────────────────
+# veRL constructs "cpu:gloo,cpu:nccl" but PyTorch requires "cpu:gloo,cuda:nccl".
+echo ""
+echo "=== Pre-flight: Patching fsdp_workers.py (cpu:nccl → cuda:nccl) ==="
+python3 << 'PATCH_FSDP'
+import pathlib, re
+
+for candidate in [
+    "/workspace/verl/verl/workers/fsdp_workers.py",
+    "/sgl-workspace/sglang/verl/verl/workers/fsdp_workers.py",
+]:
+    fpath = pathlib.Path(candidate)
+    if not fpath.exists():
+        continue
+    code = fpath.read_text()
+    # Fix any literal or f-string that produces "cpu:nccl"
+    new_code, n = re.subn(r'cpu:nccl', 'cuda:nccl', code)
+    if n == 0:
+        print(f"  {fpath.name}: no 'cpu:nccl' found (already correct or different pattern).")
+    else:
+        fpath.write_text(new_code)
+        print(f"  PATCHED {fpath}: replaced {n} occurrence(s) of 'cpu:nccl' → 'cuda:nccl'")
+    break
+else:
+    print("  SKIP: fsdp_workers.py not found at known paths.")
+PATCH_FSDP
+
 # ─── Pre-flight: GPU memory check ────────────────────────────────────────────
 echo ""
 echo "=== Pre-flight: GPU memory check ==="
