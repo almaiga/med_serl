@@ -875,7 +875,10 @@ async def async_compute_score(data_source, solution_str, ground_truth, extra_inf
         umls_score = 0.0
         trace = {"skipped": True, "skip_reason": f"error: {e}"}
 
-    final_score = RULE_WEIGHT * rule_score + UMLS_WEIGHT * umls_score
+    # Additive formula: UMLS bonus/penalty on top of rule score.
+    # umls_score is signed: PASS→+[0,1], FAIL→-[0,1], ABSTAIN→0.
+    # ABSTAIN leaves rule_score unchanged (neutral — no opinion from UMLS).
+    final_score = rule_score + UMLS_WEIGHT * umls_score
 
     _log_trace(
         data_source=data_source,
