@@ -24,7 +24,7 @@ MAX_PAIRS="${MAX_PAIRS:-20}"
 # Set ZERO_SUM=1 to run a second assessor inference pass in Phase A and use
 # true adversarial (zero-sum) rewards instead of the MEDEC proxy.
 ZERO_SUM="${ZERO_SUM:-0}"
-TRAIN_BATCH_SIZE=32   # 2 GPUs → double the batch
+TRAIN_BATCH_SIZE=16   # 1 GPU
 TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -36,7 +36,7 @@ RAY_TMPDIR_PATH="/workspace/ray_tmp"
 mkdir -p "$RAY_TMPDIR_PATH"
 
 # ── GPU visibility ──
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=0
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 
 # ── Ray env vars for RunPod Docker ──
@@ -245,7 +245,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name=medserl-grpo-chained \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=1 \
