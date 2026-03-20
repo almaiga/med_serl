@@ -42,6 +42,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from tqdm import tqdm
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -692,7 +694,13 @@ async def run_benchmark(
                 "variants": variant_results,
             }
 
-    return await asyncio.gather(*(process_one(example) for example in examples))
+    tasks = [asyncio.create_task(process_one(example)) for example in examples]
+    results: list[dict[str, Any]] = []
+    with tqdm(total=len(tasks), desc="Benchmarking judge", unit="example") as pbar:
+        for task in asyncio.as_completed(tasks):
+            results.append(await task)
+            pbar.update(1)
+    return results
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
