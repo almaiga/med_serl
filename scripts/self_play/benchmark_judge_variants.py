@@ -72,6 +72,7 @@ class Example:
     task_type: str
     subtype: str
     gold_verdict: str
+    original_note: str
     original_sentence: str
     modified_sentence: str
 
@@ -104,9 +105,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         action="append",
-        choices=("plain", "rag"),
+        choices=("plain", "rag", "note_plain", "note_rag", "auto_plain", "auto_rag"),
         default=None,
-        help="Repeatable benchmark mode. Defaults to both plain and rag.",
+        help="Repeatable benchmark mode.",
     )
     parser.add_argument(
         "--error-dataset",
@@ -159,6 +160,7 @@ def load_error_examples(path: Path) -> list[Example]:
                 task_type="error",
                 subtype=str(row.get("error_type", "unknown")),
                 gold_verdict="FAIL",
+                original_note=str(row.get("correct_note", "")),
                 original_sentence=corrected_sentence,
                 modified_sentence=error_sentence,
             )
@@ -188,6 +190,7 @@ def load_benign_examples(path: Path) -> list[Example]:
                 task_type="benign",
                 subtype=str(row.get("change_type", "unknown")),
                 gold_verdict="PASS",
+                original_note=original_note,
                 original_sentence=original_sentence,
                 modified_sentence=modified_sentence,
             )
@@ -206,7 +209,7 @@ def sample_examples(examples: list[Example], max_n: int, seed: int) -> list[Exam
 
 def parse_variants(args: argparse.Namespace) -> list[Variant]:
     judge_specs = args.judge or DEFAULT_JUDGE_SPECS
-    modes = args.mode or ["plain", "rag"]
+    modes = args.mode or ["plain", "rag", "note_plain", "note_rag", "auto_plain", "auto_rag"]
     variants = []
     for spec in judge_specs:
         if "=" not in spec:
@@ -298,6 +301,27 @@ def pair_only_adjudication_context() -> str:
         "Judge only whether the MODIFIED sentence preserves the clinical meaning "
         "of the ORIGINAL sentence."
     )
+
+
+HIGH_RISK_SUBTYPES = {
+    "diagnosis",
+    "management",
+    "treatment",
+    "pharmacotherapy",
+    "causalorganism",
+    "contraindication",
+    "prognosis",
+    "disposition",
+}
+
+CONTEXT_SENSITIVE_RE = re.compile(
+    r"\b("
+    r"he|she|his|her|their|patient|this|that|these|those|it|former|latter|"
+    r"after|before|during|despite|because|due to|therefore|however|"
+    r"history|allergy|pregnan|renal|hepatic|comorbid|family history"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 class LocalJudgeRunner:
@@ -453,6 +477,64 @@ def build_rag_messages(example: Example, evidence_text: str) -> list[dict[str, s
     ]
 
 
+def build_note_plain_messages(example: Example) -> list[dict[str, str]]:
+    system_prompt = (
+        "/no_think You are a clinical note adjudication judge. "
+        "You are given the ORIGINAL NOTE for patient context, the TARGET ORIGINAL SENTENCE, "
+        "and a PROPOSED MODIFIED SENTENCE. "
+        "Decide whether replacing the target sentence with the modified sentence preserves "
+        "the clinical meaning of the note for this patient. "
+        "PASS means clinically equivalent or benign in context. "
+        "FAIL means the change introduces a clinically meaningful medical error in context. "
+        "Output ONLY JSON with keys verdict, score, reasoning. "
+        'Use verdict values "PASS" or "FAIL".'
+    )
+    user_prompt = (
+        "=== ORIGINAL NOTE ===\n"
+        f"{example.original_note}\n\n"
+        "=== TARGET ORIGINAL SENTENCE ===\n"
+        f"{example.original_sentence}\n\n"
+        "=== PROPOSED MODIFIED SENTENCE ===\n"
+        f"{example.modified_sentence}\n\n"
+        "Return JSON only:\n"
+        '{"verdict":"PASS|FAIL","score":0.0,"reasoning":"brief reason"}'
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_note_rag_messages(example: Example, evidence_text: str) -> list[dict[str, str]]:
+    system_prompt = (
+        "/no_think You are a clinical note adjudication judge with UMLS evidence. "
+        "You are given the ORIGINAL NOTE for patient context, the TARGET ORIGINAL SENTENCE, "
+        "and a PROPOSED MODIFIED SENTENCE. "
+        "Decide whether replacing the target sentence with the modified sentence preserves "
+        "the clinical meaning of the note for this patient. "
+        "PASS means clinically equivalent or benign in context. "
+        "FAIL means the change introduces a clinically meaningful medical error in context. "
+        "If you cite no CUIs, score must be 0.0. "
+        "Output ONLY JSON with keys verdict, score, reasoning, cuis_cited."
+    )
+    user_prompt = (
+        "=== ORIGINAL NOTE ===\n"
+        f"{example.original_note}\n\n"
+        "=== TARGET ORIGINAL SENTENCE ===\n"
+        f"{example.original_sentence}\n\n"
+        "=== PROPOSED MODIFIED SENTENCE ===\n"
+        f"{example.modified_sentence}\n\n"
+        "=== UMLS EVIDENCE ===\n"
+        f"{evidence_text}\n\n"
+        "Return JSON only:\n"
+        '{"verdict":"PASS|FAIL","score":0.0,"reasoning":"brief reason","cuis_cited":["C..."]}'
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def parse_plain_prediction(raw: str) -> dict[str, Any]:
     parsed = robust_json_object(raw) or {}
     return {
@@ -529,14 +611,115 @@ async def evaluate_rag(
     return parse_rag_prediction(raw, entities, evidence)
 
 
+async def evaluate_note_plain(
+    example: Example,
+    variant: Variant,
+) -> dict[str, Any]:
+    raw = await llm_generate(
+        judge_model=variant.model,
+        messages=build_note_plain_messages(example),
+        max_tokens=384,
+        temperature=0.1,
+        top_p=0.95,
+    )
+    pred = parse_plain_prediction(raw)
+    pred["context_mode"] = "note"
+    return pred
+
+
+async def evaluate_note_rag(
+    example: Example,
+    variant: Variant,
+    max_entities: int,
+) -> dict[str, Any]:
+    entities_original = await extract_entities_for_sentence(
+        judge_model=variant.model,
+        sentence=example.original_sentence,
+    )
+    entities_modified = await extract_entities_for_sentence(
+        judge_model=variant.model,
+        sentence=example.modified_sentence,
+    )
+    entities = dedupe_entities(entities_original + entities_modified, max_entities=max_entities)
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        evidence_objects = await gather_evidence_batch(session, entities)
+    evidence = [asdict(item) for item in evidence_objects]
+    evidence_text = format_evidence_for_prompt(evidence)
+    raw = await llm_generate(
+        judge_model=variant.model,
+        messages=build_note_rag_messages(example, evidence_text),
+        max_tokens=640,
+        temperature=0.1,
+        top_p=0.95,
+    )
+    pred = parse_rag_prediction(raw, entities, evidence)
+    pred["context_mode"] = "note"
+    return pred
+
+
+def is_context_sensitive(example: Example) -> bool:
+    if example.task_type == "error" and example.subtype.lower() in HIGH_RISK_SUBTYPES:
+        return True
+    text = f"{example.original_sentence} {example.modified_sentence}"
+    return bool(CONTEXT_SENSITIVE_RE.search(text))
+
+
+def should_escalate(example: Example, prediction: dict[str, Any]) -> bool:
+    if prediction.get("verdict") == "ABSTAIN":
+        return True
+    if prediction.get("score", 0.0) < 0.80:
+        return True
+    if is_context_sensitive(example):
+        return True
+    if prediction.get("evidence") and not prediction.get("cuis_cited"):
+        return True
+    return False
+
+
+async def evaluate_auto_plain(
+    example: Example,
+    variant: Variant,
+) -> dict[str, Any]:
+    pair_pred = await evaluate_plain(example=example, variant=variant)
+    pair_pred["context_mode"] = "pair"
+    pair_pred["escalated"] = False
+    if should_escalate(example, pair_pred):
+        note_pred = await evaluate_note_plain(example=example, variant=variant)
+        note_pred["escalated"] = True
+        note_pred["fallback_prediction"] = pair_pred
+        return note_pred
+    return pair_pred
+
+
+async def evaluate_auto_rag(
+    example: Example,
+    variant: Variant,
+    max_entities: int,
+) -> dict[str, Any]:
+    pair_pred = await evaluate_rag(example=example, variant=variant, max_entities=max_entities)
+    pair_pred["context_mode"] = "pair"
+    pair_pred["escalated"] = False
+    if should_escalate(example, pair_pred):
+        note_pred = await evaluate_note_rag(example=example, variant=variant, max_entities=max_entities)
+        note_pred["escalated"] = True
+        note_pred["fallback_prediction"] = pair_pred
+        return note_pred
+    return pair_pred
+
+
 def score_prediction(example: Example, prediction: dict[str, Any]) -> dict[str, Any]:
     verdict_correct = prediction.get("verdict") == example.gold_verdict
     evidence_hit = bool(prediction.get("evidence"))
     cited = bool(prediction.get("cuis_cited"))
+    escalated = bool(prediction.get("escalated"))
+    used_note_context = prediction.get("context_mode") == "note"
     return {
         "verdict_correct": verdict_correct,
         "evidence_hit": evidence_hit,
         "cui_cited": cited,
+        "escalated": escalated,
+        "used_note_context": used_note_context,
     }
 
 
@@ -576,6 +759,8 @@ def aggregate_metrics(records: list[dict[str, Any]], variant_name: str) -> dict[
     )
     evidence_hits = sum(1 for row in records if row["variants"][variant_name]["evidence_hit"])
     cui_citations = sum(1 for row in records if row["variants"][variant_name]["cui_cited"])
+    escalations = sum(1 for row in records if row["variants"][variant_name]["escalated"])
+    note_context_uses = sum(1 for row in records if row["variants"][variant_name]["used_note_context"])
     avg_score = metric_div(
         sum(row["variants"][variant_name]["prediction"]["score"] for row in records),
         total,
@@ -598,6 +783,8 @@ def aggregate_metrics(records: list[dict[str, Any]], variant_name: str) -> dict[
         "avg_score": avg_score,
         "evidence_hit_rate": metric_div(evidence_hits, total),
         "cui_citation_rate": metric_div(cui_citations, total),
+        "escalation_rate": metric_div(escalations, total),
+        "note_context_rate": metric_div(note_context_uses, total),
         "tp": tp,
         "fp": fp,
         "fn": fn,
@@ -671,12 +858,36 @@ async def run_benchmark(
                         example=example,
                         variant=variant,
                     )
-                else:
+                elif variant.mode == "rag":
                     prediction = await evaluate_rag(
                         example=example,
                         variant=variant,
                         max_entities=args.max_entities,
                     )
+                elif variant.mode == "note_plain":
+                    prediction = await evaluate_note_plain(
+                        example=example,
+                        variant=variant,
+                    )
+                elif variant.mode == "note_rag":
+                    prediction = await evaluate_note_rag(
+                        example=example,
+                        variant=variant,
+                        max_entities=args.max_entities,
+                    )
+                elif variant.mode == "auto_plain":
+                    prediction = await evaluate_auto_plain(
+                        example=example,
+                        variant=variant,
+                    )
+                elif variant.mode == "auto_rag":
+                    prediction = await evaluate_auto_rag(
+                        example=example,
+                        variant=variant,
+                        max_entities=args.max_entities,
+                    )
+                else:
+                    raise ValueError(f"Unsupported mode: {variant.mode}")
                 variant_results[variant.name] = {
                     "prediction": prediction,
                     **score_prediction(example, prediction),
@@ -689,6 +900,7 @@ async def run_benchmark(
                 "task_type": example.task_type,
                 "subtype": example.subtype,
                 "gold_verdict": example.gold_verdict,
+                "original_note": example.original_note,
                 "original_sentence": example.original_sentence,
                 "modified_sentence": example.modified_sentence,
                 "variants": variant_results,
