@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark plain pair-judge vs the existing UMLS-backed judge pipeline.
+"""Benchmark the judge in isolation on sentence-pair adjudication.
 
 This benchmark evaluates sentence-pair adjudication, which matches the current
 agentic judge design:
@@ -8,7 +8,7 @@ agentic judge design:
 
 Variants:
   1. plain: direct pair adjudication from original vs modified sentence
-  2. rag: existing extraction -> UMLS/RxNorm retrieval -> adjudication pipeline
+  2. rag: the existing extraction -> UMLS/RxNorm retrieval -> adjudication judge
 
 The RAG path reuses the prompts already defined in
 `configs/prompts/agentic_judge_prompts.json`.
@@ -55,8 +55,6 @@ from scripts.self_play.judge_prompts import (
     get_model_params,
 )
 from scripts.self_play.umls_async import gather_evidence_batch
-from scripts.self_play.utils import find_error_sentence_id
-
 
 DEFAULT_JUDGE_URL = "http://localhost:8002/v1/chat/completions"
 DEFAULT_JUDGE_SPECS = ["qwen3-4b=Qwen/Qwen3-4B"]
@@ -73,10 +71,6 @@ class Example:
     task_type: str
     subtype: str
     gold_verdict: str
-    gold_sentence_id: Optional[int]
-    gold_sentence_text: str
-    original_note: str
-    modified_note: str
     original_sentence: str
     modified_sentence: str
 
@@ -98,7 +92,7 @@ def default_error_datasets() -> list[Path]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark plain pair-judge vs UMLS-backed adjudication."
+        description="Benchmark the judge only on paired sentence adjudication."
     )
     parser.add_argument("--judge-url", default=os.getenv("JUDGE_VLLM_URL", DEFAULT_JUDGE_URL))
     parser.add_argument(
@@ -165,10 +159,6 @@ def load_error_examples(path: Path) -> list[Example]:
                 task_type="error",
                 subtype=str(row.get("error_type", "unknown")),
                 gold_verdict="FAIL",
-                gold_sentence_id=find_error_sentence_id(incorrect_note, error_sentence),
-                gold_sentence_text=error_sentence,
-                original_note=str(row.get("correct_note", "")),
-                modified_note=incorrect_note,
                 original_sentence=corrected_sentence,
                 modified_sentence=error_sentence,
             )
@@ -198,10 +188,6 @@ def load_benign_examples(path: Path) -> list[Example]:
                 task_type="benign",
                 subtype=str(row.get("change_type", "unknown")),
                 gold_verdict="PASS",
-                gold_sentence_id=find_error_sentence_id(modified_note, modified_sentence),
-                gold_sentence_text=modified_sentence,
-                original_note=original_note,
-                modified_note=modified_note,
                 original_sentence=original_sentence,
                 modified_sentence=modified_sentence,
             )
@@ -306,8 +292,36 @@ def metric_div(num: int, denom: int) -> Optional[float]:
     return num / denom if denom else None
 
 
-def adjudication_assessor_prediction() -> str:
-    return "CORRECT (assume the modified sentence is clinically correct)"
+def models_url_from_judge_url(judge_url: str) -> str:
+    return judge_url.rstrip("/").replace("/chat/completions", "/models")
+
+
+async def ensure_judge_server_reachable(judge_url: str, timeout: float) -> None:
+    models_url = models_url_from_judge_url(judge_url)
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            async with session.get(models_url) as response:
+                response.raise_for_status()
+    except Exception as exc:
+        raise SystemExit(
+            "Cannot reach the judge server.\n"
+            f"  judge_url: {judge_url}\n"
+            f"  models_url: {models_url}\n"
+            "Start the vLLM judge server first, or point --judge-url / JUDGE_VLLM_URL "
+            "to the remote judge pod.\n"
+            "Example:\n"
+            "  bash scripts/self_play/start_judge_server.sh\n"
+            "  export JUDGE_VLLM_URL=http://<judge-host>:8002/v1/chat/completions\n"
+            f"Original error: {exc}"
+        ) from exc
+
+
+def pair_only_adjudication_context() -> str:
+    return (
+        "PAIR-ONLY BENCHMARK. There is no assessor prediction in this evaluation. "
+        "Judge only whether the MODIFIED sentence preserves the clinical meaning "
+        "of the ORIGINAL sentence."
+    )
 
 
 async def llm_generate(
@@ -415,7 +429,7 @@ def build_rag_messages(example: Example, evidence_text: str) -> list[dict[str, s
     user_prompt = get_adjudication_user_template().format(
         original_sentence=example.original_sentence,
         modified_sentence=example.modified_sentence,
-        assessor_prediction=adjudication_assessor_prediction(),
+        assessor_prediction=pair_only_adjudication_context(),
         evidence_json=evidence_text,
     )
     return [
@@ -676,13 +690,14 @@ async def run_benchmark(
                     }
 
                 return {
+                    "task": "judge_pair_verdict",
                     "dataset_name": example.dataset_name,
                     "note_id": example.note_id,
                     "task_type": example.task_type,
                     "subtype": example.subtype,
                     "gold_verdict": example.gold_verdict,
-                    "gold_sentence_id": example.gold_sentence_id,
-                    "gold_sentence_text": example.gold_sentence_text,
+                    "original_sentence": example.original_sentence,
+                    "modified_sentence": example.modified_sentence,
                     "variants": variant_results,
                 }
 
@@ -749,6 +764,7 @@ def main() -> None:
     if not args.judge_url:
         raise SystemExit("JUDGE_VLLM_URL / --judge-url is required for full benchmark.")
 
+    asyncio.run(ensure_judge_server_reachable(args.judge_url, min(args.timeout, 10.0)))
     results = asyncio.run(run_benchmark(args, examples, variants))
     summary = make_summary(results, args, variants)
 
