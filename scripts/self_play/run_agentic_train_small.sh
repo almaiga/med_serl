@@ -37,6 +37,7 @@ if [ -z "$JUDGE_VLLM_URL" ]; then
 fi
 export JUDGE_VLLM_URL
 export UMLS_API_KEY="${UMLS_API_KEY:-6878e795-ad79-4743-9758-546cacb8b31c}"
+export WANDB_API_KEY="${WANDB_API_KEY:-}"
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
@@ -305,6 +306,18 @@ else:
         print("WARNING: could not find ray.init call")
 PATCH_RAY
 
+# ─── WandB Setup ──────────────────────────────────────────────────────────────
+echo ""
+echo "=== WandB Setup ==="
+if [ -n "$WANDB_API_KEY" ]; then
+    wandb login "$WANDB_API_KEY" --relogin 2>&1 | tail -1
+    echo "  WandB: logged in via WANDB_API_KEY"
+elif wandb status 2>/dev/null | grep -q "Logged in"; then
+    echo "  WandB: already logged in"
+else
+    echo "  WARNING: WANDB_API_KEY not set and not logged in — logging to console only."
+fi
+
 python3 -m verl.trainer.main_ppo \
     --config-path="$CONFIG_DIR" \
     --config-name="ppo_agentic" \
@@ -368,7 +381,7 @@ python3 -m verl.trainer.main_ppo \
     \
     trainer.total_epochs=$EPOCHS \
     trainer.critic_warmup=0 \
-    trainer.logger=console \
+    "trainer.logger=[console,wandb]" \
     trainer.project_name=medserl-agentic-small \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
