@@ -14,8 +14,8 @@ The RAG path reuses the prompts already defined in
 `configs/prompts/agentic_judge_prompts.json`.
 
 Usage:
-    export JUDGE_VLLM_URL=http://<host>:8002/v1/chat/completions
-    python3 scripts/self_play/benchmark_judge_variants.py
+    python3 scripts/self_play/benchmark_judge_variants.py \
+        --judge qwen3-4b=Qwen/Qwen3-4B
 
     # Compare multiple judge models in one run
     python3 scripts/self_play/benchmark_judge_variants.py \
@@ -35,13 +35,12 @@ import os
 import random
 import re
 import sys
+import threading
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-
-import aiohttp
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -56,12 +55,12 @@ from scripts.self_play.judge_prompts import (
 )
 from scripts.self_play.umls_async import gather_evidence_batch
 
-DEFAULT_JUDGE_URL = "http://localhost:8002/v1/chat/completions"
 DEFAULT_JUDGE_SPECS = ["qwen3-4b=Qwen/Qwen3-4B"]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "self_play" / "judge_benchmark"
 
 JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 JSON_ARR_RE = re.compile(r"\[.*\]", re.DOTALL)
+_LOCAL_RUNNERS: dict[str, "LocalJudgeRunner"] = {}
 
 
 @dataclass
@@ -94,7 +93,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark the judge only on paired sentence adjudication."
     )
-    parser.add_argument("--judge-url", default=os.getenv("JUDGE_VLLM_URL", DEFAULT_JUDGE_URL))
     parser.add_argument(
         "--judge",
         action="append",
@@ -292,30 +290,6 @@ def metric_div(num: int, denom: int) -> Optional[float]:
     return num / denom if denom else None
 
 
-def models_url_from_judge_url(judge_url: str) -> str:
-    return judge_url.rstrip("/").replace("/chat/completions", "/models")
-
-
-async def ensure_judge_server_reachable(judge_url: str, timeout: float) -> None:
-    models_url = models_url_from_judge_url(judge_url)
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-            async with session.get(models_url) as response:
-                response.raise_for_status()
-    except Exception as exc:
-        raise SystemExit(
-            "Cannot reach the judge server.\n"
-            f"  judge_url: {judge_url}\n"
-            f"  models_url: {models_url}\n"
-            "Start the vLLM judge server first, or point --judge-url / JUDGE_VLLM_URL "
-            "to the remote judge pod.\n"
-            "Example:\n"
-            "  bash scripts/self_play/start_judge_server.sh\n"
-            "  export JUDGE_VLLM_URL=http://<judge-host>:8002/v1/chat/completions\n"
-            f"Original error: {exc}"
-        ) from exc
-
-
 def pair_only_adjudication_context() -> str:
     return (
         "PAIR-ONLY BENCHMARK. There is no assessor prediction in this evaluation. "
@@ -324,40 +298,82 @@ def pair_only_adjudication_context() -> str:
     )
 
 
+class LocalJudgeRunner:
+    def __init__(self, model_path: str):
+        from scripts.inference_error_detection import detect_model_type, load_model_and_tokenizer
+
+        self.model_path = model_path
+        self.model_type = detect_model_type(model_path)
+        self.model, self.tokenizer = load_model_and_tokenizer(model_path, self.model_type)
+        self.lock = threading.Lock()
+
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int,
+        temperature: float,
+        top_p: float,
+    ) -> str:
+        import torch
+
+        with self.lock:
+            prompt_kwargs = {"tokenize": False, "add_generation_prompt": True}
+            try:
+                prompt_kwargs["enable_thinking"] = False
+                prompt = self.tokenizer.apply_chat_template(messages, **prompt_kwargs)
+            except TypeError:
+                prompt_kwargs.pop("enable_thinking", None)
+                prompt = self.tokenizer.apply_chat_template(messages, **prompt_kwargs)
+
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            gen_kwargs = {
+                "max_new_tokens": max_tokens,
+                "do_sample": temperature > 0,
+                "temperature": temperature if temperature > 0 else None,
+                "top_p": top_p if temperature > 0 else None,
+                "pad_token_id": self.tokenizer.pad_token_id,
+                "eos_token_id": self.tokenizer.eos_token_id,
+            }
+            gen_kwargs = {k: v for k, v in gen_kwargs.items() if v is not None}
+
+            with torch.no_grad():
+                outputs = self.model.generate(**inputs, **gen_kwargs)
+
+            output_ids = outputs[0, inputs.input_ids.shape[1]:]
+            return self.tokenizer.decode(output_ids, skip_special_tokens=True).strip()
+
+
+def get_local_runner(model_path: str) -> LocalJudgeRunner:
+    runner = _LOCAL_RUNNERS.get(model_path)
+    if runner is None:
+        print(f"Loading local judge model: {model_path}")
+        runner = LocalJudgeRunner(model_path)
+        _LOCAL_RUNNERS[model_path] = runner
+    return runner
+
+
 async def llm_generate(
-    session: aiohttp.ClientSession,
-    judge_url: str,
     judge_model: str,
     messages: list[dict[str, str]],
-    timeout: float,
     *,
     max_tokens: int = 512,
     temperature: float = 0.1,
     top_p: float = 0.95,
 ) -> str:
-    payload = {
-        "model": judge_model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
-    }
-    async with session.post(
-        judge_url,
-        json=payload,
-        timeout=aiohttp.ClientTimeout(total=timeout),
-    ) as response:
-        response.raise_for_status()
-        data = await response.json()
-        return data["choices"][0]["message"]["content"].strip()
+    runner = get_local_runner(judge_model)
+    return await asyncio.to_thread(
+        runner.generate,
+        messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    )
 
 
 async def extract_entities_for_sentence(
-    session: aiohttp.ClientSession,
-    judge_url: str,
     judge_model: str,
     sentence: str,
-    timeout: float,
 ) -> list[dict[str, str]]:
     if not sentence.strip():
         return []
@@ -367,11 +383,8 @@ async def extract_entities_for_sentence(
         {"role": "user", "content": get_extraction_user_template().format(sentence=sentence)},
     ]
     raw = await llm_generate(
-        session=session,
-        judge_url=judge_url,
         judge_model=judge_model,
         messages=messages,
-        timeout=timeout,
         max_tokens=int(params.get("max_tokens", 768)),
         temperature=float(params.get("temperature", 0.1)),
         top_p=float(params.get("top_p", 0.95)),
@@ -471,18 +484,12 @@ def parse_rag_prediction(raw: str, entities: list[dict[str, str]], evidence: lis
 
 
 async def evaluate_plain(
-    session: aiohttp.ClientSession,
     example: Example,
     variant: Variant,
-    judge_url: str,
-    timeout: float,
 ) -> dict[str, Any]:
     raw = await llm_generate(
-        session=session,
-        judge_url=judge_url,
         judge_model=variant.model,
         messages=build_plain_messages(example),
-        timeout=timeout,
         max_tokens=256,
         temperature=0.1,
         top_p=0.95,
@@ -491,38 +498,28 @@ async def evaluate_plain(
 
 
 async def evaluate_rag(
-    session: aiohttp.ClientSession,
     example: Example,
     variant: Variant,
-    judge_url: str,
-    timeout: float,
     max_entities: int,
 ) -> dict[str, Any]:
     entities_original = await extract_entities_for_sentence(
-        session=session,
-        judge_url=judge_url,
         judge_model=variant.model,
         sentence=example.original_sentence,
-        timeout=timeout,
     )
     entities_modified = await extract_entities_for_sentence(
-        session=session,
-        judge_url=judge_url,
         judge_model=variant.model,
         sentence=example.modified_sentence,
-        timeout=timeout,
     )
     entities = dedupe_entities(entities_original + entities_modified, max_entities=max_entities)
-    evidence_objects = await gather_evidence_batch(session, entities)
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        evidence_objects = await gather_evidence_batch(session, entities)
     evidence = [asdict(item) for item in evidence_objects]
     evidence_text = format_evidence_for_prompt(evidence)
     params = get_model_params("adjudication")
     raw = await llm_generate(
-        session=session,
-        judge_url=judge_url,
         judge_model=variant.model,
         messages=build_rag_messages(example, evidence_text),
-        timeout=timeout,
         max_tokens=int(params.get("max_tokens", 512)),
         temperature=float(params.get("temperature", 0.1)),
         top_p=float(params.get("top_p", 0.95)),
@@ -615,7 +612,6 @@ def make_summary(records: list[dict[str, Any]], args: argparse.Namespace, varian
 
     return {
         "created_at": datetime.now().isoformat(),
-        "judge_url": args.judge_url,
         "variants": [
             {"name": variant.name, "label": variant.label, "mode": variant.mode, "model": variant.model}
             for variant in variants
@@ -633,7 +629,11 @@ def fmt_metric(value: Optional[float]) -> str:
     return f"{value:.3f}"
 
 
-def print_dataset_summary(errors: list[Example], benign: list[Example], variants: list[Variant]) -> None:
+def print_dataset_summary(
+    errors: list[Example],
+    benign: list[Example],
+    variants: list[Variant],
+) -> None:
     print(f"Loaded {len(errors)} error examples and {len(benign)} benign examples.")
     print("Variants:")
     for variant in variants:
@@ -660,48 +660,39 @@ async def run_benchmark(
     variants: list[Variant],
 ) -> list[dict[str, Any]]:
     semaphore = asyncio.Semaphore(args.max_concurrency)
-    session_timeout = aiohttp.ClientTimeout(total=args.timeout)
-
-    async with aiohttp.ClientSession(timeout=session_timeout) as session:
-        async def process_one(example: Example) -> dict[str, Any]:
-            async with semaphore:
-                variant_results = {}
-                for variant in variants:
-                    if variant.mode == "plain":
-                        prediction = await evaluate_plain(
-                            session=session,
-                            example=example,
-                            variant=variant,
-                            judge_url=args.judge_url,
-                            timeout=args.timeout,
-                        )
-                    else:
-                        prediction = await evaluate_rag(
-                            session=session,
-                            example=example,
-                            variant=variant,
-                            judge_url=args.judge_url,
-                            timeout=args.timeout,
-                            max_entities=args.max_entities,
-                        )
-                    variant_results[variant.name] = {
-                        "prediction": prediction,
-                        **score_prediction(example, prediction),
-                    }
-
-                return {
-                    "task": "judge_pair_verdict",
-                    "dataset_name": example.dataset_name,
-                    "note_id": example.note_id,
-                    "task_type": example.task_type,
-                    "subtype": example.subtype,
-                    "gold_verdict": example.gold_verdict,
-                    "original_sentence": example.original_sentence,
-                    "modified_sentence": example.modified_sentence,
-                    "variants": variant_results,
+    async def process_one(example: Example) -> dict[str, Any]:
+        async with semaphore:
+            variant_results = {}
+            for variant in variants:
+                if variant.mode == "plain":
+                    prediction = await evaluate_plain(
+                        example=example,
+                        variant=variant,
+                    )
+                else:
+                    prediction = await evaluate_rag(
+                        example=example,
+                        variant=variant,
+                        max_entities=args.max_entities,
+                    )
+                variant_results[variant.name] = {
+                    "prediction": prediction,
+                    **score_prediction(example, prediction),
                 }
 
-        return await asyncio.gather(*(process_one(example) for example in examples))
+            return {
+                "task": "judge_pair_verdict",
+                "dataset_name": example.dataset_name,
+                "note_id": example.note_id,
+                "task_type": example.task_type,
+                "subtype": example.subtype,
+                "gold_verdict": example.gold_verdict,
+                "original_sentence": example.original_sentence,
+                "modified_sentence": example.modified_sentence,
+                "variants": variant_results,
+            }
+
+    return await asyncio.gather(*(process_one(example) for example in examples))
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -749,7 +740,6 @@ def main() -> None:
             "n_examples": len(examples),
             "n_error": len(errors),
             "n_benign": len(benign),
-            "judge_url": args.judge_url,
             "variants": [
                 {"name": variant.name, "label": variant.label, "mode": variant.mode, "model": variant.model}
                 for variant in variants
@@ -761,10 +751,6 @@ def main() -> None:
         print(f"Dry-run summary written to {summary_path}")
         return
 
-    if not args.judge_url:
-        raise SystemExit("JUDGE_VLLM_URL / --judge-url is required for full benchmark.")
-
-    asyncio.run(ensure_judge_server_reachable(args.judge_url, min(args.timeout, 10.0)))
     results = asyncio.run(run_benchmark(args, examples, variants))
     summary = make_summary(results, args, variants)
 

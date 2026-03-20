@@ -1,0 +1,27 @@
+{
+  "created_at": "2026-03-20T13:38:35.567409",
+  "dry_run": true,
+  "n_examples": 4,
+  "n_error": 2,
+  "n_benign": 2,
+  "backend": "local",
+  "judge_url": null,
+  "variants": [
+    {
+      "name": "qwen3-4b_plain",
+      "label": "qwen3-4b",
+      "mode": "plain",
+      "model": "Qwen/Qwen3-4B"
+    },
+    {
+      "name": "qwen3-4b_rag",
+      "label": "qwen3-4b",
+      "mode": "rag",
+      "model": "Qwen/Qwen3-4B"
+    }
+  ],
+  "datasets": [
+    "data_processed/benign_changes/benign_train_clean.jsonl",
+    "data_processed/medec_paired/medec_ms/train/medec_pairs_train.jsonl"
+  ]
+}
