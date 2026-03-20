@@ -77,14 +77,37 @@ def detect_language(filepath: str) -> str:
 
 
 def load_medrect_json(filepath: str) -> List[Dict]:
-    """Load a MEDRECT JSON file (array of objects)."""
-    with open(filepath, "r") as f:
-        data = json.load(f)
-    
-    if not isinstance(data, list):
-        raise ValueError(f"Expected a JSON array in {filepath}, got {type(data).__name__}")
-    
-    return data
+    """Load a MEDRECT JSON or JSONL file."""
+    path = Path(filepath)
+    with open(path, "r", encoding="utf-8") as f:
+        first_nonempty = ""
+        while True:
+            pos = f.tell()
+            line = f.readline()
+            if not line:
+                break
+            if line.strip():
+                first_nonempty = line.strip()
+                f.seek(pos)
+                break
+
+        if not first_nonempty:
+            return []
+
+        if first_nonempty.startswith("["):
+            data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError(
+                    f"Expected a JSON array in {filepath}, got {type(data).__name__}"
+                )
+            return data
+
+        records = []
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+        return records
 
 
 def convert_record(

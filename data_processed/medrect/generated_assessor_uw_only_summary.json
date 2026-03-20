@@ -1,0 +1,14 @@
+{
+  "scope": "uw_only",
+  "pairs_selected": 60,
+  "tasks_total": 120,
+  "accepted": 101,
+  "rejected": 19,
+  "accepted_output": "/Users/josmaiga/Documents/GitHub/med_serl/data_processed/medrect/generated_assessor_uw_only_accepted.jsonl",
+  "rejected_output": "/Users/josmaiga/Documents/GitHub/med_serl/data_processed/medrect/generated_assessor_uw_only_rejected.jsonl",
+  "api_stats": {
+    "total": 120,
+    "success": 120,
+    "failed": 0
+  }
+}
