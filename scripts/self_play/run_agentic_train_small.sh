@@ -16,6 +16,12 @@
 #   N_GPUS          — Number of local GPUs for training (default: 1)
 #   MAX_PAIRS       — MEDEC pairs to generate (default: 100)
 #   EPOCHS          — Training epochs (default: 5)
+#   ROLLOUT_MAX_MODEL_LEN        — vLLM max model len (default: 8192)
+#   ROLLOUT_MAX_BATCHED_TOKENS   — vLLM max batched tokens (default: 8192)
+#   ROLLOUT_RESPONSE_LENGTH      — max response length (default: 6144)
+#   VLLM_GPU_MEM_UTIL            — vLLM GPU memory utilization (default: 0.7)
+#   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
+#   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
 #   SKIP_DATAGEN    — Set to 1 to reuse existing train.parquet
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -27,6 +33,12 @@ MAX_PAIRS="${MAX_PAIRS:-100}"
 EPOCHS="${EPOCHS:-5}"
 TRAIN_BATCH_SIZE=$(( N_GPUS * 16 ))          # 16 per GPU
 TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
+ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
+ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
+ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
+VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
+PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
+LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
 
 # Judge URL — must be set by the user
 if [ -z "$JUDGE_VLLM_URL" ]; then
@@ -122,6 +134,10 @@ echo "N GPUs       : $N_GPUS"
 echo "Max pairs    : $MAX_PAIRS"
 echo "Epochs       : $EPOCHS"
 echo "Train samples: $TRAIN_SAMPLES  (batch=$TRAIN_BATCH_SIZE)"
+echo "Rollout len  : $ROLLOUT_RESPONSE_LENGTH"
+echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
+echo "Max batched  : $ROLLOUT_MAX_BATCHED_TOKENS"
+echo "vLLM mem util: $VLLM_GPU_MEM_UTIL"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
@@ -272,10 +288,13 @@ sleep 2
 # Patch veRL Ray init for Docker
 python3 << 'PATCH_RAY'
 import pathlib, re
-fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
-if not fpath.exists():
-    print("SKIP: main_ppo.py not found")
-else:
+for candidate in [
+    "/workspace/verl/verl/trainer/main_ppo.py",
+    "/sgl-workspace/sglang/verl/verl/trainer/main_ppo.py",
+]:
+    fpath = pathlib.Path(candidate)
+    if not fpath.exists():
+        continue
     code = fpath.read_text()
     CANONICAL = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
     # ── MedSeRL Docker fix (canonical) ──
@@ -293,17 +312,20 @@ else:
     if fresh in code:
         code = code.replace(fresh, CANONICAL)
         fpath.write_text(code)
-        print("PATCHED: fresh → canonical Docker-safe Ray init")
+        print(f"PATCHED {fpath}: fresh → canonical Docker-safe Ray init")
     elif "_ray_kw" in code:
         pattern = r'_ray_kw = OmegaConf\.to_container.*?ray\.init\(\*\*_ray_kw\)'
         new_code, n = re.subn(pattern, CANONICAL, code, count=1, flags=re.DOTALL)
         if n > 0:
             fpath.write_text(new_code)
-            print("PATCHED: replaced existing _ray_kw block")
+            print(f"PATCHED {fpath}: replaced existing _ray_kw block")
         else:
-            print("WARNING: _ray_kw found but regex did not match")
+            print(f"WARNING: {fpath} has _ray_kw but regex did not match")
     else:
-        print("WARNING: could not find ray.init call")
+        print(f"WARNING: could not find ray.init call in {fpath}")
+    break
+else:
+    print("SKIP: main_ppo.py not found")
 PATCH_RAY
 
 # ─── WandB Setup ──────────────────────────────────────────────────────────────
@@ -342,7 +364,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$PPO_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -354,20 +376,20 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.top_p=0.85 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
-    actor_rollout_ref.rollout.max_model_len=8192 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=8192 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=$VLLM_GPU_MEM_UTIL \
+    actor_rollout_ref.rollout.max_model_len=$ROLLOUT_MAX_MODEL_LEN \
+    actor_rollout_ref.rollout.max_num_batched_tokens=$ROLLOUT_MAX_BATCHED_TOKENS \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=2048 \
-    actor_rollout_ref.rollout.response_length=6144 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.response_length=$ROLLOUT_RESPONSE_LENGTH \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$N_GPUS \
     \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     \
     critic.enable=false \
     \
