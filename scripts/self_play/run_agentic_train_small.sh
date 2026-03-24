@@ -19,9 +19,10 @@
 #   ROLLOUT_MAX_MODEL_LEN        — vLLM max model len (default: 8192)
 #   ROLLOUT_MAX_BATCHED_TOKENS   — vLLM max batched tokens (default: 8192)
 #   ROLLOUT_RESPONSE_LENGTH      — max response length (default: 6144)
-#   ROLLOUT_MODE                 — veRL rollout mode: sync or async (default: async)
-#   ROLLOUT_ENFORCE_EAGER        — vLLM eager mode flag (default: False)
-#   ROLLOUT_FREE_CACHE_ENGINE    — free cache / sleep-mode related flag (default: True)
+#   Agentic veRL uses async rollout; this script pins that mode explicitly.
+#   ROLLOUT_ENFORCE_EAGER        — vLLM eager mode flag (default: True)
+#   ROLLOUT_FREE_CACHE_ENGINE    — offload KV cache after rollout generation
+#                                  (default: True, matching verl docs)
 #   VLLM_GPU_MEM_UTIL            — vLLM GPU memory utilization (default: 0.7)
 #   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
@@ -46,8 +47,7 @@ TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
 ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
-ROLLOUT_MODE="${ROLLOUT_MODE:-async}"
-ROLLOUT_ENFORCE_EAGER="${ROLLOUT_ENFORCE_EAGER:-False}"
+ROLLOUT_ENFORCE_EAGER="${ROLLOUT_ENFORCE_EAGER:-True}"
 ROLLOUT_FREE_CACHE_ENGINE="${ROLLOUT_FREE_CACHE_ENGINE:-True}"
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
@@ -179,7 +179,7 @@ echo "Max pairs    : $MAX_PAIRS"
 echo "Epochs       : $EPOCHS"
 echo "Train samples: $TRAIN_SAMPLES  (batch=$TRAIN_BATCH_SIZE)"
 echo "Rollout len  : $ROLLOUT_RESPONSE_LENGTH"
-echo "Rollout mode : $ROLLOUT_MODE"
+echo "Rollout mode : async"
 echo "Eager mode   : $ROLLOUT_ENFORCE_EAGER"
 echo "Free cache   : $ROLLOUT_FREE_CACHE_ENGINE"
 echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
@@ -426,7 +426,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.top_p=0.85 \
-    actor_rollout_ref.rollout.mode=$ROLLOUT_MODE \
+    actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.gpu_memory_utilization=$VLLM_GPU_MEM_UTIL \
     actor_rollout_ref.rollout.max_model_len=$ROLLOUT_MAX_MODEL_LEN \
     actor_rollout_ref.rollout.max_num_batched_tokens=$ROLLOUT_MAX_BATCHED_TOKENS \
