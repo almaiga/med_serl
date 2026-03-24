@@ -22,6 +22,8 @@
 #   VLLM_GPU_MEM_UTIL            — vLLM GPU memory utilization (default: 0.7)
 #   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
+#   SAVE_FREQ       — save checkpoint every N steps (default: 25)
+#   KEEP_ONLY_FINAL_CHECKPOINT — delete older global_step_* dirs at the end (default: 1)
 #   SKIP_DATAGEN    — Set to 1 to reuse existing train.parquet
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -39,6 +41,8 @@ ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
+SAVE_FREQ="${SAVE_FREQ:-25}"
+KEEP_ONLY_FINAL_CHECKPOINT="${KEEP_ONLY_FINAL_CHECKPOINT:-1}"
 
 # Judge URL — must be set by the user
 if [ -z "$JUDGE_VLLM_URL" ]; then
@@ -138,6 +142,7 @@ echo "Rollout len  : $ROLLOUT_RESPONSE_LENGTH"
 echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
 echo "Max batched  : $ROLLOUT_MAX_BATCHED_TOKENS"
 echo "vLLM mem util: $VLLM_GPU_MEM_UTIL"
+echo "Save freq    : $SAVE_FREQ"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
@@ -409,7 +414,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.default_local_dir="$OUTPUT_DIR" \
     trainer.n_gpus_per_node=$N_GPUS \
     trainer.nnodes=1 \
-    trainer.save_freq=25 \
+    trainer.save_freq=$SAVE_FREQ \
     trainer.test_freq=5 \
     trainer.val_before_train=False \
     ++ray_kwargs.ray_init.include_dashboard=False \
@@ -419,6 +424,23 @@ python3 -m verl.trainer.main_ppo \
     2>&1 | tee "$TRAIN_LOG"
 
 TRAIN_EXIT=${PIPESTATUS[0]}
+
+# ─── Keep only final checkpoint for this run ──────────────────────────────────
+if [ "$KEEP_ONLY_FINAL_CHECKPOINT" = "1" ] && [ -d "$OUTPUT_DIR" ]; then
+    mapfile -t STEP_DIRS < <(find "$OUTPUT_DIR" -maxdepth 1 -type d -name 'global_step_*' | sort -V)
+    if [ "${#STEP_DIRS[@]}" -gt 1 ]; then
+        LAST_STEP_DIR="${STEP_DIRS[-1]}"
+        echo ""
+        echo "=== Checkpoint Cleanup ==="
+        echo "Keeping final checkpoint: $LAST_STEP_DIR"
+        for step_dir in "${STEP_DIRS[@]}"; do
+            if [ "$step_dir" != "$LAST_STEP_DIR" ]; then
+                echo "Removing older checkpoint: $step_dir"
+                rm -rf "$step_dir"
+            fi
+        done
+    fi
+fi
 
 # ─── Verification ─────────────────────────────────────────────────────────────
 echo ""
