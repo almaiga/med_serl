@@ -22,6 +22,7 @@
 #   VLLM_GPU_MEM_UTIL            — vLLM GPU memory utilization (default: 0.7)
 #   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
+#   REWARD_NUM_WORKERS — parallel reward workers (default: 4)
 #   SAVE_FREQ       — save checkpoint every N steps (default: 25)
 #   KEEP_ONLY_FINAL_CHECKPOINT — delete older global_step_* dirs at the end (default: 1)
 #   SKIP_DATAGEN    — Set to 1 to reuse existing train.parquet
@@ -41,6 +42,7 @@ ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
+REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
 SAVE_FREQ="${SAVE_FREQ:-25}"
 KEEP_ONLY_FINAL_CHECKPOINT="${KEEP_ONLY_FINAL_CHECKPOINT:-1}"
 
@@ -142,6 +144,7 @@ echo "Rollout len  : $ROLLOUT_RESPONSE_LENGTH"
 echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
 echo "Max batched  : $ROLLOUT_MAX_BATCHED_TOKENS"
 echo "vLLM mem util: $VLLM_GPU_MEM_UTIL"
+echo "Reward work. : $REWARD_NUM_WORKERS"
 echo "Save freq    : $SAVE_FREQ"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
@@ -399,6 +402,7 @@ python3 -m verl.trainer.main_ppo \
     critic.enable=false \
     \
     reward_model.enable=False \
+    reward.num_workers=$REWARD_NUM_WORKERS \
     \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
     custom_reward_function.name=async_compute_score \

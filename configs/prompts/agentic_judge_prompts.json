@@ -44,12 +44,12 @@
     "description": "Default generation parameters for judge LLM calls",
     "extraction": {
       "temperature": 0.1,
-      "max_tokens": 1024,
+      "max_tokens": 256,
       "top_p": 0.95
     },
     "adjudication": {
       "temperature": 0.1,
-      "max_tokens": 2048,
+      "max_tokens": 384,
       "top_p": 0.95
     }
   }

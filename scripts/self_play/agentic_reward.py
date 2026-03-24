@@ -178,6 +178,12 @@ MAX_ENTITIES = int(os.getenv("MAX_ENTITIES_PER_SENTENCE", "10"))
 LLM_TIMEOUT = float(os.getenv("JUDGE_LLM_TIMEOUT", "30"))
 TOTAL_TIMEOUT = float(os.getenv("JUDGE_TOTAL_TIMEOUT", "60"))
 
+# Conservative completion caps for the standalone judge.
+# The adjudication prompt can be long once evidence is included, so keep the
+# requested completion budget small enough to stay within the judge context.
+JUDGE_EXTRACTION_MAX_TOKENS = int(os.getenv("JUDGE_EXTRACTION_MAX_TOKENS", "256"))
+JUDGE_ADJUDICATION_MAX_TOKENS = int(os.getenv("JUDGE_ADJUDICATION_MAX_TOKENS", "384"))
+
 # Module-level reference to veRL-injected GenRM resources
 # Set by compute_score when reward_router_address is provided
 _reward_router_address: Optional[str] = None
@@ -288,11 +294,12 @@ async def _llm_generate_genrm(messages: List[Dict[str, str]], params: dict) -> s
 async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict) -> str:
     """Fallback: call a standalone vLLM server via OpenAI-compatible API."""
     session = await _get_session()
+    max_tokens = int(params.get("max_tokens", 512))
     payload = {
         "model": JUDGE_MODEL,
         "messages": messages,
         "temperature": params.get("temperature", 0.1),
-        "max_tokens": params.get("max_tokens", 512),
+        "max_tokens": max_tokens,
         "top_p": params.get("top_p", 0.95),
         # Note: <think> tags are stripped downstream via strip_thinking()
         # so we don't need to disable thinking mode here.
@@ -326,6 +333,7 @@ async def _extract_entities(sentence: str) -> List[Dict[str, str]]:
         List of {"name": str, "type": str} dicts.
     """
     params = get_model_params("extraction")
+    params["max_tokens"] = min(int(params.get("max_tokens", 256)), JUDGE_EXTRACTION_MAX_TOKENS)
 
     messages = [
         {"role": "system", "content": get_extraction_system_prompt()},
@@ -392,6 +400,7 @@ async def _adjudicate(
         On failure returns {"verdict": "ABSTAIN", "score": 0.0, ...}.
     """
     params = get_model_params("adjudication")
+    params["max_tokens"] = min(int(params.get("max_tokens", 384)), JUDGE_ADJUDICATION_MAX_TOKENS)
     evidence_str = format_evidence_for_prompt(evidence)
 
     user_content = get_adjudication_user_template().format(
