@@ -114,8 +114,28 @@ def _extract_json_array(text: str) -> Optional[list]:
                     if isinstance(result, list):
                         return result
                 except (json.JSONDecodeError, ValueError):
-                    return None
+                    break
                 break
+
+    # Salvage path: recover as many JSON objects as possible from a truncated
+    # array like '[{...}, {...' so extraction failures do not poison the batch.
+    if start != -1:
+        decoder = json.JSONDecoder()
+        items = []
+        i = start + 1
+        while i < len(text):
+            while i < len(text) and text[i] in " \t\r\n,":
+                i += 1
+            if i >= len(text) or text[i] == "]":
+                break
+            try:
+                item, end = decoder.raw_decode(text, i)
+            except json.JSONDecodeError:
+                break
+            items.append(item)
+            i = end
+        if items and all(isinstance(item, dict) for item in items):
+            return items
     return None
 
 
@@ -301,8 +321,9 @@ async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict)
         "temperature": params.get("temperature", 0.1),
         "max_tokens": max_tokens,
         "top_p": params.get("top_p", 0.95),
-        # Note: <think> tags are stripped downstream via strip_thinking()
-        # so we don't need to disable thinking mode here.
+        # Qwen-style models need this explicitly in the standalone vLLM path or
+        # they may spend completion budget on <think> blocks and truncate JSON.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     try:
         async with session.post(
