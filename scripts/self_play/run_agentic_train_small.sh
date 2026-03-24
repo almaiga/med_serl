@@ -64,6 +64,12 @@ TEST_FREQ="${TEST_FREQ:-5}"
 SAVE_FREQ="${SAVE_FREQ:-25}"
 KEEP_ONLY_FINAL_CHECKPOINT="${KEEP_ONLY_FINAL_CHECKPOINT:-1}"
 
+# Paths
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
+TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val.parquet"
+
 if [ -z "${UMLS_MAX_RPS:-}" ]; then
     UMLS_MAX_RPS=$(( 16 / REWARD_NUM_WORKERS ))
     if [ "$UMLS_MAX_RPS" -lt 1 ]; then
@@ -138,11 +144,6 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="small_agentic_${TIMESTAMP}"
 OUTPUT_DIR="outputs/self_play/small_agentic_${TIMESTAMP}"
 
-# Paths
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
-TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val.parquet"
 TRAIN_LOG="$OUTPUT_DIR/train.log"
 
 mkdir -p "$OUTPUT_DIR"
