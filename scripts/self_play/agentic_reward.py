@@ -197,6 +197,7 @@ MAX_ENTITIES = int(os.getenv("MAX_ENTITIES_PER_SENTENCE", "10"))
 # Timeouts
 LLM_TIMEOUT = float(os.getenv("JUDGE_LLM_TIMEOUT", "30"))
 TOTAL_TIMEOUT = float(os.getenv("JUDGE_TOTAL_TIMEOUT", "60"))
+JUDGE_HTTP_MAX_RETRIES = int(os.getenv("JUDGE_HTTP_MAX_RETRIES", "3"))
 
 # Conservative completion caps for the standalone judge.
 # The adjudication prompt can be long once evidence is included, so keep the
@@ -222,8 +223,21 @@ async def _get_session() -> aiohttp.ClientSession:
     """Lazy-init a module-level aiohttp session."""
     global _session
     if _session is None or _session.closed:
-        _session = aiohttp.ClientSession()
+        connector = aiohttp.TCPConnector(
+            enable_cleanup_closed=True,
+            ttl_dns_cache=300,
+            force_close=True,
+        )
+        _session = aiohttp.ClientSession(connector=connector)
     return _session
+
+
+async def _reset_session() -> None:
+    """Drop the shared aiohttp session after connection-level failures."""
+    global _session
+    if _session is not None and not _session.closed:
+        await _session.close()
+    _session = None
 
 
 # =============================================================================
@@ -313,7 +327,6 @@ async def _llm_generate_genrm(messages: List[Dict[str, str]], params: dict) -> s
 
 async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict) -> str:
     """Fallback: call a standalone vLLM server via OpenAI-compatible API."""
-    session = await _get_session()
     max_tokens = int(params.get("max_tokens", 512))
     payload = {
         "model": JUDGE_MODEL,
@@ -325,22 +338,48 @@ async def _llm_generate_standalone(messages: List[Dict[str, str]], params: dict)
         # they may spend completion budget on <think> blocks and truncate JSON.
         "chat_template_kwargs": {"enable_thinking": False},
     }
-    try:
-        async with session.post(
-            JUDGE_URL, json=payload,
-            timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
-        ) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                logger.warning(f"Standalone vLLM returned {resp.status}: {body[:200]}")
-                return ""
-            data = await resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
-            logger.debug(f"LLM raw response ({len(content)} chars): {content[:300]}")
-            return content
-    except Exception as e:
-        logger.warning(f"Standalone LLM call failed: {e}")
-        return ""
+    headers = {"Connection": "close"}
+
+    for attempt in range(1, JUDGE_HTTP_MAX_RETRIES + 1):
+        session = await _get_session()
+        try:
+            async with session.post(
+                JUDGE_URL,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=LLM_TIMEOUT),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.warning(
+                        f"Standalone vLLM returned {resp.status} on attempt "
+                        f"{attempt}/{JUDGE_HTTP_MAX_RETRIES}: {body[:200]}"
+                    )
+                    # Retry transient upstream errors.
+                    if resp.status in {502, 503, 504} and attempt < JUDGE_HTTP_MAX_RETRIES:
+                        await _reset_session()
+                        await asyncio.sleep(min(0.5 * attempt, 2.0))
+                        continue
+                    return ""
+                data = await resp.json()
+                content = data["choices"][0]["message"]["content"].strip()
+                logger.debug(f"LLM raw response ({len(content)} chars): {content[:300]}")
+                return content
+        except (aiohttp.ServerDisconnectedError, aiohttp.ClientConnectionError, asyncio.TimeoutError) as e:
+            logger.warning(
+                f"Standalone LLM call failed on attempt "
+                f"{attempt}/{JUDGE_HTTP_MAX_RETRIES}: {e}"
+            )
+            await _reset_session()
+            if attempt < JUDGE_HTTP_MAX_RETRIES:
+                await asyncio.sleep(min(0.5 * attempt, 2.0))
+                continue
+            return ""
+        except Exception as e:
+            logger.warning(f"Standalone LLM call failed: {e}")
+            return ""
+
+    return ""
 
 
 # =============================================================================
