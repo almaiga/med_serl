@@ -11,10 +11,21 @@
 #   JUDGE_MODEL   — model to serve (default: Qwen/Qwen3-4B)
 #   JUDGE_PORT    — port to listen on (default: 8002)
 #   GPU_MEM_UTIL  — vLLM gpu_memory_utilization (default: 0.85)
+#   JUDGE_HOST    — explicit host or pod ID to advertise to the training pod
 
 JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-8002}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
+
+# Prefer a real RunPod pod identifier if the environment provides one.
+# Fallback to hostname, but warn because in some containers hostname is only
+# a short Docker/container ID and is not reachable via *.runpod.internal.
+RAW_JUDGE_HOST="${JUDGE_HOST:-${RUNPOD_POD_ID:-${RUNPOD_ID:-${RUNPOD_POD_HOSTNAME:-$(hostname)}}}}"
+if [[ "$RAW_JUDGE_HOST" == *.runpod.internal ]]; then
+    JUDGE_ADVERTISED_URL="http://${RAW_JUDGE_HOST}:${JUDGE_PORT}/v1/chat/completions"
+else
+    JUDGE_ADVERTISED_URL="http://${RAW_JUDGE_HOST}.runpod.internal:${JUDGE_PORT}/v1/chat/completions"
+fi
 
 echo "=================================================="
 echo "  MedSeRL Agentic UMLS Judge Server"
@@ -24,9 +35,15 @@ echo "  GPU mem : $GPU_MEM_UTIL"
 echo "=================================================="
 echo ""
 echo "  Once started, set this on the TRAINING pod:"
-echo "    export JUDGE_VLLM_URL=http://$(hostname).runpod.internal:${JUDGE_PORT}/v1/chat/completions"
+echo "    export JUDGE_VLLM_URL=${JUDGE_ADVERTISED_URL}"
 echo ""
-echo "  (hostname = this pod's RunPod ID, reachable via Global Networking)"
+echo "  Host source: ${RAW_JUDGE_HOST}"
+if [[ "${RAW_JUDGE_HOST}" =~ ^[0-9a-f]{12}$ ]]; then
+    echo "  WARNING: ${RAW_JUDGE_HOST} looks like a container hostname, not a RunPod pod ID."
+    echo "  If training cannot reach the judge, rerun with:"
+    echo "    export JUDGE_HOST=<actual-runpod-pod-id>"
+fi
+echo "  (The advertised host must be reachable via RunPod Global Networking.)"
 echo "  Both pods must have Global Networking enabled at deploy time."
 echo ""
 echo "  Then test with:"
