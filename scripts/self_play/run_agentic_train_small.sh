@@ -71,6 +71,22 @@ export RAY_TMPDIR="$RAY_TMPDIR_PATH"
 export RAY_GCS_SERVER_REQUEST_TIMEOUT_S=60
 export HYDRA_FULL_ERROR=1
 
+# ── Disable OTLP/OpenTelemetry export inside Ray workers ──
+# The training pod has hit intermittent SIGSEGVs in Ray background workers
+# inside gRPC/OpenTelemetry metric export. Force local-only execution.
+export OTEL_SDK_DISABLED=true
+export OTEL_TRACES_EXPORTER=none
+export OTEL_METRICS_EXPORTER=none
+export OTEL_LOGS_EXPORTER=none
+unset OTEL_EXPORTER_OTLP_ENDPOINT
+unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+unset OTEL_EXPORTER_OTLP_HEADERS
+unset OTEL_EXPORTER_OTLP_TRACES_HEADERS
+unset OTEL_EXPORTER_OTLP_METRICS_HEADERS
+unset OTEL_EXPORTER_OTLP_LOGS_HEADERS
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="small_agentic_${TIMESTAMP}"
 OUTPUT_DIR="outputs/self_play/small_agentic_${TIMESTAMP}"
