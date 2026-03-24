@@ -18,6 +18,7 @@
 #   EPOCHS          — Training epochs (default: 5)
 #   ROLLOUT_MAX_MODEL_LEN        — vLLM max model len (default: 8192)
 #   ROLLOUT_MAX_BATCHED_TOKENS   — vLLM max batched tokens (default: 8192)
+#   ROLLOUT_MAX_NUM_SEQS         — vLLM max concurrent sequences (default: 8)
 #   ROLLOUT_RESPONSE_LENGTH      — max response length (default: 6144)
 #   Agentic veRL uses async rollout; this script pins that mode explicitly.
 #   ROLLOUT_ENFORCE_EAGER        — vLLM eager mode flag (default: True)
@@ -27,6 +28,7 @@
 #   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
 #   REWARD_NUM_WORKERS — parallel reward workers (default: 4)
+#   REWARD_BACKEND    — `agentic` or `rule` (default: agentic)
 #   UMLS_WEIGHT      — additive UMLS reward weight (default: 0.4; set 0 to disable)
 #   UMLS_MAX_RPS     — per-process NLM request cap; defaults to a conservative
 #                      share of the 20 req/s/IP limit across reward workers
@@ -47,6 +49,7 @@ TRAIN_BATCH_SIZE=$(( N_GPUS * 16 ))          # 16 per GPU
 TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
 ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
+ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
 ROLLOUT_ENFORCE_EAGER="${ROLLOUT_ENFORCE_EAGER:-True}"
 ROLLOUT_FREE_CACHE_ENGINE="${ROLLOUT_FREE_CACHE_ENGINE:-True}"
@@ -54,6 +57,7 @@ VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
+REWARD_BACKEND="${REWARD_BACKEND:-agentic}"
 UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
 VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-16}"
 TEST_FREQ="${TEST_FREQ:-5}"
@@ -68,6 +72,24 @@ if [ -z "${UMLS_MAX_RPS:-}" ]; then
 fi
 export UMLS_MAX_RPS
 export UMLS_WEIGHT
+
+case "${REWARD_BACKEND,,}" in
+    rule)
+        CUSTOM_REWARD_PATH="$PROJECT_ROOT/scripts/self_play/reward_function.py"
+        CUSTOM_REWARD_NAME="compute_score"
+        ;;
+    ""|agentic)
+        REWARD_BACKEND="agentic"
+        CUSTOM_REWARD_PATH="$PROJECT_ROOT/scripts/self_play/agentic_reward.py"
+        CUSTOM_REWARD_NAME="async_compute_score"
+        ;;
+    *)
+        echo "WARNING: Unknown REWARD_BACKEND='$REWARD_BACKEND'; using agentic."
+        REWARD_BACKEND="agentic"
+        CUSTOM_REWARD_PATH="$PROJECT_ROOT/scripts/self_play/agentic_reward.py"
+        CUSTOM_REWARD_NAME="async_compute_score"
+        ;;
+esac
 
 # Judge URL — must be set by the user
 if [ -z "$JUDGE_VLLM_URL" ]; then
@@ -187,7 +209,9 @@ echo "Eager mode   : $ROLLOUT_ENFORCE_EAGER"
 echo "Free cache   : $ROLLOUT_FREE_CACHE_ENGINE"
 echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
 echo "Max batched  : $ROLLOUT_MAX_BATCHED_TOKENS"
+echo "Max seqs     : $ROLLOUT_MAX_NUM_SEQS"
 echo "vLLM mem util: $VLLM_GPU_MEM_UTIL"
+echo "Reward back. : $REWARD_BACKEND ($CUSTOM_REWARD_NAME)"
 echo "Reward work. : $REWARD_NUM_WORKERS"
 echo "UMLS weight  : $UMLS_WEIGHT"
 echo "UMLS max RPS : $UMLS_MAX_RPS per worker"
@@ -434,6 +458,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=$VLLM_GPU_MEM_UTIL \
     actor_rollout_ref.rollout.max_model_len=$ROLLOUT_MAX_MODEL_LEN \
     actor_rollout_ref.rollout.max_num_batched_tokens=$ROLLOUT_MAX_BATCHED_TOKENS \
+    actor_rollout_ref.rollout.max_num_seqs=$ROLLOUT_MAX_NUM_SEQS \
     actor_rollout_ref.rollout.enforce_eager=$ROLLOUT_ENFORCE_EAGER \
     actor_rollout_ref.rollout.free_cache_engine=$ROLLOUT_FREE_CACHE_ENGINE \
     actor_rollout_ref.rollout.load_format=safetensors \
@@ -452,8 +477,8 @@ python3 -m verl.trainer.main_ppo \
     reward_model.enable=False \
     reward.num_workers=$REWARD_NUM_WORKERS \
     \
-    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/agentic_reward.py" \
-    custom_reward_function.name=async_compute_score \
+    custom_reward_function.path="$CUSTOM_REWARD_PATH" \
+    custom_reward_function.name=$CUSTOM_REWARD_NAME \
     \
     algorithm.use_kl_in_reward=False \
     algorithm.kl_ctrl.kl_coef=0.001 \
