@@ -69,6 +69,8 @@ export RAY_memory_monitor_refresh_ms=0
 export RAY_raylet_start_wait_time_s=300
 export RAY_TMPDIR="$RAY_TMPDIR_PATH"
 export RAY_GCS_SERVER_REQUEST_TIMEOUT_S=60
+export RAY_USAGE_STATS_ENABLED=0
+export RAY_enable_open_telemetry=0
 export HYDRA_FULL_ERROR=1
 
 # ── Disable OTLP/OpenTelemetry export inside Ray workers ──
