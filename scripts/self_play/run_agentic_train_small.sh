@@ -23,6 +23,8 @@
 #   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
 #   REWARD_NUM_WORKERS — parallel reward workers (default: 4)
+#   VAL_MAX_SAMPLES  — validation examples per test pass (default: 16)
+#   TEST_FREQ        — run validation every N steps (default: 5)
 #   SAVE_FREQ       — save checkpoint every N steps (default: 25)
 #   KEEP_ONLY_FINAL_CHECKPOINT — delete older global_step_* dirs at the end (default: 1)
 #   SKIP_DATAGEN    — Set to 1 to reuse existing train.parquet
@@ -43,6 +45,8 @@ VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
+VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-16}"
+TEST_FREQ="${TEST_FREQ:-5}"
 SAVE_FREQ="${SAVE_FREQ:-25}"
 KEEP_ONLY_FINAL_CHECKPOINT="${KEEP_ONLY_FINAL_CHECKPOINT:-1}"
 
@@ -377,7 +381,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_batch_size=$TRAIN_BATCH_SIZE \
     data.val_batch_size=16 \
     data.train_max_samples=$TRAIN_SAMPLES \
-    data.val_max_samples=16 \
+    data.val_max_samples=$VAL_MAX_SAMPLES \
     data.max_prompt_length=2048 \
     data.max_response_length=6144 \
     data.filter_overlong_prompts=False \
@@ -437,7 +441,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=$N_GPUS \
     trainer.nnodes=1 \
     trainer.save_freq=$SAVE_FREQ \
-    trainer.test_freq=5 \
+    trainer.test_freq=$TEST_FREQ \
     trainer.val_before_train=False \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=8 \
