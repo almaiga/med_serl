@@ -17,8 +17,10 @@ import json
 import hashlib
 import logging
 import asyncio
+import time
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field, asdict
+from collections import deque
 
 import aiohttp
 
@@ -73,6 +75,9 @@ TRUSTED_SOURCES = ["SNOMEDCT_US", "NCI", "MSH", "MTH", "CHV", "MDR"]
 TRUSTED_TTYS = ["PT", "SY", "ET", "LLT"]
 UMLS_MAX_CONCURRENCY = int(os.getenv("UMLS_MAX_CONCURRENCY", "4"))
 UMLS_ENTITY_TIMEOUT = float(os.getenv("UMLS_ENTITY_TIMEOUT", "20"))
+UMLS_MAX_RPS = max(1, int(os.getenv("UMLS_MAX_RPS", "8")))
+_REQUEST_TIMESTAMPS: deque[float] = deque()
+_REQUEST_LOCK = asyncio.Lock()
 
 # Semantic types we consider clinically relevant (from medical_knowledge_base.py)
 CLINICAL_SEMANTIC_TYPES = {
@@ -106,6 +111,23 @@ def _get_api_key() -> str:
     return key
 
 
+async def _throttle_nlm_request() -> None:
+    """Rate-limit outbound NLM requests within this process."""
+    while True:
+        async with _REQUEST_LOCK:
+            now = time.monotonic()
+            while _REQUEST_TIMESTAMPS and now - _REQUEST_TIMESTAMPS[0] >= 1.0:
+                _REQUEST_TIMESTAMPS.popleft()
+
+            if len(_REQUEST_TIMESTAMPS) < UMLS_MAX_RPS:
+                _REQUEST_TIMESTAMPS.append(now)
+                return
+
+            sleep_s = max(0.01, 1.0 - (now - _REQUEST_TIMESTAMPS[0]))
+
+        await asyncio.sleep(sleep_s)
+
+
 async def _async_get(
     session: aiohttp.ClientSession,
     url: str,
@@ -118,6 +140,7 @@ async def _async_get(
         return _CACHE[key]
 
     try:
+        await _throttle_nlm_request()
         async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
             if resp.status == 200:
                 data = await resp.json()
@@ -298,6 +321,7 @@ async def async_get_rxcui(
     url = f"{RXNORM_BASE_URL}/rxcui.json"
     params = {"name": drug_name, "search": "1"}
     try:
+        await _throttle_nlm_request()
         async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
                 data = await resp.json()
@@ -322,6 +346,7 @@ async def async_get_drug_class(
     url = f"{RXNORM_BASE_URL}/rxclass/class/byDrugName.json"
     params = {"rxcui": rxcui, "relaSource": "FDASPL", "rela": "has_EPC"}
     try:
+        await _throttle_nlm_request()
         async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
                 data = await resp.json()
@@ -463,3 +488,4 @@ def clear_cache():
     """Clear the module-level cache. Call between training epochs if desired."""
     global _CACHE
     _CACHE.clear()
+    _REQUEST_TIMESTAMPS.clear()

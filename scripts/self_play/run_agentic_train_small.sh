@@ -23,6 +23,8 @@
 #   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
 #   REWARD_NUM_WORKERS — parallel reward workers (default: 4)
+#   UMLS_MAX_RPS     — per-process NLM request cap; defaults to a conservative
+#                      share of the 20 req/s/IP limit across reward workers
 #   VAL_MAX_SAMPLES  — validation examples per test pass (default: 16)
 #   TEST_FREQ        — run validation every N steps (default: 5)
 #   SAVE_FREQ       — save checkpoint every N steps (default: 25)
@@ -49,6 +51,14 @@ VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-16}"
 TEST_FREQ="${TEST_FREQ:-5}"
 SAVE_FREQ="${SAVE_FREQ:-25}"
 KEEP_ONLY_FINAL_CHECKPOINT="${KEEP_ONLY_FINAL_CHECKPOINT:-1}"
+
+if [ -z "${UMLS_MAX_RPS:-}" ]; then
+    UMLS_MAX_RPS=$(( 16 / REWARD_NUM_WORKERS ))
+    if [ "$UMLS_MAX_RPS" -lt 1 ]; then
+        UMLS_MAX_RPS=1
+    fi
+fi
+export UMLS_MAX_RPS
 
 # Judge URL — must be set by the user
 if [ -z "$JUDGE_VLLM_URL" ]; then
@@ -167,6 +177,7 @@ echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
 echo "Max batched  : $ROLLOUT_MAX_BATCHED_TOKENS"
 echo "vLLM mem util: $VLLM_GPU_MEM_UTIL"
 echo "Reward work. : $REWARD_NUM_WORKERS"
+echo "UMLS max RPS : $UMLS_MAX_RPS per worker"
 echo "Save freq    : $SAVE_FREQ"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
