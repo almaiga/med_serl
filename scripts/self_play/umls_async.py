@@ -16,6 +16,7 @@ import os
 import json
 import hashlib
 import logging
+import asyncio
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field, asdict
 
@@ -70,6 +71,8 @@ def _cache_key(prefix: str, **kwargs) -> str:
 UMLS_BASE_URL = "https://uts-ws.nlm.nih.gov/rest"
 TRUSTED_SOURCES = ["SNOMEDCT_US", "NCI", "MSH", "MTH", "CHV", "MDR"]
 TRUSTED_TTYS = ["PT", "SY", "ET", "LLT"]
+UMLS_MAX_CONCURRENCY = int(os.getenv("UMLS_MAX_CONCURRENCY", "4"))
+UMLS_ENTITY_TIMEOUT = float(os.getenv("UMLS_ENTITY_TIMEOUT", "20"))
 
 # Semantic types we consider clinically relevant (from medical_knowledge_base.py)
 CLINICAL_SEMANTIC_TYPES = {
@@ -389,12 +392,23 @@ async def gather_entity_evidence(
     evidence.found = True
     
     # Step 2: Parallel fetch synonyms, semantic type, relations
-    import asyncio
     syn_task = asyncio.create_task(async_get_synonyms(session, cui, api_key))
     sem_task = asyncio.create_task(async_get_semantic_type(session, cui, api_key))
     rel_task = asyncio.create_task(async_get_relations(session, cui, api_key))
-    
-    synonyms, sem_type, relations = await asyncio.gather(syn_task, sem_task, rel_task)
+
+    synonyms, sem_type, relations = await asyncio.gather(
+        syn_task, sem_task, rel_task, return_exceptions=True
+    )
+
+    if isinstance(synonyms, Exception):
+        logger.debug(f"UMLS synonyms lookup failed for {entity_name}: {synonyms}")
+        synonyms = []
+    if isinstance(sem_type, Exception):
+        logger.debug(f"UMLS semantic type lookup failed for {entity_name}: {sem_type}")
+        sem_type = ""
+    if isinstance(relations, Exception):
+        logger.debug(f"UMLS relations lookup failed for {entity_name}: {relations}")
+        relations = []
     
     evidence.synonyms = synonyms[:10]  # Cap at 10
     evidence.semantic_type = sem_type or ""
@@ -419,12 +433,30 @@ async def gather_evidence_batch(
     Returns:
         List of UMLSEvidence, one per entity.
     """
-    import asyncio
-    tasks = [
-        gather_entity_evidence(session, ent["name"], ent.get("type", ""), api_key)
-        for ent in entities
-    ]
-    return await asyncio.gather(*tasks)
+    semaphore = asyncio.Semaphore(max(1, UMLS_MAX_CONCURRENCY))
+
+    async def _run_one(ent: Dict[str, str]) -> UMLSEvidence:
+        async with semaphore:
+            try:
+                return await asyncio.wait_for(
+                    gather_entity_evidence(session, ent["name"], ent.get("type", ""), api_key),
+                    timeout=UMLS_ENTITY_TIMEOUT,
+                )
+            except Exception as e:
+                logger.debug(f"Evidence lookup failed for {ent.get('name', '')}: {e}")
+                return UMLSEvidence(entity_name=ent.get("name", ""))
+
+    tasks = [_run_one(ent) for ent in entities]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    evidence_list: List[UMLSEvidence] = []
+    for ent, result in zip(entities, results):
+        if isinstance(result, Exception):
+            logger.debug(f"Evidence batch task failed for {ent.get('name', '')}: {result}")
+            evidence_list.append(UMLSEvidence(entity_name=ent.get("name", "")))
+        else:
+            evidence_list.append(result)
+    return evidence_list
 
 
 def clear_cache():

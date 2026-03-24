@@ -198,6 +198,7 @@ MAX_ENTITIES = int(os.getenv("MAX_ENTITIES_PER_SENTENCE", "10"))
 LLM_TIMEOUT = float(os.getenv("JUDGE_LLM_TIMEOUT", "30"))
 TOTAL_TIMEOUT = float(os.getenv("JUDGE_TOTAL_TIMEOUT", "60"))
 JUDGE_HTTP_MAX_RETRIES = int(os.getenv("JUDGE_HTTP_MAX_RETRIES", "3"))
+UMLS_BATCH_TIMEOUT = float(os.getenv("UMLS_BATCH_TIMEOUT", "20"))
 
 # Conservative completion caps for the standalone judge.
 # The adjudication prompt can be long once evidence is included, so keep the
@@ -436,7 +437,10 @@ async def _retrieve_evidence(entities: List[Dict[str, str]]) -> List[Dict[str, A
 
     session = await _get_session()
     try:
-        evidence_objs = await gather_evidence_batch(session, entities)
+        evidence_objs = await asyncio.wait_for(
+            gather_evidence_batch(session, entities),
+            timeout=UMLS_BATCH_TIMEOUT,
+        )
         return [ev.to_dict() for ev in evidence_objs]
     except Exception as e:
         logger.debug(f"Evidence retrieval failed: {e}")
