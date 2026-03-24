@@ -24,6 +24,7 @@
 #   ROLLOUT_ENFORCE_EAGER        — vLLM eager mode flag (default: True)
 #   ROLLOUT_FREE_CACHE_ENGINE    — offload KV cache after rollout generation
 #                                  (default: True, matching verl docs)
+#   ROLLOUT_ENABLE_SLEEP_MODE    — vLLM sleep/wake mode (default: False)
 #   VLLM_GPU_MEM_UTIL            — vLLM GPU memory utilization (default: 0.7)
 #   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
@@ -53,6 +54,7 @@ ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
 ROLLOUT_ENFORCE_EAGER="${ROLLOUT_ENFORCE_EAGER:-True}"
 ROLLOUT_FREE_CACHE_ENGINE="${ROLLOUT_FREE_CACHE_ENGINE:-True}"
+ROLLOUT_ENABLE_SLEEP_MODE="${ROLLOUT_ENABLE_SLEEP_MODE:-False}"
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
@@ -208,6 +210,7 @@ echo "Rollout len  : $ROLLOUT_RESPONSE_LENGTH"
 echo "Rollout mode : async"
 echo "Eager mode   : $ROLLOUT_ENFORCE_EAGER"
 echo "Free cache   : $ROLLOUT_FREE_CACHE_ENGINE"
+echo "Sleep mode   : $ROLLOUT_ENABLE_SLEEP_MODE"
 echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
 echo "Max batched  : $ROLLOUT_MAX_BATCHED_TOKENS"
 echo "Max seqs     : $ROLLOUT_MAX_NUM_SEQS"
@@ -462,6 +465,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_seqs=$ROLLOUT_MAX_NUM_SEQS \
     actor_rollout_ref.rollout.enforce_eager=$ROLLOUT_ENFORCE_EAGER \
     actor_rollout_ref.rollout.free_cache_engine=$ROLLOUT_FREE_CACHE_ENGINE \
+    actor_rollout_ref.rollout.enable_sleep_mode=$ROLLOUT_ENABLE_SLEEP_MODE \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=2048 \
