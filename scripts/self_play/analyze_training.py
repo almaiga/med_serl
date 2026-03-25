@@ -20,21 +20,27 @@ import sys
 import re
 
 
-def load_interactions(log_dir: Path) -> list:
-    """Load all interaction logs from directory."""
+def load_interactions(log_path: Path) -> list:
+    """Load interactions from a specific file or a directory.
+
+    When given a directory, prefer `game_*.jsonl` because those are the
+    multi-turn interaction logs written by MedicalGameInteraction. The older
+    `interactions_*.jsonl` files are reward-function logs with a different
+    schema and can be newer by mtime, which makes auto-selection misleading.
+    """
     interactions = []
-    
-    # Support both the older reward-function logs (interactions_*.jsonl)
-    # and the current multi-turn interaction logs (game_*.jsonl).
-    log_files = list(log_dir.glob("interactions_*.jsonl")) + list(log_dir.glob("game_*.jsonl"))
-    log_files = sorted(log_files, key=lambda p: p.stat().st_mtime, reverse=True)
-    
-    if not log_files:
-        print(f"No interaction logs found in {log_dir}")
-        return []
-    
-    # Use most recent log file
-    log_file = log_files[0]
+
+    if log_path.is_file():
+        log_file = log_path
+    else:
+        game_logs = sorted(log_path.glob("game_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        interaction_logs = sorted(log_path.glob("interactions_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        log_files = game_logs if game_logs else interaction_logs
+        if not log_files:
+            print(f"No interaction logs found in {log_path}")
+            return []
+        log_file = log_files[0]
+
     print(f"Loading from: {log_file}")
     
     with open(log_file, 'r') as f:
@@ -354,7 +360,7 @@ def main():
         "--log-dir",
         type=Path,
         default=Path("results/self_play/interactions"),
-        help="Directory containing interaction logs",
+        help="Directory containing interaction logs, or a specific jsonl log file",
     )
     parser.add_argument(
         "--samples",

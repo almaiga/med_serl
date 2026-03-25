@@ -99,6 +99,10 @@ cd "$PROJECT_ROOT"
 mkdir -p "$OUTPUT_DIR"
 mkdir -p results/self_play/interactions
 
+# Use a run-specific multi-turn interaction log unless the caller overrides it.
+export MEDSERL_GAME_LOG="${MEDSERL_GAME_LOG:-$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl}"
+echo "✓ Game log set to: $MEDSERL_GAME_LOG"
+
 # Step 1: Regenerate training data with updated prompts (no answer leakage)
 echo ""
 echo "=== Step 1: Preprocessing MEDEC data with updated prompts ==="
@@ -225,9 +229,9 @@ echo "Logs: results/self_play/interactions/"
 # Step 3: Analyze results
 echo ""
 echo "=== Step 3: Analyzing Training Results ==="
-if [ -d "results/self_play/interactions" ]; then
+if [ -f "$MEDSERL_GAME_LOG" ]; then
     python3 scripts/self_play/analyze_training.py \
-        --log-dir results/self_play/interactions \
+        --log-dir "$MEDSERL_GAME_LOG" \
         --samples 3
 fi
 
