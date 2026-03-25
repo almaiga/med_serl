@@ -12,10 +12,14 @@ set -e
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_multiturn}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_multiturn}"
 MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
+N_GPUS="${N_GPUS:-2}"
+ROLLOUT_TP="${ROLLOUT_TP:-$N_GPUS}"
 MAX_PAIRS="${MAX_PAIRS:-50}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
 VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-16}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
+PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
+ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.4}"
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
 
@@ -38,6 +42,8 @@ echo "=================================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
+echo "GPUs: $N_GPUS"
+echo "Rollout TP: $ROLLOUT_TP"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
 echo "=================================================="
 
@@ -53,6 +59,7 @@ fi
 
 # Set PYTHONPATH so verl can import MedicalGameInteraction
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+export SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK=True
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
 
 # Change to project directory
@@ -133,8 +140,10 @@ python3 -m verl.trainer.main_ppo \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.trust_remote_code=True \
+    actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.strategy=fsdp2 \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
+    actor_rollout_ref.actor.ppo_mini_batch_size="$PPO_MINI_BATCH_SIZE" \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.ppo_epochs=2 \
     actor_rollout_ref.actor.use_kl_loss=False \
@@ -146,14 +155,17 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
+    actor_rollout_ref.rollout.gpu_memory_utilization="$ROLLOUT_GPU_MEMORY_UTILIZATION" \
     actor_rollout_ref.rollout.enforce_eager=True \
     actor_rollout_ref.rollout.multi_turn.enable=True \
     actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
     actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
+    actor_rollout_ref.rollout.multi_turn.use_inference_chat_template=True \
+    actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     critic.enable=false \
     algorithm.gamma=1.0 \
     algorithm.lam=0.95 \
@@ -165,7 +177,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name='medserl-selfplay' \
     trainer.experiment_name=$EXPERIMENT_NAME \
     trainer.default_local_dir=$OUTPUT_DIR \
-    trainer.n_gpus_per_node=1 \
+    trainer.n_gpus_per_node="$N_GPUS" \
     trainer.nnodes=1 \
     trainer.total_epochs="$TOTAL_EPOCHS" \
     trainer.save_freq=50 \
