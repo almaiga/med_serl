@@ -30,6 +30,7 @@ from scripts.self_play.utils import (
     number_sentences,
     parse_assessor_answer,
     reconstruct_note,
+    strip_thinking,
 )
 from scripts.self_play.cot_parser import (
     parse_injector_output,
@@ -60,6 +61,7 @@ INJECTOR_TOP_P = 0.95        # Qwen3 official recommendation
 # Assessor: low temperature for precise, deterministic classification
 ASSESSOR_TEMPERATURE = 0.3
 ASSESSOR_TOP_P = 0.95
+ASSESSOR_MAX_NEW_TOKENS = 256
 
 
 # JSONL logging — written by the interaction (source of truth for rewards)
@@ -289,7 +291,7 @@ class MedicalGameInteraction(BaseInteraction):
                 "temperature": self.assessor_temperature,
                 "top_p": self.assessor_top_p,
                 "repetition_penalty": self.assessor_repetition_penalty,
-                "max_new_tokens": self.config.get("assessor_max_new_tokens", 3072),
+                "max_new_tokens": self.config.get("assessor_max_new_tokens", ASSESSOR_MAX_NEW_TOKENS),
             },
         }
 
@@ -370,12 +372,14 @@ class MedicalGameInteraction(BaseInteraction):
             injector_retroactive = assessor_reward   # cooperative on benign notes
 
         note_data = instance.get("note_data", {})
+        assessor_public_answer = self._extract_public_answer(assessor_output)
         _write_log({
             "timestamp": datetime.now().isoformat(),
             "data_source": "medec_selfplay",
             "ground_truth": ground_truth,
             "assessor_label": label,
             "assessor_pred_sid": pred_sid,
+            "assessor_public_answer": assessor_public_answer,
             "outcome": outcome,
             "reward": float(assessor_reward),
             "has_valid_format": has_valid_format,
@@ -387,7 +391,8 @@ class MedicalGameInteraction(BaseInteraction):
             "injector_retroactive_reward": float(injector_retroactive),
             # Per-turn responses (correctly split — no parsing needed)
             "injector_response": (instance.get("injector_output") or "")[:4000],
-            "assessor_response": assessor_output[:2000],
+            "modified_sentences": (instance.get("modified_sentences") or "")[:4000],
+            "assessor_response": assessor_output[:4000],
             "assessor_actually_ran": True,
             "phases_separated": True,
         })
@@ -402,7 +407,8 @@ class MedicalGameInteraction(BaseInteraction):
             "note_id": note_data.get("note_id", ""),
             "modified_sentences": instance.get("modified_sentences", ""),
             "injector_output": (instance.get("injector_output") or "")[:4000],
-            "assessor_output": assessor_output[:2000],
+            "assessor_output": assessor_output[:4000],
+            "assessor_public_answer": assessor_public_answer,
             "phases_separated": True,
             # Zero-sum injector penalty — available for retroactive reward assignment
             # if the verl tool_agent_loop is extended to support per-turn retroactive rewards.
@@ -453,20 +459,40 @@ class MedicalGameInteraction(BaseInteraction):
     def _construct_assessor_prompt(self, modified_sentences: str) -> str:
         """Construct the Assessor's classification prompt.
         
-        Includes the system-level instructions (output CORRECT or sentence number)
-        prepended to the modified note so the model knows to switch from Injector
-        to Assessor role.  verl's multi-turn system inserts this as the next
-        ``user`` turn in the conversation.
+        The original injector system prompt is still present earlier in the
+        multi-turn conversation, so this prompt must explicitly override it and
+        force a role switch.
         """
         system_prompt = self.detection_prompts.get("system_prompt", "")
         user_template = self.detection_prompts.get("user_template", "{sentences}")
         user_content = user_template.format(sentences=modified_sentences)
-        
-        # Combine system instructions with the note in a single user message.
-        # Thinking is intentionally kept enabled (assessor performs medical reasoning).
+
+        override = (
+            "/no_think\n"
+            "IGNORE ALL PREVIOUS TASK INSTRUCTIONS.\n"
+            "The injector step is finished.\n"
+            "You are now the ASSESSOR.\n"
+            "Do not edit or rewrite the note.\n"
+            "Return exactly one token of output:\n"
+            "- CORRECT\n"
+            "- or the sentence number containing the single medical error\n"
+            "Do not provide analysis, explanations, or any extra text."
+        )
+
         if system_prompt:
-            return f"{system_prompt}\n\n{user_content}"
-        return user_content
+            return f"{override}\n\n{system_prompt}\n\n{user_content}"
+        return f"{override}\n\n{user_content}"
+
+    def _extract_public_answer(self, text: str) -> str:
+        """Return the visible assessor answer without hidden thinking."""
+        _, content = strip_thinking(text)
+        content = content.strip()
+        if not content:
+            return ""
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        return lines[0][:200]
     
     async def calculate_score(
         self, 

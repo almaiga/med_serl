@@ -17,6 +17,7 @@ from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 import sys
+import re
 
 
 def load_interactions(log_dir: Path) -> list:
@@ -296,31 +297,51 @@ def print_report(stats: dict):
 
 def print_sample_interactions(interactions: list, n: int = 3):
     """Print sample interactions for review."""
-    
+
     if not interactions:
         return
-    
+
+    def public_answer(text: str) -> str:
+        text = text or ""
+        m = re.search(r"<think>.*?</think>\s*(.*)", text, flags=re.DOTALL)
+        if m:
+            text = m.group(1)
+        text = text.strip()
+        if not text:
+            return ""
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                return line[:160]
+        return ""
+
     # Get samples from different categories
     correct_samples = [ix for ix in interactions if ix.get("outcome") == "exact_match"][:n]
     wrong_samples = [ix for ix in interactions if ix.get("outcome") in ("miss", "invalid_format")] [:n]
-    
+
     print(f"\n📝 SAMPLE CORRECT CLASSIFICATIONS")
     print("-"*50)
-    for ix in correct_samples[:2]:
+    for ix in correct_samples[:n]:
         print(f"  Note ID: {ix.get('note_id', 'N/A')}")
         print(f"  Mode: {ix.get('mode', 'N/A')}, GT: {ix.get('ground_truth', 'N/A')}")
-        note_preview = ix.get('modified_sentences') or ix.get('injector_response') or ix.get('model_response') or ''
+        note_preview = ix.get('modified_sentences') or public_answer(ix.get('injector_response', '')) or ix.get('model_response') or ''
+        assessor_summary = ix.get('assessor_public_answer') or public_answer(ix.get('assessor_response', '')) or ix.get('model_response', 'N/A')
         print(f"  Note preview: {note_preview[:100]}...")
-        print(f"  Assessor: {ix.get('assessor_response', ix.get('model_response', 'N/A'))[:120]}")
+        print(f"  Assessor: {assessor_summary[:120]}")
+        if ix.get("assessor_label") == "ERROR":
+            print(f"  Parsed answer: sentence {ix.get('assessor_pred_sid', 'N/A')}")
+        elif ix.get("assessor_label"):
+            print(f"  Parsed answer: {ix.get('assessor_label')}")
         print()
-    
+
     print(f"\n📝 SAMPLE WRONG CLASSIFICATIONS")
     print("-"*50)
-    for ix in wrong_samples[:2]:
+    for ix in wrong_samples[:n]:
         print(f"  Note ID: {ix.get('note_id', 'N/A')}")
         print(f"  Mode: {ix.get('mode', 'N/A')}")
         print(f"  Ground Truth: {ix.get('ground_truth', 'N/A')}")
-        print(f"  Assessor Output: {ix.get('assessor_response', ix.get('model_response', 'N/A'))[:160]}")
+        assessor_summary = ix.get('assessor_public_answer') or public_answer(ix.get('assessor_response', '')) or ix.get('model_response', 'N/A')
+        print(f"  Assessor Output: {assessor_summary[:160]}")
         if ix.get("mode") == "error_injection":
             print(f"  Error Type: {ix.get('error_type', 'N/A')}")
             print(f"  Predicted SID: {ix.get('assessor_pred_sid', 'N/A')}")

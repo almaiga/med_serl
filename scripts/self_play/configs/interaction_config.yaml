@@ -24,8 +24,8 @@ interaction:
       injector_top_p: 0.95         # Qwen3 official recommendation
       assessor_temperature: 0.3    # Low temperature for deterministic classification
       assessor_top_p: 0.95
-      assessor_repetition_penalty: 1.1  # Prevents thinking loops in assessor turn
-      assessor_max_new_tokens: 3072  # Assessor needs ~1500-2500 tokens for medical reasoning + answer
+      assessor_repetition_penalty: 1.1  # Prevents short repetition loops in assessor turn
+      assessor_max_new_tokens: 256  # Assessor should emit only CORRECT or a sentence number
       
       # Zero-sum reward values
       reward_win: 1.0
