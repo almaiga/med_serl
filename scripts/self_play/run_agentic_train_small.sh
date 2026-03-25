@@ -54,7 +54,12 @@ UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
 # rarely blocks the training loop.
 VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-8}"
 TEST_FREQ="${TEST_FREQ:-50}"
-SAVE_FREQ="${SAVE_FREQ:-25}"
+# Save at epoch boundaries so online_datagen.py can reload the latest actor.
+# Steps per epoch = MAX_PAIRS / TRAIN_BATCH_SIZE = 100 / 32 ≈ 3 (floor).
+# Default SAVE_FREQ=3 ensures a checkpoint after every epoch for online datagen.
+STEPS_PER_EPOCH=$(( MAX_PAIRS / TRAIN_BATCH_SIZE ))
+[ "$STEPS_PER_EPOCH" -lt 1 ] && STEPS_PER_EPOCH=1
+SAVE_FREQ="${SAVE_FREQ:-$STEPS_PER_EPOCH}"
 # Per-call UMLS timeout: 12s × 16 serial calls per worker = 192s max wait,
 # but in practice most calls return in <2s.
 export JUDGE_TOTAL_TIMEOUT="${JUDGE_TOTAL_TIMEOUT:-12}"

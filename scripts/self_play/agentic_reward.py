@@ -950,16 +950,22 @@ async def async_compute_score(data_source, solution_str, ground_truth, extra_inf
         _reward_model_tokenizer = reward_model_tokenizer
 
     # Smoke-test sentinel — confirms real model rollouts reach the reward function
+    role = (extra_info or {}).get("role", "assessor")
     logger.info(
-        "compute_score called: source=%s gt=%s solution=%r...",
+        "compute_score called: source=%s role=%s gt=%s solution=%r...",
         data_source,
+        role,
         ground_truth,
         solution_str[:80],
     )
 
     rule_score = rule_compute_score(data_source, solution_str, ground_truth, extra_info)
 
-    if UMLS_WEIGHT <= 0:
+    # Injector outputs are NOT assessor answers — the UMLS judge pipeline parses
+    # assessor-format responses ("CORRECT" or a sentence number). Running it on
+    # injector outputs ("3. Modified sentence text") produces garbage verdicts.
+    # Fall back to the rule-based score for injector examples.
+    if role == "injector" or UMLS_WEIGHT <= 0:
         return {"score": rule_score}
 
     extra_info = extra_info or {}
