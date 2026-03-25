@@ -133,6 +133,12 @@ class MedicalGameInteraction(BaseInteraction):
         self.assessor_temperature = config.get("assessor_temperature", ASSESSOR_TEMPERATURE)
         self.assessor_top_p = config.get("assessor_top_p", ASSESSOR_TOP_P)
         self.assessor_repetition_penalty = config.get("assessor_repetition_penalty", 1.1)
+        self.assessor_max_new_tokens = int(
+            _os.environ.get(
+                "MEDSERL_ASSESSOR_MAX_NEW_TOKENS",
+                config.get("assessor_max_new_tokens", ASSESSOR_MAX_NEW_TOKENS),
+            )
+        )
         
         # Load detection+localization prompts
         self.detection_prompts = self._load_prompts(
@@ -291,7 +297,7 @@ class MedicalGameInteraction(BaseInteraction):
                 "temperature": self.assessor_temperature,
                 "top_p": self.assessor_top_p,
                 "repetition_penalty": self.assessor_repetition_penalty,
-                "max_new_tokens": self.config.get("assessor_max_new_tokens", ASSESSOR_MAX_NEW_TOKENS),
+                "max_new_tokens": self.assessor_max_new_tokens,
             },
         }
 

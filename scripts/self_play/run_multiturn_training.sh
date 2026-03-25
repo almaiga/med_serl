@@ -9,20 +9,44 @@
 set -e
 
 # Configuration
+SMOKE="${SMOKE:-0}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_multiturn}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_multiturn}"
 MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-$N_GPUS}"
-MAX_PAIRS="${MAX_PAIRS:-50}"
-TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
-VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-16}"
-TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
-PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.4}"
 SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-flashinfer}"
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
+
+if [ "$SMOKE" = "1" ]; then
+    MAX_PAIRS="${MAX_PAIRS:-12}"
+    TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-4}"
+    VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-4}"
+    TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
+    PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
+    PPO_EPOCHS="${PPO_EPOCHS:-1}"
+    MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
+    SAVE_FREQ="${SAVE_FREQ:-1000}"
+    TEST_FREQ="${TEST_FREQ:-1000}"
+    VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
+    export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="${MEDSERL_ASSESSOR_MAX_NEW_TOKENS:-128}"
+else
+    MAX_PAIRS="${MAX_PAIRS:-50}"
+    TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
+    VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-16}"
+    TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
+    PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
+    PPO_EPOCHS="${PPO_EPOCHS:-2}"
+    MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-2048}"
+    SAVE_FREQ="${SAVE_FREQ:-50}"
+    TEST_FREQ="${TEST_FREQ:-10}"
+    VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-true}"
+    export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="${MEDSERL_ASSESSOR_MAX_NEW_TOKENS:-256}"
+fi
 
 # Detect environment (runpod vs local)
 if [ -d "/workspace/med_serl" ]; then
@@ -43,8 +67,12 @@ echo "=================================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
+echo "Smoke mode: $SMOKE"
 echo "GPUs: $N_GPUS"
 echo "Rollout TP: $ROLLOUT_TP"
+echo "Max pairs: $MAX_PAIRS"
+echo "Train batch size: $TRAIN_BATCH_SIZE"
+echo "Total epochs: $TOTAL_EPOCHS"
 echo "SGLang attention backend: $SGLANG_ATTENTION_BACKEND"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
 echo "=================================================="
@@ -133,8 +161,8 @@ python3 -m verl.trainer.main_ppo \
     data.val_files="$VAL_FILE" \
     data.train_batch_size="$TRAIN_BATCH_SIZE" \
     data.val_batch_size="$VAL_BATCH_SIZE" \
-    data.max_prompt_length=1024 \
-    data.max_response_length=2048 \
+    data.max_prompt_length="$MAX_PROMPT_LENGTH" \
+    data.max_response_length="$MAX_RESPONSE_LENGTH" \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.shuffle=True \
@@ -147,7 +175,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size="$PPO_MINI_BATCH_SIZE" \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.ppo_epochs=2 \
+    actor_rollout_ref.actor.ppo_epochs="$PPO_EPOCHS" \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
@@ -183,9 +211,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node="$N_GPUS" \
     trainer.nnodes=1 \
     trainer.total_epochs="$TOTAL_EPOCHS" \
-    trainer.save_freq=50 \
-    trainer.test_freq=10 \
-    trainer.val_before_train=True
+    trainer.save_freq="$SAVE_FREQ" \
+    trainer.test_freq="$TEST_FREQ" \
+    trainer.val_before_train="$VAL_BEFORE_TRAIN"
 
 echo ""
 echo "=================================================="
