@@ -48,10 +48,10 @@ ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-16384}"
 # 1536 is enough for ~1200 thinking tokens + sentence-number answer.
 # 6144 was 4× too long and made each step ~4 minutes.
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-1536}"
-# param_offload=True: FSDP params go to CPU during rollout.
-# With TP=1 (single-GPU vLLM): model ~8GB + KV cache (0.8×96GB - 8GB = 69GB)
-# all on 1 GPU. GPU 1 is free during rollout. During PPO update: vLLM sleeps,
-# FSDP shards params+grads across both GPUs — no OOM risk.
+# MAGIC strategy: param_offload=False, optimizer_offload=True.
+# Params stay on GPU (no CPU→GPU copy on wake_up). Adam states go to CPU.
+# With TP=1, Qwen3-4B, 2×96GB: rollout GPU 0 = 77GB vLLM + 4GB FSDP = 81GB ✓
+# PPO update GPU 0 = 25GB vLLM cumem + 4GB params + 4GB grads = 33GB ✓
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.8}"
 # Blog rec: TP=1 for small models (3-8B) — eliminates per-layer AllReduce during
 # vLLM generation (36 layers × allreduce × 32 seqs). Data parallelism is 33%
@@ -61,8 +61,8 @@ ROLLOUT_TP="${ROLLOUT_TP:-1}"
 # only running mean baseline, which is much noisier. Each prompt samples 5
 # responses; advantages are normalized within the group.
 ROLLOUT_N="${ROLLOUT_N:-5}"
-PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
-LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
+PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-8}"
+LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-8}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-2}"
 UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
 # Stall fix: keep TEST_FREQ high and VAL_MAX_SAMPLES small so validation
@@ -446,12 +446,13 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=3e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$PPO_MICRO_BATCH_SIZE_PER_GPU \
-    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.use_dynamic_bsz=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
     actor_rollout_ref.rollout.name=vllm \
@@ -460,10 +461,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=$VLLM_GPU_MEM_UTIL \
     actor_rollout_ref.rollout.max_model_len=$ROLLOUT_MAX_MODEL_LEN \
     actor_rollout_ref.rollout.max_num_batched_tokens=$ROLLOUT_MAX_BATCHED_TOKENS \
-    actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.enable_chunked_prefill=False \
     actor_rollout_ref.rollout.enable_prefix_caching=False \
-    actor_rollout_ref.rollout.layered_summon=True \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.n=$ROLLOUT_N \
     actor_rollout_ref.rollout.prompt_length=2048 \
@@ -471,7 +470,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$ROLLOUT_TP \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.fsdp_config.param_offload=False \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     \
