@@ -217,7 +217,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs="$TOTAL_EPOCHS" \
     trainer.save_freq="$SAVE_FREQ" \
     trainer.test_freq="$TEST_FREQ" \
-    trainer.val_before_train="$VAL_BEFORE_TRAIN"
+    trainer.val_before_train="$VAL_BEFORE_TRAIN" \
+    "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG"
 
 echo ""
 echo "=================================================="

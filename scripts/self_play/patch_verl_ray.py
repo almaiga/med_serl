@@ -8,10 +8,22 @@ Patches applied:
 """
 import os
 import pathlib
+import glob
+
+
+def _first_existing(*paths: str) -> pathlib.Path | None:
+    for raw in paths:
+        p = pathlib.Path(raw)
+        if p.exists():
+            return p
+    return None
 
 # ── Patch 1: main_ppo.py ─────────────────────────────────────────────────────
-fpath = pathlib.Path("/workspace/verl/verl/trainer/main_ppo.py")
-if not fpath.exists():
+fpath = _first_existing(
+    "/sgl-workspace/sglang/verl/verl/trainer/main_ppo.py",
+    "/workspace/verl/verl/trainer/main_ppo.py",
+)
+if fpath is None or not fpath.exists():
     print("SKIP: main_ppo.py not found")
 else:
     code = fpath.read_text()
@@ -63,10 +75,12 @@ else:
 # interaction.generate_response() as `metrics` but never stores it.
 # This means interaction_reward_passthrough never sees phase/assessor_label.
 # Fix: update agent_data.extra_fields with the info dict after each interaction turn.
-tpath = pathlib.Path("/workspace/verl/verl/experimental/agent_loop/tool_agent_loop.py")
-if not tpath.exists():
+tpath = _first_existing(
+    "/sgl-workspace/sglang/verl/verl/experimental/agent_loop/tool_agent_loop.py",
+    "/workspace/verl/verl/experimental/agent_loop/tool_agent_loop.py",
+)
+if tpath is None or not tpath.exists():
     # Try site-packages location
-    import glob
     matches = glob.glob("/usr/local/lib/python*/dist-packages/verl/experimental/agent_loop/tool_agent_loop.py")
     if matches:
         tpath = pathlib.Path(matches[0])
