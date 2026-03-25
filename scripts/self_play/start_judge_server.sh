@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start vLLM OpenAI-compatible server for the Agentic UMLS Judge.
+# Start vLLM OpenAI-compatible server for the current Qwen judge.
 #
 # Run this on a SEPARATE RunPod instance (not the RL training pod).
 # The training pod calls this server via JUDGE_VLLM_URL.
@@ -28,7 +28,7 @@ else
 fi
 
 echo "=================================================="
-echo "  MedSeRL Agentic UMLS Judge Server"
+echo "  MedSeRL Judge Server"
 echo "  Model   : $JUDGE_MODEL"
 echo "  Port    : $JUDGE_PORT"
 echo "  GPU mem : $GPU_MEM_UTIL"
@@ -46,8 +46,8 @@ fi
 echo "  (The advertised host must be reachable via RunPod Global Networking.)"
 echo "  Both pods must have Global Networking enabled at deploy time."
 echo ""
-echo "  Then test with:"
-echo "    bash scripts/self_play/run_judge_test.sh"
+echo "  Then test with a direct HTTP call or launch:"
+echo "    bash scripts/self_play/run_multiturn_training.sh"
 echo ""
 echo "=================================================="
 

@@ -206,7 +206,7 @@ run_pipeline() {
     echo "  1. Test: python -c \"from peft import AutoPeftModelForCausalLM; m = AutoPeftModelForCausalLM.from_pretrained('${OUTPUT_DIR}')\""
     echo "  2. Stage 1 (MedPRM): bash scripts/sft/launch_medprm_training.sh 8b"
     echo "     Set: --model-name ${OUTPUT_DIR}"
-    echo "  3. Stage 2 (Self-play): bash scripts/self_play/run_training_v2.sh"
+    echo "  3. Stage 2 (Self-play): bash scripts/self_play/run_multiturn_training.sh"
     echo "     Set: MODEL_PATH=${OUTPUT_DIR}"
 }
 

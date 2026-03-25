@@ -18,11 +18,13 @@ Following verl's official patterns, we **use verl's default `ppo_trainer.yaml`**
 
 ## Files
 
-- `run_training.sh`: Main training script
 - `run_multiturn_training.sh`: Recommended injector -> assessor self-play launcher
 - `preprocess_medec.py`: Converts MEDEC JSONL to parquet format for verl
 - `simple_judge_reward.py`: Lightweight Qwen judge reward for assessor outputs
-- `configs/self_play.yaml`: **DEPRECATED** - use command-line overrides instead
+- `reward_function.py`: Base rule reward used by the interaction path
+- `configs/ppo_multiturn.yaml`: Base Hydra config for the current multi-turn setup
+- `archive/legacy_agentic_umls/`: Old UMLS/agentic experiments and deprecated configs
+- `archive/legacy_tests_and_smoke/`: Old smoke scripts, test utilities, and experimental configs
 
 ## Recommended Path
 
@@ -36,7 +38,7 @@ For true self-play, use `run_multiturn_training.sh`.
 
 ```bash
 cd /path/to/med_serl
-bash scripts/self_play/run_training.sh
+bash scripts/self_play/run_multiturn_training.sh
 ```
 
 ## Key Parameters

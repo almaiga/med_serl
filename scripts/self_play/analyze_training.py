@@ -23,8 +23,10 @@ def load_interactions(log_dir: Path) -> list:
     """Load all interaction logs from directory."""
     interactions = []
     
-    # Find all interaction log files
-    log_files = sorted(log_dir.glob("interactions_*.jsonl"), reverse=True)
+    # Support both the older reward-function logs (interactions_*.jsonl)
+    # and the current multi-turn interaction logs (game_*.jsonl).
+    log_files = list(log_dir.glob("interactions_*.jsonl")) + list(log_dir.glob("game_*.jsonl"))
+    log_files = sorted(log_files, key=lambda p: p.stat().st_mtime, reverse=True)
     
     if not log_files:
         print(f"No interaction logs found in {log_dir}")
@@ -92,6 +94,11 @@ def compute_statistics(interactions: list) -> dict:
         
         # Token metrics (if available)
         resp_chars = ix.get("response_chars", 0)
+        if not resp_chars:
+            # Multi-turn logs store per-phase responses instead of a single field.
+            inj = ix.get("injector_response", "") or ""
+            asm = ix.get("assessor_response", "") or ""
+            resp_chars = len(inj) + len(asm)
         if resp_chars:
             stats["token_metrics"]["total_chars"] += resp_chars
             if resp_chars < stats["token_metrics"]["min_chars"]:
@@ -100,9 +107,22 @@ def compute_statistics(interactions: list) -> dict:
                 stats["token_metrics"]["max_chars"] = resp_chars
         if ix.get("is_truncated", False):
             stats["token_metrics"]["truncated"] += 1
-        if ix.get("has_think_tag", False):
+        elif ix.get("outcome") == "invalid_format":
+            # In the current setup, most invalid formats are practical truncation
+            # events from overlong assessor generations.
+            stats["token_metrics"]["truncated"] += 1
+
+        has_think = ix.get("has_think_tag", False)
+        if not has_think:
+            joined = f"{ix.get('injector_response', '')}\n{ix.get('assessor_response', '')}"
+            has_think = "<think>" in joined.lower()
+        if has_think:
             stats["token_metrics"]["with_think_tags"] += 1
-        if ix.get("missing_closing_think", False):
+        missing_closing = ix.get("missing_closing_think", False)
+        if not missing_closing:
+            joined = f"{ix.get('injector_response', '')}\n{ix.get('assessor_response', '')}".lower()
+            missing_closing = ("<think>" in joined) and ("</think>" not in joined)
+        if missing_closing:
             stats["token_metrics"]["missing_closing_think"] += 1
         
         # Similarity metrics (if available)
@@ -135,15 +155,16 @@ def compute_statistics(interactions: list) -> dict:
         
         # Error type analysis (for error_injection mode)
         if mode == "error_injection" and error_type:
-            if outcome == "correct":
+            if outcome == "exact_match":
                 stats["error_types"][error_type]["correct"] += 1
             else:
                 stats["error_types"][error_type]["wrong"] += 1
     
     # Compute derived metrics
     total = stats["total"]
-    correct = stats["by_outcome"].get("correct", 0)
-    wrong = stats["by_outcome"].get("wrong", 0)
+    exact = stats["by_outcome"].get("exact_match", 0)
+    partial = stats["by_outcome"].get("partial_match", 0)
+    miss = stats["by_outcome"].get("miss", 0)
     invalid = stats["by_outcome"].get("invalid_format", 0)
     
     # Token metrics
@@ -155,9 +176,9 @@ def compute_statistics(interactions: list) -> dict:
     
     stats["metrics"] = {
         # Overall
-        "accuracy": correct / total if total > 0 else 0,
-        "win_rate_assessor": correct / total if total > 0 else 0,
-        "win_rate_injector": wrong / total if total > 0 else 0,
+        "accuracy": exact / total if total > 0 else 0,
+        "win_rate_assessor": (exact + partial) / total if total > 0 else 0,
+        "win_rate_injector": (miss + invalid) / total if total > 0 else 0,
         "invalid_rate": invalid / total if total > 0 else 0,
         "format_compliance_rate": stats["format_compliance"]["valid"] / total if total > 0 else 0,
         
@@ -184,7 +205,7 @@ def compute_statistics(interactions: list) -> dict:
     # Per-mode metrics
     for mode in stats["by_mode"]:
         mode_total = stats["by_mode"][mode]["total"]
-        mode_correct = stats["by_mode"][mode].get("correct", 0)
+        mode_correct = stats["by_mode"][mode].get("exact_match", 0)
         mode_reward = stats["rewards"]["by_mode"].get(mode, 0)
         
         stats["metrics"][f"{mode}_accuracy"] = mode_correct / mode_total if mode_total > 0 else 0
@@ -280,15 +301,17 @@ def print_sample_interactions(interactions: list, n: int = 3):
         return
     
     # Get samples from different categories
-    correct_samples = [ix for ix in interactions if ix.get("outcome") == "correct"][:n]
-    wrong_samples = [ix for ix in interactions if ix.get("outcome") == "wrong"][:n]
+    correct_samples = [ix for ix in interactions if ix.get("outcome") == "exact_match"][:n]
+    wrong_samples = [ix for ix in interactions if ix.get("outcome") in ("miss", "invalid_format")] [:n]
     
     print(f"\n📝 SAMPLE CORRECT CLASSIFICATIONS")
     print("-"*50)
     for ix in correct_samples[:2]:
         print(f"  Note ID: {ix.get('note_id', 'N/A')}")
         print(f"  Mode: {ix.get('mode', 'N/A')}, GT: {ix.get('ground_truth', 'N/A')}")
-        print(f"  Note preview: {ix.get('original_correct_note', '')[:100]}...")
+        note_preview = ix.get('modified_sentences') or ix.get('injector_response') or ix.get('model_response') or ''
+        print(f"  Note preview: {note_preview[:100]}...")
+        print(f"  Assessor: {ix.get('assessor_response', ix.get('model_response', 'N/A'))[:120]}")
         print()
     
     print(f"\n📝 SAMPLE WRONG CLASSIFICATIONS")
@@ -297,10 +320,10 @@ def print_sample_interactions(interactions: list, n: int = 3):
         print(f"  Note ID: {ix.get('note_id', 'N/A')}")
         print(f"  Mode: {ix.get('mode', 'N/A')}")
         print(f"  Ground Truth: {ix.get('ground_truth', 'N/A')}")
-        print(f"  Model Answer: {ix.get('model_answer', 'N/A')}")
+        print(f"  Assessor Output: {ix.get('assessor_response', ix.get('model_response', 'N/A'))[:160]}")
         if ix.get("mode") == "error_injection":
             print(f"  Error Type: {ix.get('error_type', 'N/A')}")
-            print(f"  Error Sentence: {ix.get('error_sentence', 'N/A')[:100]}...")
+            print(f"  Predicted SID: {ix.get('assessor_pred_sid', 'N/A')}")
         print()
 
 

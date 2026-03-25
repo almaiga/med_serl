@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Validate self_play.yaml against veRL 0.8.0.dev0 dataclass fields."""
+"""Validate the archived legacy self_play.yaml against veRL 0.8.0.dev0 dataclass fields."""
 import yaml, sys
 
-with open('scripts/self_play/configs/self_play.yaml') as f:
+with open('scripts/self_play/archive/legacy_agentic_umls/configs/self_play.yaml') as f:
     cfg = yaml.safe_load(f)
 
 # 0.8.0.dev0 field inventories (from diagnostic output on pod)
