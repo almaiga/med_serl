@@ -44,8 +44,10 @@ EPOCHS="${EPOCHS:-5}"
 TRAIN_BATCH_SIZE=$(( N_GPUS * 16 ))          # 16 per GPU
 TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
-ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
-ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
+ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-16384}"
+# 1536 is enough for ~1200 thinking tokens + sentence-number answer.
+# 6144 was 4× too long and made each step ~4 minutes.
+ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-1536}"
 # With param_offload=False: FSDP shard ~4 GB + Adam states ~16 GB on GPU.
 # During rollout: 4+58 (vLLM 0.6×96) = 62 GB < 96 GB. Safe.
 # During PPO update: ~20 GB (params+grads+optimizer). No CPU↔GPU all-gathers.
@@ -112,9 +114,11 @@ export WANDB_API_KEY="${WANDB_API_KEY:-}"
 
 # ── NCCL: long timeout prevents allreduce hangs during param all-gather ──
 # Default in container envs is often 30s — far too short for FSDP backward.
-export NCCL_TIMEOUT=1800000         # 30 minutes in ms
-export TORCH_NCCL_BLOCKING_WAIT=1   # surface hangs as errors instead of silent stalls
+export NCCL_TIMEOUT=1800000         # 30 min — prevents silent hangs on long allreduce
 export NCCL_IGNORE_CPU_AFFINITY=1   # RunPod container CPU affinity quirks
+# NOTE: do NOT set TORCH_NCCL_BLOCKING_WAIT=1 — it forces synchronous CPU-wait
+# after every vLLM TP allreduce (36 layers × per-layer), making GPU appear at
+# 0% utilization and causing the step-0 rollout to look like a permanent stall.
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
@@ -421,7 +425,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_max_samples=$TRAIN_SAMPLES \
     data.val_max_samples=$VAL_MAX_SAMPLES \
     data.max_prompt_length=2048 \
-    data.max_response_length=6144 \
+    data.max_response_length=$ROLLOUT_RESPONSE_LENGTH \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     data.return_raw_chat=True \
