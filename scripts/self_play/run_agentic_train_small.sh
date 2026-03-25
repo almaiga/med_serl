@@ -29,7 +29,9 @@
 #   JUDGE_TOTAL_TIMEOUT — per-call judge timeout in seconds (default: 12)
 #   VAL_MAX_SAMPLES     — validation examples per test pass (default: 8)
 #   TEST_FREQ           — run validation every N steps (default: 50)
-#   SAVE_FREQ           — save checkpoint every N steps (default: 25)
+#   SAVE_CHECKPOINTS    — Set to 1 to enable checkpoint saves (default: 0=disabled)
+#   SAVE_FREQ           — save checkpoint every N steps (only if SAVE_CHECKPOINTS=1)
+#   KEEP_LAST_RUNS      — auto-delete old output runs, keep last N (default: 1)
 #   SKIP_DATAGEN        — Set to 1 to reuse existing train.parquet
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -56,12 +58,16 @@ UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
 # rarely blocks the training loop.
 VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-8}"
 TEST_FREQ="${TEST_FREQ:-50}"
-# Save at epoch boundaries so online_datagen.py can reload the latest actor.
-# Steps per epoch = MAX_PAIRS / TRAIN_BATCH_SIZE = 100 / 32 ≈ 3 (floor).
-# Default SAVE_FREQ=3 ensures a checkpoint after every epoch for online datagen.
+# Checkpoint saving: disabled by default (each checkpoint is ~10 GB and fills disk fast).
+# Set SAVE_CHECKPOINTS=1 to enable periodic saves; SAVE_FREQ controls the step interval.
+SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-0}"
 STEPS_PER_EPOCH=$(( MAX_PAIRS / TRAIN_BATCH_SIZE ))
 [ "$STEPS_PER_EPOCH" -lt 1 ] && STEPS_PER_EPOCH=1
-SAVE_FREQ="${SAVE_FREQ:-$STEPS_PER_EPOCH}"
+if [ "$SAVE_CHECKPOINTS" = "1" ]; then
+    SAVE_FREQ="${SAVE_FREQ:-$STEPS_PER_EPOCH}"
+else
+    SAVE_FREQ=999999   # effectively never — no global_step_* dirs
+fi
 # Per-call UMLS timeout: 12s × 16 serial calls per worker = 192s max wait,
 # but in practice most calls return in <2s.
 export JUDGE_TOTAL_TIMEOUT="${JUDGE_TOTAL_TIMEOUT:-12}"
@@ -153,6 +159,24 @@ mkdir -p "$OUTPUT_DIR"
 mkdir -p "$PROJECT_ROOT/results/self_play"
 
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+
+# ─── Cleanup: remove old output runs to free disk ─────────────────────────────
+# Keep at most KEEP_LAST_RUNS previous runs (default: 1). Each run is ~10-45 GB.
+KEEP_LAST_RUNS="${KEEP_LAST_RUNS:-1}"
+OUTPUTS_BASE="$(dirname "$OUTPUT_DIR")"
+if [ -d "$OUTPUTS_BASE" ]; then
+    mapfile -t OLD_RUNS < <(find "$OUTPUTS_BASE" -maxdepth 1 -type d -name 'small_agentic_*' | sort -V)
+    TOTAL_OLD=${#OLD_RUNS[@]}
+    # We haven't created OUTPUT_DIR yet at this point so all found are old
+    if [ "$TOTAL_OLD" -gt "$KEEP_LAST_RUNS" ]; then
+        DELETE_COUNT=$(( TOTAL_OLD - KEEP_LAST_RUNS ))
+        echo "=== Disk cleanup: removing $DELETE_COUNT old run(s) (keeping $KEEP_LAST_RUNS) ==="
+        for (( i=0; i<DELETE_COUNT; i++ )); do
+            echo "  Deleting: ${OLD_RUNS[$i]}"
+            rm -rf "${OLD_RUNS[$i]}"
+        done
+    fi
+fi
 
 # ─── Cleanup: kill leftover Ray / GPU processes ───────────────────────────────
 echo "=== Cleanup: killing stale Ray / GPU processes ==="
