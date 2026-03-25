@@ -17,6 +17,7 @@ import json
 import hashlib
 import logging
 import asyncio
+import threading
 import time
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field, asdict
@@ -76,8 +77,12 @@ TRUSTED_TTYS = ["PT", "SY", "ET", "LLT"]
 UMLS_MAX_CONCURRENCY = int(os.getenv("UMLS_MAX_CONCURRENCY", "4"))
 UMLS_ENTITY_TIMEOUT = float(os.getenv("UMLS_ENTITY_TIMEOUT", "20"))
 UMLS_MAX_RPS = max(1, int(os.getenv("UMLS_MAX_RPS", "8")))
-_REQUEST_TIMESTAMPS: deque[float] = deque()
-_REQUEST_LOCK = asyncio.Lock()
+_REQUEST_TIMESTAMPS: deque = deque()
+# Use threading.Lock (not asyncio.Lock) so asyncio.wait_for cancellations
+# don't corrupt the lock's internal waiter queue across event-loop restarts.
+# The critical section only does deque reads/writes (no awaits), so blocking
+# for a few microseconds is safe inside an async function.
+_REQUEST_LOCK = threading.Lock()
 
 # Semantic types we consider clinically relevant (from medical_knowledge_base.py)
 CLINICAL_SEMANTIC_TYPES = {
@@ -114,7 +119,7 @@ def _get_api_key() -> str:
 async def _throttle_nlm_request() -> None:
     """Rate-limit outbound NLM requests within this process."""
     while True:
-        async with _REQUEST_LOCK:
+        with _REQUEST_LOCK:
             now = time.monotonic()
             while _REQUEST_TIMESTAMPS and now - _REQUEST_TIMESTAMPS[0] >= 1.0:
                 _REQUEST_TIMESTAMPS.popleft()
@@ -467,16 +472,25 @@ async def gather_evidence_batch(
                     gather_entity_evidence(session, ent["name"], ent.get("type", ""), api_key),
                     timeout=UMLS_ENTITY_TIMEOUT,
                 )
+            except asyncio.CancelledError:
+                raise  # propagate — outer wait_for must be able to cancel us
             except Exception as e:
                 logger.debug(f"Evidence lookup failed for {ent.get('name', '')}: {e}")
                 return UMLSEvidence(entity_name=ent.get("name", ""))
 
-    tasks = [_run_one(ent) for ent in entities]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [asyncio.ensure_future(_run_one(ent)) for ent in entities]
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    except asyncio.CancelledError:
+        # Cancel all outstanding tasks so they don't linger after the outer
+        # wait_for fires, then re-raise so the caller knows we were cancelled.
+        for t in tasks:
+            t.cancel()
+        raise
 
     evidence_list: List[UMLSEvidence] = []
     for ent, result in zip(entities, results):
-        if isinstance(result, Exception):
+        if isinstance(result, (Exception, BaseException)):
             logger.debug(f"Evidence batch task failed for {ent.get('name', '')}: {result}")
             evidence_list.append(UMLSEvidence(entity_name=ent.get("name", "")))
         else:

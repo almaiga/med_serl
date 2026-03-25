@@ -439,6 +439,8 @@ async def _extract_entities(sentence: str) -> List[Dict[str, str]]:
             logger.warning(f"Entity extraction: no JSON array found in: {content[:300]}")
             return []
         return entities[:MAX_ENTITIES]
+    except asyncio.CancelledError:
+        raise  # allow outer wait_for to cancel us
     except Exception as e:
         logger.warning(f"Entity extraction failed: {e}")
         return []
@@ -464,6 +466,8 @@ async def _retrieve_evidence(entities: List[Dict[str, str]]) -> List[Dict[str, A
             timeout=UMLS_BATCH_TIMEOUT,
         )
         return [ev.to_dict() for ev in evidence_objs]
+    except asyncio.CancelledError:
+        raise  # allow outer wait_for to cancel us
     except Exception as e:
         logger.debug(f"Evidence retrieval failed: {e}")
         return []
