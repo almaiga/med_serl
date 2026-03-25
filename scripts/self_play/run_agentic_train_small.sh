@@ -465,8 +465,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=$VLLM_GPU_MEM_UTIL \
     actor_rollout_ref.rollout.max_model_len=$ROLLOUT_MAX_MODEL_LEN \
     actor_rollout_ref.rollout.max_num_batched_tokens=$ROLLOUT_MAX_BATCHED_TOKENS \
-    actor_rollout_ref.rollout.enable_chunked_prefill=False \
-    actor_rollout_ref.rollout.enable_prefix_caching=False \
     actor_rollout_ref.rollout.n=$ROLLOUT_N \
     actor_rollout_ref.rollout.prompt_length=2048 \
     actor_rollout_ref.rollout.response_length=$ROLLOUT_RESPONSE_LENGTH \
