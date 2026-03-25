@@ -53,9 +53,9 @@ ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-1536}"
 # With TP=1, Qwen3-4B, 2×96GB: rollout GPU 0 = 77GB vLLM + 4GB FSDP = 81GB ✓
 # PPO update GPU 0 = 25GB vLLM cumem + 4GB params + 4GB grads = 33GB ✓
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.6}"
-# Blog rec: TP=1 for small models (3-8B) — eliminates per-layer AllReduce during
-# vLLM generation (36 layers × allreduce × 32 seqs). Data parallelism is 33%
-# faster than TP=2 for 4B. With TP=1, vLLM runs on 1 GPU; FSDP shards across all.
+# TP must match N_GPUS. With TP=1 and N_GPUS=2, vLLM runs on GPU 0 only but
+# FSDP shards across both GPUs — the asymmetric all-gather at update_weights deadlocks.
+# TP=2 tensor-parallelizes vLLM across both GPUs, matching the FSDP topology.
 ROLLOUT_TP="${ROLLOUT_TP:-2}"
 # Blog rec: n=5 gives proper GRPO group-relative advantage baseline. n=1 uses
 # only running mean baseline, which is much noisier. Each prompt samples 5
