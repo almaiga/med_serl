@@ -33,8 +33,15 @@ actor_rollout_ref:
   rollout:
     name: vllm
     enforce_eager: True
+    # sglang-verl: MUST be True — activates the cumem sleep/wake allocator.
+    # Without this, vLLM holds memory permanently and wake_up() has no state
+    # machine → deadlock at rollout start (80 GiB / 0% GPU symptom).
+    enable_sleep_mode: True
+    # free KV cache between rollout steps (matches official verl default)
+    free_cache_engine: True
+    # dummy = hybrid engine provides weights via FSDP sync (not loaded from disk)
+    load_format: dummy
     gpu_memory_utilization: 0.5
-    load_format: safetensors
     tensor_model_parallel_size: 1
     temperature: 0.7
     top_p: 0.95
