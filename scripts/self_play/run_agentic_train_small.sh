@@ -61,9 +61,16 @@ LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
 REWARD_BACKEND="${REWARD_BACKEND:-agentic}"
 UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
-VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-16}"
-TEST_FREQ="${TEST_FREQ:-5}"
+VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-8}"
+# Stall fix: validation blocks the event loop while awaiting UMLS (up to
+# JUDGE_TOTAL_TIMEOUT × VAL_MAX_SAMPLES seconds). Set TEST_FREQ high enough
+# that you complete a full epoch before hitting validation.
+TEST_FREQ="${TEST_FREQ:-50}"
 SAVE_FREQ="${SAVE_FREQ:-25}"
+# Cap UMLS per-call timeout so validation can't hang indefinitely.
+# Training-time async calls aren't awaited per-step so this only matters
+# at test_freq boundaries.
+export JUDGE_TOTAL_TIMEOUT="${JUDGE_TOTAL_TIMEOUT:-20}"
 KEEP_ONLY_FINAL_CHECKPOINT="${KEEP_ONLY_FINAL_CHECKPOINT:-1}"
 
 # Paths

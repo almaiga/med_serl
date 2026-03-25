@@ -138,7 +138,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.test_freq=10 \
     trainer.val_before_train=True \
     +trainer.enable_save=False \
-    custom_reward_function.path=/workspace/med_serl/scripts/self_play/reward_function.py \
+    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
     custom_reward_function.name=compute_score
     
 

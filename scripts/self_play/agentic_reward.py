@@ -223,13 +223,28 @@ _session: Optional[aiohttp.ClientSession] = None
 async def _get_session() -> aiohttp.ClientSession:
     """Lazy-init a module-level aiohttp session."""
     global _session
-    if _session is None or _session.closed:
+    # Check if existing session belongs to the current running loop.
+    # If validation spawns a fresh event loop, the cached session is stale.
+    current_loop = asyncio.get_event_loop()
+    session_loop_mismatch = (
+        _session is not None
+        and not _session.closed
+        and getattr(_session.connector, "_loop", None) is not current_loop
+    )
+    if _session is None or _session.closed or session_loop_mismatch:
         connector = aiohttp.TCPConnector(
             enable_cleanup_closed=True,
             ttl_dns_cache=300,
             force_close=True,
         )
-        _session = aiohttp.ClientSession(connector=connector)
+        # Session-level timeout caps TCP connect + total time so a hung
+        # UMLS server can't stall validation indefinitely.  Per-request
+        # timeouts in umls_async.py still apply on top of this.
+        _session_timeout = aiohttp.ClientTimeout(
+            total=float(os.getenv("JUDGE_TOTAL_TIMEOUT", "20")),
+            connect=5,
+        )
+        _session = aiohttp.ClientSession(connector=connector, timeout=_session_timeout)
     return _session
 
 
