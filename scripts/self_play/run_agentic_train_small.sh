@@ -166,7 +166,6 @@ OUTPUT_DIR="outputs/self_play/small_agentic_${TIMESTAMP}"
 
 # Paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
 TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train.parquet"
 VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val.parquet"
 CUSTOM_REWARD_PATH="$PROJECT_ROOT/$CUSTOM_REWARD_PATH_LOCAL"
@@ -370,49 +369,6 @@ ray stop --force 2>/dev/null || true
 rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
 sleep 2
 
-# Patch veRL Ray init for Docker
-python3 << 'PATCH_RAY'
-import pathlib, re
-for candidate in [
-    "/workspace/verl/verl/trainer/main_ppo.py",
-    "/sgl-workspace/sglang/verl/verl/trainer/main_ppo.py",
-]:
-    fpath = pathlib.Path(candidate)
-    if not fpath.exists():
-        continue
-    code = fpath.read_text()
-    CANONICAL = """_ray_kw = OmegaConf.to_container(ray_init_kwargs)
-    # ── MedSeRL Docker fix (canonical) ──
-    import os as _os
-    if _ray_kw.get('num_cpus') is None:
-        _ray_kw['num_cpus'] = min(_os.cpu_count() or 4, 8)
-    _ray_kw.setdefault('include_dashboard', False)
-    _ray_kw.setdefault('_temp_dir', '/workspace/ray_tmp')
-    _ray_kw.setdefault('_node_ip_address', '127.0.0.1')
-    _ray_kw.setdefault('object_store_memory', 500_000_000)
-    _ray_kw.setdefault('_plasma_directory', '/workspace/ray_tmp')
-    print(f"ray init kwargs (patched): {_ray_kw}")
-    ray.init(**_ray_kw)"""
-    fresh = "ray.init(**OmegaConf.to_container(ray_init_kwargs))"
-    if fresh in code:
-        code = code.replace(fresh, CANONICAL)
-        fpath.write_text(code)
-        print(f"PATCHED {fpath}: fresh → canonical Docker-safe Ray init")
-    elif "_ray_kw" in code:
-        pattern = r'_ray_kw = OmegaConf\.to_container.*?ray\.init\(\*\*_ray_kw\)'
-        new_code, n = re.subn(pattern, CANONICAL, code, count=1, flags=re.DOTALL)
-        if n > 0:
-            fpath.write_text(new_code)
-            print(f"PATCHED {fpath}: replaced existing _ray_kw block")
-        else:
-            print(f"WARNING: {fpath} has _ray_kw but regex did not match")
-    else:
-        print(f"WARNING: could not find ray.init call in {fpath}")
-    break
-else:
-    print("SKIP: main_ppo.py not found")
-PATCH_RAY
-
 # ─── WandB Setup ──────────────────────────────────────────────────────────────
 echo ""
 echo "=== WandB Setup ==="
@@ -426,9 +382,6 @@ else
 fi
 
 python3 -m verl.trainer.main_ppo \
-    --config-path="$CONFIG_DIR" \
-    --config-name="ppo_agentic" \
-    \
     algorithm.adv_estimator=reinforce_plus_plus \
     \
     data.train_files="$TRAIN_PARQUET" \

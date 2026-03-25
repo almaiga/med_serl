@@ -14,13 +14,16 @@
 #   SMOKE_STEPS    — max training steps        (default: 3)
 #   MAX_PAIRS      — pairs for datagen         (default: 20)
 #   SKIP_DATAGEN   — 1=reuse parquet if exists (default: auto)
+#   N_GPUS         — number of GPUs to use     (default: 2)
 
 set -e
 
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 SMOKE_STEPS="${SMOKE_STEPS:-3}"
 MAX_PAIRS="${MAX_PAIRS:-20}"
-TRAIN_BATCH_SIZE=16
+N_GPUS="${N_GPUS:-2}"
+# Scale batch size with GPUs so per-GPU load stays constant
+TRAIN_BATCH_SIZE=$(( 16 * N_GPUS ))
 TRAIN_SAMPLES=$(( SMOKE_STEPS * TRAIN_BATCH_SIZE ))
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -35,7 +38,8 @@ mkdir -p "$OUTPUT_DIR"
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # ── GPU env ──────────────────────────────────────────────────────────────────
-export CUDA_VISIBLE_DEVICES=0
+# Expose all GPUs; Ray + verl allocate them automatically
+unset CUDA_VISIBLE_DEVICES
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 export RAY_DISABLE_DOCKER_CPU_WARNING=1
 export RAY_DEDUP_LOGS=0
@@ -50,6 +54,8 @@ echo "MedSeRL Minimal Smoke Test"
 echo "  Model  : $ACTOR_MODEL"
 echo "  Steps  : $SMOKE_STEPS"
 echo "  Pairs  : $MAX_PAIRS"
+echo "  GPUs   : $N_GPUS"
+echo "  Batch  : $TRAIN_BATCH_SIZE"
 echo "  Output : $OUTPUT_DIR"
 echo "=============================="
 
@@ -96,7 +102,7 @@ python3 -m verl.trainer.main_ppo \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=$(( 4 * N_GPUS )) \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -112,7 +118,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.top_k=-1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.n=1 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=$N_GPUS \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
@@ -130,7 +136,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name=medserl-smoke \
     trainer.experiment_name="smoke_minimal_${TIMESTAMP}" \
     trainer.default_local_dir="$OUTPUT_DIR" \
-    trainer.n_gpus_per_node=1 \
+    trainer.n_gpus_per_node=$N_GPUS \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
     trainer.test_freq=-1 \
