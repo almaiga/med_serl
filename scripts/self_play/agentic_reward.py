@@ -206,6 +206,10 @@ UMLS_BATCH_TIMEOUT = float(os.getenv("UMLS_BATCH_TIMEOUT", "20"))
 JUDGE_EXTRACTION_MAX_TOKENS = int(os.getenv("JUDGE_EXTRACTION_MAX_TOKENS", "256"))
 JUDGE_ADJUDICATION_MAX_TOKENS = int(os.getenv("JUDGE_ADJUDICATION_MAX_TOKENS", "384"))
 
+# Judge mode: "simple" (single LLM call, no UMLS) or "umls" (full 3-step pipeline).
+# "simple" is faster, more reliable, and requires no UMLS API key.
+JUDGE_MODE = os.getenv("JUDGE_MODE", "simple")
+
 # Module-level reference to veRL-injected GenRM resources
 # Set by compute_score when reward_router_address is provided
 _reward_router_address: Optional[str] = None
@@ -626,6 +630,114 @@ def _identify_changed_sentences(extra_info: dict) -> Tuple[str, str]:
 
 
 # =============================================================================
+# Simple judge pipeline — single LLM call, no UMLS
+# =============================================================================
+
+_SIMPLE_JUDGE_SYSTEM = (
+    "You are a medical expert evaluating the quality of clinical error detection.\n"
+    "You will be shown a clinical note that contains exactly one medical error, "
+    "along with what a medical AI assessor said about it.\n"
+    "Your job: decide if the assessor correctly detected and localized the error.\n\n"
+    "Respond with a single JSON object:\n"
+    '{"verdict": "PASS"|"FAIL"|"ABSTAIN", "score": 0.0-1.0, "reason": "<one sentence>"}\n\n'
+    "PASS  = assessor correctly identified the error (exact or close sentence match)\n"
+    "FAIL  = assessor missed the error or identified the wrong location\n"
+    "ABSTAIN = cannot determine (ambiguous note or assessor output)\n\n"
+    "Output ONLY the JSON. No other text."
+)
+
+_SIMPLE_JUDGE_USER = (
+    "Clinical note with error:\n{numbered_note}\n\n"
+    "Ground truth: error is in sentence {ground_truth}\n\n"
+    "Assessor said: {assessor_output}\n\n"
+    "Did the assessor correctly detect the error?"
+)
+
+
+async def _simple_judge_pipeline(
+    solution_str: str,
+    ground_truth: str,
+    extra_info: dict,
+) -> tuple:
+    """Single LLM call judge — no entity extraction, no UMLS lookup.
+
+    Returns (umls_score, trace_dict) matching the _judge_pipeline signature
+    so it is a drop-in replacement.
+    """
+    trace = {"pipeline": "simple", "skipped": False, "skip_reason": ""}
+
+    # Fast path for benign notes where assessor says CORRECT
+    mode = extra_info.get("mode", "")
+    if mode == "benign":
+        label, _ = parse_assessor_answer(solution_str)
+        if label == "CORRECT":
+            trace["umls_score"] = 1.0
+            trace["skipped"] = True
+            trace["skip_reason"] = "benign_correct"
+            return 1.0, trace
+
+    sentences = extra_info.get("sentences", "")
+    if not sentences:
+        from scripts.self_play.utils import number_sentences
+        note = extra_info.get("incorrect_note") or extra_info.get("correct_note", "")
+        sentences = number_sentences(note) if note else ""
+
+    user_content = _SIMPLE_JUDGE_USER.format(
+        numbered_note=sentences[:3000],  # cap to avoid huge prompts
+        ground_truth=ground_truth,
+        assessor_output=(solution_str or "")[:500],
+    )
+    messages = [
+        {"role": "system", "content": _SIMPLE_JUDGE_SYSTEM},
+        {"role": "user", "content": user_content},
+    ]
+    params = {
+        "max_tokens": 128,
+        "temperature": 0.1,
+        "top_p": 0.95,
+    }
+
+    try:
+        content = await _llm_generate(messages, params)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"Simple judge LLM call failed: {e}")
+        trace["skipped"] = True
+        trace["skip_reason"] = f"llm_error: {e}"
+        return 0.0, trace
+
+    if not content:
+        trace["skipped"] = True
+        trace["skip_reason"] = "empty_response"
+        return 0.0, trace
+
+    verdict_obj = _extract_json_object(content)
+    if verdict_obj is None:
+        logger.debug(f"Simple judge: no JSON in response: {content[:200]}")
+        trace["skipped"] = True
+        trace["skip_reason"] = "no_json"
+        return 0.0, trace
+
+    verdict = verdict_obj.get("verdict", "ABSTAIN")
+    score = float(verdict_obj.get("score", 0.5))
+    score = max(0.0, min(1.0, score))
+    trace["verdict"] = verdict
+    trace["score"] = score
+    trace["reason"] = verdict_obj.get("reason", "")
+
+    if verdict == "PASS":
+        umls_score = score
+    elif verdict == "FAIL":
+        umls_score = -score
+    else:
+        umls_score = 0.0
+
+    trace["umls_score"] = umls_score
+    return umls_score, trace
+
+
+# =============================================================================
 # Full judge pipeline (async)
 # =============================================================================
 
@@ -970,9 +1082,12 @@ async def async_compute_score(data_source, solution_str, ground_truth, extra_inf
 
     extra_info = extra_info or {}
 
+    pipeline = (
+        _simple_judge_pipeline if JUDGE_MODE == "simple" else _judge_pipeline
+    )
     try:
         umls_score, trace = await asyncio.wait_for(
-            _judge_pipeline(solution_str, ground_truth, extra_info),
+            pipeline(solution_str, ground_truth, extra_info),
             timeout=TOTAL_TIMEOUT,
         )
     except Exception as e:

@@ -24,8 +24,9 @@
 #   LOGPROB_MICRO_BATCH_SIZE_PER_GPU    — rollout/ref log-prob micro-batch size (default: 2)
 #   REWARD_NUM_WORKERS  — parallel reward workers (default: 4)
 #   REWARD_BACKEND      — `agentic` or `rule` (default: agentic)
-#   UMLS_WEIGHT         — additive UMLS reward weight (default: 0.4; set 0 to disable)
-#   JUDGE_TOTAL_TIMEOUT — per-call judge+UMLS timeout in seconds (default: 20)
+#   JUDGE_MODE          — `simple` (single LLM call, no UMLS, default) or `umls` (3-step pipeline)
+#   UMLS_WEIGHT         — additive judge reward weight (default: 0.4; set 0 to disable)
+#   JUDGE_TOTAL_TIMEOUT — per-call judge timeout in seconds (default: 12)
 #   VAL_MAX_SAMPLES     — validation examples per test pass (default: 8)
 #   TEST_FREQ           — run validation every N steps (default: 50)
 #   SAVE_FREQ           — save checkpoint every N steps (default: 25)
@@ -63,6 +64,9 @@ SAVE_FREQ="${SAVE_FREQ:-$STEPS_PER_EPOCH}"
 # Per-call UMLS timeout: 12s × 16 serial calls per worker = 192s max wait,
 # but in practice most calls return in <2s.
 export JUDGE_TOTAL_TIMEOUT="${JUDGE_TOTAL_TIMEOUT:-12}"
+# simple = one LLM call per sample (no UMLS API, no entity extraction, fast)
+# umls   = full 3-step pipeline (entity extract → UMLS lookup → adjudicate)
+export JUDGE_MODE="${JUDGE_MODE:-simple}"
 
 if [ -z "${UMLS_MAX_RPS:-}" ]; then
     UMLS_MAX_RPS=$(( 16 / REWARD_NUM_WORKERS ))
