@@ -34,7 +34,7 @@
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
-N_GPUS="${N_GPUS:-1}"
+N_GPUS="${N_GPUS:-2}"
 
 MAX_PAIRS="${MAX_PAIRS:-100}"
 EPOCHS="${EPOCHS:-5}"
@@ -43,10 +43,9 @@ TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
 ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
-# 0.4 = 38 GB KV cache on 96 GB H100. With Adam optimizer states (~32 GB)
-# still on GPU after training, wake_up needs 32+38=70 GB < 96 GB. Safe.
-# (0.7 = 67 GB caused OOM: 32+67=99 GB > 96 GB.)
-VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.4}"
+# With 2-GPU tensor parallelism, each GPU holds ~16 GB optimizer states.
+# 0.6 × 96 = 58 GB KV cache per GPU → 16+58=74 GB < 96 GB. Safe.
+VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.6}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
