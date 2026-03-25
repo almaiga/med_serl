@@ -43,7 +43,10 @@ TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
 ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
-VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
+# 0.4 = 38 GB KV cache on 96 GB H100. With Adam optimizer states (~32 GB)
+# still on GPU after training, wake_up needs 32+38=70 GB < 96 GB. Safe.
+# (0.7 = 67 GB caused OOM: 32+67=99 GB > 96 GB.)
+VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.4}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
@@ -85,9 +88,10 @@ export JUDGE_VLLM_URL
 export UMLS_API_KEY="${UMLS_API_KEY:-6878e795-ad79-4743-9758-546cacb8b31c}"
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
 
-# Force vLLM V0: vLLM >=0.11 defaults to V1 which spawns a separate EngineCore
-# subprocess that dies unexpectedly under RunPod/Docker's resource tracker.
-export VLLM_USE_V1=0
+# NOTE: do NOT set VLLM_USE_V1=0 here. The sglang-patched verl at
+# /sgl-workspace/sglang/verl uses vLLM V1's cumem sleep/wake allocator
+# deliberately. Forcing V0 corrupts the allocator init and causes GPU OOM
+# on the first wake_up call after the training step.
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
