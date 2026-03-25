@@ -21,8 +21,13 @@ NOT a JSON-encoded string. We use HuggingFace datasets for proper serialization.
 import json
 import random
 import argparse
+import sys
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.self_play.utils import (
     number_sentences,
@@ -118,19 +123,23 @@ def create_error_example(
 ) -> dict:
     """Create an error injection example (ground_truth = sentence number).
     
-    Injector receives pre-numbered sentences and error_type to guide injection.
-    Ground truth is the 1-indexed sentence number containing the error.
+    Injector receives the pristine correct note and must inject an error into
+    the sentence that corresponds to MEDEC's corrected_sentence.
+
+    Ground truth is the 1-indexed sentence number in the *correct* note where
+    the model should inject the error.
     """
     system_prompt = injection_prompts["system_prompt_incorrect"]
     user_template = injection_prompts["injector_incorrect_template"]
     error_type = pair.get("error_type", "clinical error")
 
-    # Pre-number the sentences (use incorrect_note so error_sentence can be located)
-    sentences = number_sentences(pair["incorrect_note"])
+    # IMPORTANT: start from the pristine note. Using incorrect_note here would ask
+    # the model to "inject" an error into a note that already contains one.
+    sentences = number_sentences(pair["correct_note"])
 
-    # Find error sentence ID by matching error_sentence text
-    error_sentence_text = pair.get("error_sentence", "")
-    error_sentence_id = find_error_sentence_id(pair["incorrect_note"], error_sentence_text)
+    # Locate the target sentence in the correct note using corrected_sentence.
+    target_sentence_text = pair.get("corrected_sentence") or pair.get("error_sentence", "")
+    error_sentence_id = find_error_sentence_id(pair["correct_note"], target_sentence_text)
     
     # Ground truth is the sentence number (as string), not "INCORRECT"
     ground_truth = str(error_sentence_id) if error_sentence_id else "INCORRECT"

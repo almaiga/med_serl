@@ -398,6 +398,12 @@ class MedicalGameInteraction(BaseInteraction):
             "assessor_pred_sid": pred_sid,
             "ground_truth": ground_truth,
             "has_valid_format": has_valid_format,
+            "mode": mode,
+            "note_id": note_data.get("note_id", ""),
+            "modified_sentences": instance.get("modified_sentences", ""),
+            "injector_output": (instance.get("injector_output") or "")[:4000],
+            "assessor_output": assessor_output[:2000],
+            "phases_separated": True,
             # Zero-sum injector penalty — available for retroactive reward assignment
             # if the verl tool_agent_loop is extended to support per-turn retroactive rewards.
             "injector_retroactive_reward": float(injector_retroactive),

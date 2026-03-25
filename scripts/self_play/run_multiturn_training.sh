@@ -9,9 +9,15 @@
 set -e
 
 # Configuration
-OUTPUT_DIR="outputs/self_play_multiturn"
-EXPERIMENT_NAME="medserl_selfplay_multiturn"
-MODEL_PATH="Qwen/Qwen3-4B"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_multiturn}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_multiturn}"
+MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
+MAX_PAIRS="${MAX_PAIRS:-50}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
+VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-16}"
+TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
+export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
+export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
 
 # Detect environment (runpod vs local)
 if [ -d "/workspace/med_serl" ]; then
@@ -32,6 +38,7 @@ echo "=================================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
+echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
 echo "=================================================="
 
 # Source conda
@@ -64,7 +71,8 @@ python3 scripts/self_play/preprocess_medec.py \
     --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
     --output "$DATA_DIR/train.parquet" \
     --injection-prompts configs/prompts/error_injection_prompts_v4.json \
-    --max-pairs 50
+    --max-pairs "$MAX_PAIRS" \
+    --roles injector
 
 # Validation data
 VAL_FILE="$DATA_DIR/val.parquet"
@@ -73,7 +81,8 @@ if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
         --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
         --output "$VAL_FILE" \
         --injection-prompts configs/prompts/error_injection_prompts_v4.json \
-        --max-pairs 50
+        --max-pairs "$MAX_PAIRS" \
+        --roles injector
 else
     echo "Warning: No separate validation file, using training file"
     VAL_FILE="$DATA_DIR/train.parquet"
@@ -108,10 +117,13 @@ echo "Turn 2: Model as Assessor (classifies the note)"
 echo "MedicalGameInteraction orchestrates the game"
 
 python3 -m verl.trainer.main_ppo \
+    --config-path="$CONFIG_DIR" \
+    --config-name="ppo_multiturn" \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="$DATA_DIR/train.parquet" \
     data.val_files="$VAL_FILE" \
-    data.train_batch_size=16 \
+    data.train_batch_size="$TRAIN_BATCH_SIZE" \
+    data.val_batch_size="$VAL_BATCH_SIZE" \
     data.max_prompt_length=1024 \
     data.max_response_length=2048 \
     data.filter_overlong_prompts=True \
@@ -142,25 +154,20 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
     actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
-    critic.optim.lr=1e-5 \
-    critic.model.path=$MODEL_PATH \
-    critic.ppo_micro_batch_size_per_gpu=2 \
-    critic.ppo_mini_batch_size=8 \
+    critic.enable=false \
     algorithm.gamma=1.0 \
     algorithm.lam=0.95 \
-    algorithm.use_kl_in_reward=True \
-    algorithm.kl_ctrl.kl_coef=0.001 \
-    algorithm.kl_ctrl.type=fixed \
+    algorithm.use_kl_in_reward=False \
     reward_model.enable=False \
-    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/reward_function.py" \
-    custom_reward_function.name=compute_score \
+    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/simple_judge_reward.py" \
+    custom_reward_function.name=async_compute_score \
     trainer.logger=console \
     trainer.project_name='medserl-selfplay' \
     trainer.experiment_name=$EXPERIMENT_NAME \
     trainer.default_local_dir=$OUTPUT_DIR \
     trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
-    trainer.total_epochs=3 \
+    trainer.total_epochs="$TOTAL_EPOCHS" \
     trainer.save_freq=50 \
     trainer.test_freq=10 \
     trainer.val_before_train=True

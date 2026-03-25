@@ -19,8 +19,18 @@ Following verl's official patterns, we **use verl's default `ppo_trainer.yaml`**
 ## Files
 
 - `run_training.sh`: Main training script
+- `run_multiturn_training.sh`: Recommended injector -> assessor self-play launcher
 - `preprocess_medec.py`: Converts MEDEC JSONL to parquet format for verl
+- `simple_judge_reward.py`: Lightweight Qwen judge reward for assessor outputs
 - `configs/self_play.yaml`: **DEPRECATED** - use command-line overrides instead
+
+## Recommended Path
+
+For true self-play, use `run_multiturn_training.sh`.
+
+- The training parquet should contain **injector prompts only** (`--roles injector`).
+- Error-mode injector prompts must start from `correct_note`, not `incorrect_note`.
+- The optional simple judge is `Qwen/Qwen3-8B` via `JUDGE_VLLM_URL`, not the older UMLS pipeline.
 
 ## Usage
 
