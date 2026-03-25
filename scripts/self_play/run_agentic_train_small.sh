@@ -48,14 +48,16 @@ ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.6}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
-REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
+REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-2}"
 UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
-# Stall fix: validation blocks waiting for UMLS (JUDGE_TOTAL_TIMEOUT × VAL_MAX_SAMPLES).
-# Keep TEST_FREQ high so validation rarely runs; keep VAL_MAX_SAMPLES small.
+# Stall fix: keep TEST_FREQ high and VAL_MAX_SAMPLES small so validation
+# rarely blocks the training loop.
 VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-8}"
 TEST_FREQ="${TEST_FREQ:-50}"
 SAVE_FREQ="${SAVE_FREQ:-25}"
-export JUDGE_TOTAL_TIMEOUT="${JUDGE_TOTAL_TIMEOUT:-20}"
+# Per-call UMLS timeout: 12s × 16 serial calls per worker = 192s max wait,
+# but in practice most calls return in <2s.
+export JUDGE_TOTAL_TIMEOUT="${JUDGE_TOTAL_TIMEOUT:-12}"
 
 if [ -z "${UMLS_MAX_RPS:-}" ]; then
     UMLS_MAX_RPS=$(( 16 / REWARD_NUM_WORKERS ))
