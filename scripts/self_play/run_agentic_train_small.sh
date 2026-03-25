@@ -121,6 +121,11 @@ export WANDB_API_KEY="${WANDB_API_KEY:-}"
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
 mkdir -p "$RAY_TMPDIR_PATH"
 
+# Force vLLM V0 engine: vLLM >=0.11 defaults to V1 which spawns a separate
+# EngineCore subprocess that dies unexpectedly in RunPod/Docker containers
+# (shared-memory handshake fails under the container's resource tracker).
+export VLLM_USE_V1=0
+
 # ── Ray env vars for RunPod Docker ──
 export RAY_DISABLE_DOCKER_CPU_WARNING=1
 export RAY_DEDUP_LOGS=0

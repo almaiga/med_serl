@@ -231,7 +231,14 @@ async def _get_session() -> aiohttp.ClientSession:
         and not _session.closed
         and getattr(_session.connector, "_loop", None) is not current_loop
     )
-    if _session is None or _session.closed or session_loop_mismatch:
+    if session_loop_mismatch:
+        # Close the stale session to suppress "Unclosed client session" warnings.
+        try:
+            await _session.close()
+        except Exception:
+            pass
+        _session = None
+    if _session is None or _session.closed:
         connector = aiohttp.TCPConnector(
             enable_cleanup_closed=True,
             ttl_dns_cache=300,
