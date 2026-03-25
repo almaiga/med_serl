@@ -10,34 +10,26 @@
 #   bash scripts/self_play/run_agentic_train_small.sh
 #
 # Env overrides:
-#   JUDGE_VLLM_URL  — REQUIRED: URL to the remote judge pod
-#   ACTOR_MODEL     — Actor model path (default: Qwen/Qwen3-4B)
-#   JUDGE_MODEL     — Judge model name for logging (default: Qwen/Qwen3-8B)
-#   N_GPUS          — Number of local GPUs for training (default: 1)
-#   MAX_PAIRS       — MEDEC pairs to generate (default: 100)
-#   EPOCHS          — Training epochs (default: 5)
-#   ROLLOUT_MAX_MODEL_LEN        — vLLM max model len (default: 8192)
-#   ROLLOUT_MAX_BATCHED_TOKENS   — vLLM max batched tokens (default: 8192)
-#   ROLLOUT_MAX_NUM_SEQS         — vLLM max concurrent sequences (default: 8)
-#   ROLLOUT_RESPONSE_LENGTH      — max response length (default: 6144)
-#   Agentic veRL uses async rollout; this script pins that mode explicitly.
-#   ROLLOUT_ENFORCE_EAGER        — vLLM eager mode flag (default: True)
-#   ROLLOUT_FREE_CACHE_ENGINE    — offload KV cache after rollout generation
-#                                  (default: True, matching verl docs)
-#   ROLLOUT_ENABLE_SLEEP_MODE    — vLLM sleep/wake mode (default: False)
-#   VLLM_GPU_MEM_UTIL            — vLLM GPU memory utilization (default: 0.7)
-#   PPO_MICRO_BATCH_SIZE_PER_GPU — PPO micro-batch size per GPU (default: 2)
-#   LOGPROB_MICRO_BATCH_SIZE_PER_GPU — rollout/ref log-prob micro-batch size per GPU (default: 2)
-#   REWARD_NUM_WORKERS — parallel reward workers (default: 4)
-#   REWARD_BACKEND    — `agentic` or `rule` (default: agentic)
-#   UMLS_WEIGHT      — additive UMLS reward weight (default: 0.4; set 0 to disable)
-#   UMLS_MAX_RPS     — per-process NLM request cap; defaults to a conservative
-#                      share of the 20 req/s/IP limit across reward workers
-#   VAL_MAX_SAMPLES  — validation examples per test pass (default: 16)
-#   TEST_FREQ        — run validation every N steps (default: 5)
-#   SAVE_FREQ       — save checkpoint every N steps (default: 25)
-#   KEEP_ONLY_FINAL_CHECKPOINT — delete older global_step_* dirs at the end (default: 1)
-#   SKIP_DATAGEN    — Set to 1 to reuse existing train.parquet
+#   JUDGE_VLLM_URL   — REQUIRED: URL to the remote judge pod
+#   ACTOR_MODEL      — Actor model path (default: Qwen/Qwen3-4B)
+#   JUDGE_MODEL      — Judge model name for logging (default: Qwen/Qwen3-8B)
+#   N_GPUS           — Number of local GPUs for training (default: 1)
+#   MAX_PAIRS        — MEDEC pairs to generate (default: 100)
+#   EPOCHS           — Training epochs (default: 5)
+#   ROLLOUT_MAX_MODEL_LEN       — vLLM max model len (default: 8192)
+#   ROLLOUT_MAX_BATCHED_TOKENS  — vLLM max batched tokens (default: 8192)
+#   ROLLOUT_RESPONSE_LENGTH     — max response length (default: 6144)
+#   VLLM_GPU_MEM_UTIL           — vLLM GPU memory utilization (default: 0.7)
+#   PPO_MICRO_BATCH_SIZE_PER_GPU        — PPO micro-batch size per GPU (default: 2)
+#   LOGPROB_MICRO_BATCH_SIZE_PER_GPU    — rollout/ref log-prob micro-batch size (default: 2)
+#   REWARD_NUM_WORKERS  — parallel reward workers (default: 4)
+#   REWARD_BACKEND      — `agentic` or `rule` (default: agentic)
+#   UMLS_WEIGHT         — additive UMLS reward weight (default: 0.4; set 0 to disable)
+#   JUDGE_TOTAL_TIMEOUT — per-call judge+UMLS timeout in seconds (default: 20)
+#   VAL_MAX_SAMPLES     — validation examples per test pass (default: 8)
+#   TEST_FREQ           — run validation every N steps (default: 50)
+#   SAVE_FREQ           — save checkpoint every N steps (default: 25)
+#   SKIP_DATAGEN        — Set to 1 to reuse existing train.parquet
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 ACTOR_MODEL="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
@@ -50,58 +42,34 @@ TRAIN_BATCH_SIZE=$(( N_GPUS * 16 ))          # 16 per GPU
 TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
 ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
-ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
-ROLLOUT_ENFORCE_EAGER="${ROLLOUT_ENFORCE_EAGER:-True}"
-ROLLOUT_FREE_CACHE_ENGINE="${ROLLOUT_FREE_CACHE_ENGINE:-True}"
-ROLLOUT_ENABLE_SLEEP_MODE="${ROLLOUT_ENABLE_SLEEP_MODE:-False}"
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.7}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-4}"
-REWARD_BACKEND="${REWARD_BACKEND:-agentic}"
 UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
+# Stall fix: validation blocks waiting for UMLS (JUDGE_TOTAL_TIMEOUT × VAL_MAX_SAMPLES).
+# Keep TEST_FREQ high so validation rarely runs; keep VAL_MAX_SAMPLES small.
 VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-8}"
-# Stall fix: validation blocks the event loop while awaiting UMLS (up to
-# JUDGE_TOTAL_TIMEOUT × VAL_MAX_SAMPLES seconds). Set TEST_FREQ high enough
-# that you complete a full epoch before hitting validation.
 TEST_FREQ="${TEST_FREQ:-50}"
 SAVE_FREQ="${SAVE_FREQ:-25}"
-# Cap UMLS per-call timeout so validation can't hang indefinitely.
-# Training-time async calls aren't awaited per-step so this only matters
-# at test_freq boundaries.
 export JUDGE_TOTAL_TIMEOUT="${JUDGE_TOTAL_TIMEOUT:-20}"
-KEEP_ONLY_FINAL_CHECKPOINT="${KEEP_ONLY_FINAL_CHECKPOINT:-1}"
-
-# Paths
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
-TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val.parquet"
 
 if [ -z "${UMLS_MAX_RPS:-}" ]; then
     UMLS_MAX_RPS=$(( 16 / REWARD_NUM_WORKERS ))
-    if [ "$UMLS_MAX_RPS" -lt 1 ]; then
-        UMLS_MAX_RPS=1
-    fi
+    [ "$UMLS_MAX_RPS" -lt 1 ] && UMLS_MAX_RPS=1
 fi
 export UMLS_MAX_RPS
 export UMLS_WEIGHT
 
-case "${REWARD_BACKEND,,}" in
+case "${REWARD_BACKEND:-agentic}" in
     rule)
-        CUSTOM_REWARD_PATH="$PROJECT_ROOT/scripts/self_play/reward_function.py"
+        CUSTOM_REWARD_PATH_LOCAL="scripts/self_play/reward_function.py"
         CUSTOM_REWARD_NAME="compute_score"
         ;;
-    ""|agentic)
-        REWARD_BACKEND="agentic"
-        CUSTOM_REWARD_PATH="$PROJECT_ROOT/scripts/self_play/agentic_reward.py"
-        CUSTOM_REWARD_NAME="async_compute_score"
-        ;;
     *)
-        echo "WARNING: Unknown REWARD_BACKEND='$REWARD_BACKEND'; using agentic."
         REWARD_BACKEND="agentic"
-        CUSTOM_REWARD_PATH="$PROJECT_ROOT/scripts/self_play/agentic_reward.py"
+        CUSTOM_REWARD_PATH_LOCAL="scripts/self_play/agentic_reward.py"
         CUSTOM_REWARD_NAME="async_compute_score"
         ;;
 esac
@@ -117,14 +85,13 @@ export JUDGE_VLLM_URL
 export UMLS_API_KEY="${UMLS_API_KEY:-6878e795-ad79-4743-9758-546cacb8b31c}"
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
 
+# Force vLLM V0: vLLM >=0.11 defaults to V1 which spawns a separate EngineCore
+# subprocess that dies unexpectedly under RunPod/Docker's resource tracker.
+export VLLM_USE_V1=0
+
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
 mkdir -p "$RAY_TMPDIR_PATH"
-
-# Force vLLM V0 engine: vLLM >=0.11 defaults to V1 which spawns a separate
-# EngineCore subprocess that dies unexpectedly in RunPod/Docker containers
-# (shared-memory handshake fails under the container's resource tracker).
-export VLLM_USE_V1=0
 
 # ── Ray env vars for RunPod Docker ──
 export RAY_DISABLE_DOCKER_CPU_WARNING=1
@@ -138,26 +105,27 @@ export RAY_USAGE_STATS_ENABLED=0
 export RAY_enable_open_telemetry=0
 export HYDRA_FULL_ERROR=1
 
-# ── Disable OTLP/OpenTelemetry export inside Ray workers ──
-# The training pod has hit intermittent SIGSEGVs in Ray background workers
-# inside gRPC/OpenTelemetry metric export. Force local-only execution.
+# Disable OTLP/OpenTelemetry — intermittent SIGSEGVs in Ray gRPC workers
 export OTEL_SDK_DISABLED=true
 export OTEL_TRACES_EXPORTER=none
 export OTEL_METRICS_EXPORTER=none
 export OTEL_LOGS_EXPORTER=none
-unset OTEL_EXPORTER_OTLP_ENDPOINT
-unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
-unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
-unset OTEL_EXPORTER_OTLP_HEADERS
-unset OTEL_EXPORTER_OTLP_TRACES_HEADERS
-unset OTEL_EXPORTER_OTLP_METRICS_HEADERS
-unset OTEL_EXPORTER_OTLP_LOGS_HEADERS
+unset OTEL_EXPORTER_OTLP_ENDPOINT 2>/dev/null || true
+unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT 2>/dev/null || true
+unset OTEL_EXPORTER_OTLP_METRICS_ENDPOINT 2>/dev/null || true
+unset OTEL_EXPORTER_OTLP_LOGS_ENDPOINT 2>/dev/null || true
+unset OTEL_EXPORTER_OTLP_HEADERS 2>/dev/null || true
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="small_agentic_${TIMESTAMP}"
 OUTPUT_DIR="outputs/self_play/small_agentic_${TIMESTAMP}"
 
+# Paths
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
+TRAIN_PARQUET="$PROJECT_ROOT/data_processed/self_play/train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data_processed/self_play/val.parquet"
+CUSTOM_REWARD_PATH="$PROJECT_ROOT/$CUSTOM_REWARD_PATH_LOCAL"
 TRAIN_LOG="$OUTPUT_DIR/train.log"
 
 mkdir -p "$OUTPUT_DIR"
@@ -219,47 +187,22 @@ echo "Max pairs    : $MAX_PAIRS"
 echo "Epochs       : $EPOCHS"
 echo "Train samples: $TRAIN_SAMPLES  (batch=$TRAIN_BATCH_SIZE)"
 echo "Rollout len  : $ROLLOUT_RESPONSE_LENGTH"
-echo "Rollout mode : async"
-echo "Eager mode   : $ROLLOUT_ENFORCE_EAGER"
-echo "Free cache   : $ROLLOUT_FREE_CACHE_ENGINE"
-echo "Sleep mode   : $ROLLOUT_ENABLE_SLEEP_MODE"
 echo "Max model len: $ROLLOUT_MAX_MODEL_LEN"
 echo "Max batched  : $ROLLOUT_MAX_BATCHED_TOKENS"
-echo "Max seqs     : $ROLLOUT_MAX_NUM_SEQS"
 echo "vLLM mem util: $VLLM_GPU_MEM_UTIL"
 echo "Reward back. : $REWARD_BACKEND ($CUSTOM_REWARD_NAME)"
 echo "Reward work. : $REWARD_NUM_WORKERS"
 echo "UMLS weight  : $UMLS_WEIGHT"
-echo "UMLS max RPS : $UMLS_MAX_RPS per worker"
+echo "Test freq    : $TEST_FREQ  (val samples: $VAL_MAX_SAMPLES)"
 echo "Save freq    : $SAVE_FREQ"
 echo "Output dir   : $OUTPUT_DIR"
 echo "=================================================="
 
-# ─── Pre-flight: GLIBC patch ──────────────────────────────────────────────────
-echo ""
-echo "=== Pre-flight: Patching veRL engine imports (GLIBC workaround) ==="
-python3 << 'PATCH_EOF'
-import pathlib, re
-fpath = pathlib.Path("/workspace/verl/verl/workers/engine/__init__.py")
-if not fpath.exists():
-    print("  SKIP: file not found")
-else:
-    code = fpath.read_text()
-    new_code, n = re.subn(r'except ImportError:', 'except (ImportError, OSError):', code)
-    if n == 0:
-        print("  Already patched.")
-    else:
-        fpath.write_text(new_code)
-        print(f"  PATCHED: widened {n} ImportError → (ImportError, OSError)")
-PATCH_EOF
-
 # ─── Pre-flight: Fix veRL fsdp_workers.py backend string bug ─────────────────
-# veRL constructs "cpu:gloo,cpu:nccl" but PyTorch requires "cpu:gloo,cuda:nccl".
 echo ""
 echo "=== Pre-flight: Patching fsdp_workers.py (cpu:nccl → cuda:nccl) ==="
 python3 << 'PATCH_FSDP'
 import pathlib, re
-
 for candidate in [
     "/workspace/verl/verl/workers/fsdp_workers.py",
     "/sgl-workspace/sglang/verl/verl/workers/fsdp_workers.py",
@@ -268,16 +211,15 @@ for candidate in [
     if not fpath.exists():
         continue
     code = fpath.read_text()
-    # Fix any literal or f-string that produces "cpu:nccl"
     new_code, n = re.subn(r'cpu:nccl', 'cuda:nccl', code)
     if n == 0:
-        print(f"  {fpath.name}: no 'cpu:nccl' found (already correct or different pattern).")
+        print(f"  {fpath.name}: already correct.")
     else:
         fpath.write_text(new_code)
-        print(f"  PATCHED {fpath}: replaced {n} occurrence(s) of 'cpu:nccl' → 'cuda:nccl'")
+        print(f"  PATCHED {fpath}: {n} occurrence(s) cpu:nccl → cuda:nccl")
     break
 else:
-    print("  SKIP: fsdp_workers.py not found at known paths.")
+    print("  SKIP: fsdp_workers.py not found.")
 PATCH_FSDP
 
 # ─── Pre-flight: GPU memory check ────────────────────────────────────────────
@@ -308,10 +250,8 @@ GPU_CHECK_EOF
 [ $? -ne 0 ] && { echo "ABORTING: Not enough GPU memory."; exit 1; }
 
 # ─── Pre-flight: Judge connectivity check ────────────────────────────────────
-# Normalize the URL: strip any path and reconstruct /v1/models endpoint
 JUDGE_BASE_URL=$(echo "$JUDGE_VLLM_URL" | sed 's|/v1/.*||; s|/$||')
 JUDGE_MODELS_URL="${JUDGE_BASE_URL}/v1/models"
-# Also normalise completions URL in case caller set a bare base or wrong suffix
 export JUDGE_VLLM_URL="${JUDGE_BASE_URL}/v1/chat/completions"
 
 echo ""
@@ -319,20 +259,11 @@ echo "=== Pre-flight: Judge connectivity ($JUDGE_MODELS_URL) ==="
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "$JUDGE_MODELS_URL" 2>/dev/null || echo "000")
 if [ "$HTTP_CODE" = "200" ]; then
     echo "  Judge reachable — HTTP $HTTP_CODE OK"
-    echo "  JUDGE_VLLM_URL normalised to: $JUDGE_VLLM_URL"
 else
     echo "  ERROR: Judge returned HTTP $HTTP_CODE (expected 200)."
-    echo "  Tried: $JUDGE_MODELS_URL"
-    echo ""
-    echo "  Check that:"
-    echo "    1. The judge pod is running: bash scripts/self_play/start_judge_server.sh"
-    echo "    2. Both pods have RunPod Global Networking enabled"
-    echo "    3. JUDGE_VLLM_URL format: http://<pod-id>.runpod.internal:8002/v1/chat/completions"
-    echo "       Got: $JUDGE_VLLM_URL"
     exit 1
 fi
 
-# Quick sanity-check: one inference
 echo "  Judge sanity check..."
 curl -s "${JUDGE_VLLM_URL}" \
     -H "Content-Type: application/json" \
@@ -370,10 +301,8 @@ echo "=== Step 1: veRL REINFORCE++ Training ==="
 echo "  Dataset   : $MAX_PAIRS pairs → $TRAIN_SAMPLES samples over $EPOCHS epochs"
 echo "  Batch     : $TRAIN_BATCH_SIZE  |  Steps/epoch: $(( MAX_PAIRS / TRAIN_BATCH_SIZE ))"
 echo "  Total steps: $(( TRAIN_SAMPLES / TRAIN_BATCH_SIZE ))"
-echo "  Reward    : async_compute_score → $JUDGE_VLLM_URL"
 echo ""
 
-# Clean stale Ray state
 echo "Cleaning stale Ray state..."
 ray stop --force 2>/dev/null || true
 rm -rf "$RAY_TMPDIR_PATH"/* /dev/shm/ray /tmp/ray 2>/dev/null || true
@@ -470,14 +399,10 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.top_p=0.85 \
-    actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.gpu_memory_utilization=$VLLM_GPU_MEM_UTIL \
     actor_rollout_ref.rollout.max_model_len=$ROLLOUT_MAX_MODEL_LEN \
     actor_rollout_ref.rollout.max_num_batched_tokens=$ROLLOUT_MAX_BATCHED_TOKENS \
-    actor_rollout_ref.rollout.max_num_seqs=$ROLLOUT_MAX_NUM_SEQS \
-    actor_rollout_ref.rollout.enforce_eager=$ROLLOUT_ENFORCE_EAGER \
-    actor_rollout_ref.rollout.free_cache_engine=$ROLLOUT_FREE_CACHE_ENGINE \
-    actor_rollout_ref.rollout.enable_sleep_mode=$ROLLOUT_ENABLE_SLEEP_MODE \
+    actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.prompt_length=2048 \
@@ -519,19 +444,15 @@ python3 -m verl.trainer.main_ppo \
 
 TRAIN_EXIT=${PIPESTATUS[0]}
 
-# ─── Keep only final checkpoint for this run ──────────────────────────────────
-if [ "$KEEP_ONLY_FINAL_CHECKPOINT" = "1" ] && [ -d "$OUTPUT_DIR" ]; then
+# ─── Keep only final checkpoint ───────────────────────────────────────────────
+if [ "${KEEP_ONLY_FINAL_CHECKPOINT:-1}" = "1" ] && [ -d "$OUTPUT_DIR" ]; then
     mapfile -t STEP_DIRS < <(find "$OUTPUT_DIR" -maxdepth 1 -type d -name 'global_step_*' | sort -V)
     if [ "${#STEP_DIRS[@]}" -gt 1 ]; then
         LAST_STEP_DIR="${STEP_DIRS[-1]}"
         echo ""
-        echo "=== Checkpoint Cleanup ==="
-        echo "Keeping final checkpoint: $LAST_STEP_DIR"
+        echo "=== Checkpoint Cleanup: keeping only $LAST_STEP_DIR ==="
         for step_dir in "${STEP_DIRS[@]}"; do
-            if [ "$step_dir" != "$LAST_STEP_DIR" ]; then
-                echo "Removing older checkpoint: $step_dir"
-                rm -rf "$step_dir"
-            fi
+            [ "$step_dir" != "$LAST_STEP_DIR" ] && rm -rf "$step_dir"
         done
     fi
 fi
@@ -546,7 +467,6 @@ CS_CALLS=$(grep -c "compute_score called" "$TRAIN_LOG" 2>/dev/null || true); CS_
 JUDGE_CALLS=$(grep -c "judge_verdict\|umls_score\|PASS\|FAIL\|ABSTAIN" "$TRAIN_LOG" 2>/dev/null || true); JUDGE_CALLS=${JUDGE_CALLS:-0}
 SCORE_LINE=$(grep "critic/score/mean:" "$TRAIN_LOG" 2>/dev/null | tail -1 || true)
 
-echo ""
 echo "compute_score invocations : $CS_CALLS"
 echo "Judge verdict entries     : $JUDGE_CALLS"
 echo "Last critic/score/mean    : ${SCORE_LINE:-(not found)}"
@@ -555,8 +475,6 @@ echo ""
 
 if [ "$TRAIN_EXIT" -eq 0 ] && [ "$CS_CALLS" -gt 0 ]; then
     echo "TRAINING COMPLETED: agentic rewards were computed."
-    echo ""
-    echo "Recent score lines:"
     grep "critic/score/mean:" "$TRAIN_LOG" | tail -5
 elif [ "$TRAIN_EXIT" -eq 0 ]; then
     echo "TRAINING COMPLETED (check reward routing — no compute_score log lines found)."
