@@ -65,10 +65,13 @@ PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-8}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-8}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-2}"
 UMLS_WEIGHT="${UMLS_WEIGHT:-0.4}"
-# Stall fix: keep TEST_FREQ high and VAL_MAX_SAMPLES small so validation
-# rarely blocks the training loop.
+# Validation: disabled by default — TEST_FREQ=999999 means never runs.
+# The async reward function (HTTP calls to judge pod) hangs during the
+# validation step, causing a freeze at exactly step TEST_FREQ.
+# With 100 pairs, n=5, batch=32: ~78 total steps → TEST_FREQ=50 hits step 50.
+# Enable validation only after confirming the training loop runs end-to-end.
 VAL_MAX_SAMPLES="${VAL_MAX_SAMPLES:-8}"
-TEST_FREQ="${TEST_FREQ:-50}"
+TEST_FREQ="${TEST_FREQ:-999999}"
 # Checkpoint saving: disabled by default (each checkpoint is ~10 GB and fills disk fast).
 # Set SAVE_CHECKPOINTS=1 to enable periodic saves; SAVE_FREQ controls the step interval.
 SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-0}"
@@ -125,6 +128,7 @@ export WANDB_API_KEY="${WANDB_API_KEY:-}"
 # Default in container envs is often 30s — far too short for FSDP backward.
 export NCCL_TIMEOUT=1800000         # 30 min — prevents silent hangs on long allreduce
 export NCCL_IGNORE_CPU_AFFINITY=1   # RunPod container CPU affinity quirks
+export NCCL_DEBUG=INFO              # surface silent OOM/crash errors from workers
 # NOTE: do NOT set TORCH_NCCL_BLOCKING_WAIT=1 — it forces synchronous CPU-wait
 # after every vLLM TP allreduce (36 layers × per-layer), making GPU appear at
 # 0% utilization and causing the step-0 rollout to look like a permanent stall.
@@ -441,7 +445,7 @@ python3 -m verl.trainer.main_ppo \
     \
     actor_rollout_ref.model.path="$ACTOR_MODEL" \
     "++actor_rollout_ref.model.override_config.attn_implementation=sdpa" \
-    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr=3e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=16 \
