@@ -432,11 +432,11 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     \
     data.train_files="$TRAIN_PARQUET" \
-    data.val_files="$VAL_PARQUET" \
+    data.val_files="$TRAIN_PARQUET" \
     data.train_batch_size=$TRAIN_BATCH_SIZE \
-    data.val_batch_size=16 \
+    data.val_batch_size=4 \
     data.train_max_samples=$TRAIN_SAMPLES \
-    data.val_max_samples=$VAL_MAX_SAMPLES \
+    data.val_max_samples=0 \
     data.max_prompt_length=2048 \
     data.max_response_length=$ROLLOUT_RESPONSE_LENGTH \
     data.filter_overlong_prompts=False \
@@ -497,7 +497,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=$N_GPUS \
     trainer.nnodes=1 \
     trainer.save_freq=$SAVE_FREQ \
-    trainer.test_freq=$TEST_FREQ \
+    trainer.test_freq=999999 \
     trainer.val_before_train=False \
     ++ray_kwargs.ray_init.include_dashboard=False \
     ++ray_kwargs.ray_init.num_cpus=8 \
