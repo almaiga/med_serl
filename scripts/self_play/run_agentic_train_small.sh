@@ -44,8 +44,9 @@ TRAIN_SAMPLES=$(( EPOCHS * MAX_PAIRS ))      # 500 by default
 ROLLOUT_MAX_MODEL_LEN="${ROLLOUT_MAX_MODEL_LEN:-8192}"
 ROLLOUT_MAX_BATCHED_TOKENS="${ROLLOUT_MAX_BATCHED_TOKENS:-8192}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-6144}"
-# With 2-GPU tensor parallelism, each GPU holds ~16 GB optimizer states.
-# 0.6 × 96 = 58 GB KV cache per GPU → 16+58=74 GB < 96 GB. Safe.
+# With param_offload=False: FSDP shard ~4 GB + Adam states ~16 GB on GPU.
+# During rollout: 4+58 (vLLM 0.6×96) = 62 GB < 96 GB. Safe.
+# During PPO update: ~20 GB (params+grads+optimizer). No CPU↔GPU all-gathers.
 VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.6}"
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-2}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-2}"
@@ -102,6 +103,12 @@ export WANDB_API_KEY="${WANDB_API_KEY:-}"
 # /sgl-workspace/sglang/verl uses vLLM V1's cumem sleep/wake allocator
 # deliberately. Forcing V0 corrupts the allocator init and causes GPU OOM
 # on the first wake_up call after the training step.
+
+# ── NCCL: long timeout prevents allreduce hangs during param all-gather ──
+# Default in container envs is often 30s — far too short for FSDP backward.
+export NCCL_TIMEOUT=1800000         # 30 minutes in ms
+export TORCH_NCCL_BLOCKING_WAIT=1   # surface hangs as errors instead of silent stalls
+export NCCL_IGNORE_CPU_AFFINITY=1   # RunPod container CPU affinity quirks
 
 # All Ray temp under /workspace (persistent, large, won't break SSH)
 RAY_TMPDIR_PATH="/workspace/ray_tmp"
@@ -406,7 +413,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.actor.strategy=fsdp2 \
     \
@@ -424,7 +431,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$N_GPUS \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.fsdp_config.param_offload=False \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     \
