@@ -52,11 +52,11 @@ ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-1536}"
 # Params stay on GPU (no CPU→GPU copy on wake_up). Adam states go to CPU.
 # With TP=1, Qwen3-4B, 2×96GB: rollout GPU 0 = 77GB vLLM + 4GB FSDP = 81GB ✓
 # PPO update GPU 0 = 25GB vLLM cumem + 4GB params + 4GB grads = 33GB ✓
-VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.8}"
+VLLM_GPU_MEM_UTIL="${VLLM_GPU_MEM_UTIL:-0.6}"
 # Blog rec: TP=1 for small models (3-8B) — eliminates per-layer AllReduce during
 # vLLM generation (36 layers × allreduce × 32 seqs). Data parallelism is 33%
 # faster than TP=2 for 4B. With TP=1, vLLM runs on 1 GPU; FSDP shards across all.
-ROLLOUT_TP="${ROLLOUT_TP:-1}"
+ROLLOUT_TP="${ROLLOUT_TP:-2}"
 # Blog rec: n=5 gives proper GRPO group-relative advantage baseline. n=1 uses
 # only running mean baseline, which is much noisier. Each prompt samples 5
 # responses; advantages are normalized within the group.
@@ -424,7 +424,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$ROLLOUT_TP \
     \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$LOGPROB_MICRO_BATCH_SIZE_PER_GPU \
     \
