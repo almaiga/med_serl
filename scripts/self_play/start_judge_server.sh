@@ -13,6 +13,35 @@
 #   GPU_MEM_UTIL  — vLLM gpu_memory_utilization (default: 0.85)
 #   JUDGE_HOST    — explicit host or pod ID to advertise to the training pod
 
+SCREEN_SESSION="${SCREEN_SESSION:-medserl_judge_server}"
+AUTO_SCREEN="${AUTO_SCREEN:-1}"
+
+if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
+    if ! command -v screen >/dev/null 2>&1; then
+        echo "ERROR: 'screen' is required but not installed."
+        exit 1
+    fi
+
+    if screen -list | grep -q "[[:space:]]${SCREEN_SESSION}[[:space:]]"; then
+        echo "Screen session '${SCREEN_SESSION}' already exists."
+        echo "Attach with: screen -r ${SCREEN_SESSION}"
+        echo "Kill with:   screen -X -S ${SCREEN_SESSION} quit"
+        exit 1
+    fi
+
+    SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    QUOTED_ARGS=""
+    for arg in "$@"; do
+        QUOTED_ARGS+=" $(printf '%q' "$arg")"
+    done
+
+    echo "Launching ${SCRIPT_PATH} in screen session '${SCREEN_SESSION}'..."
+    screen -dmS "${SCREEN_SESSION}" bash -lc "AUTO_SCREEN=0 bash $(printf '%q' "$SCRIPT_PATH")${QUOTED_ARGS}"
+    echo "Attach with: screen -r ${SCREEN_SESSION}"
+    echo "Kill with:   screen -X -S ${SCREEN_SESSION} quit"
+    exit 0
+fi
+
 JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 JUDGE_PORT="${JUDGE_PORT:-8002}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"

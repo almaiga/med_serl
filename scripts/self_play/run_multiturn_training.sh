@@ -9,6 +9,35 @@
 
 set -e
 
+SCREEN_SESSION="${SCREEN_SESSION:-medserl_selfplay_train}"
+AUTO_SCREEN="${AUTO_SCREEN:-1}"
+
+if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
+    if ! command -v screen >/dev/null 2>&1; then
+        echo "ERROR: 'screen' is required but not installed."
+        exit 1
+    fi
+
+    if screen -list | grep -q "[[:space:]]${SCREEN_SESSION}[[:space:]]"; then
+        echo "Screen session '${SCREEN_SESSION}' already exists."
+        echo "Attach with: screen -r ${SCREEN_SESSION}"
+        echo "Kill with:   screen -X -S ${SCREEN_SESSION} quit"
+        exit 1
+    fi
+
+    SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    QUOTED_ARGS=""
+    for arg in "$@"; do
+        QUOTED_ARGS+=" $(printf '%q' "$arg")"
+    done
+
+    echo "Launching ${SCRIPT_PATH} in screen session '${SCREEN_SESSION}'..."
+    screen -dmS "${SCREEN_SESSION}" bash -lc "AUTO_SCREEN=0 bash $(printf '%q' "$SCRIPT_PATH")${QUOTED_ARGS}"
+    echo "Attach with: screen -r ${SCREEN_SESSION}"
+    echo "Kill with:   screen -X -S ${SCREEN_SESSION} quit"
+    exit 0
+fi
+
 SMOKE="${SMOKE:-0}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_chained_vllm}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_vllm}"
