@@ -102,6 +102,7 @@ export RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 export TOKENIZERS_PARALLELISM=false
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+export PYTHONUNBUFFERED=1
 unset TORCH_NCCL_AVOID_RECORD_STREAMS
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
 
@@ -235,6 +236,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.val_before_train="$VAL_BEFORE_TRAIN" \
     "++ray_kwargs.ray_init.num_cpus=$RAY_NUM_CPUS" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
+    "++ray_kwargs.runtime_env.env_vars.MEDSERL_DEBUG_LOGGING=${MEDSERL_DEBUG_LOGGING:-0}" \
+    "++ray_kwargs.runtime_env.env_vars.PYTHONUNBUFFERED=1" \
     "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
     "++ray_kwargs.runtime_env.env_vars.TRANSFORMERS_NO_ADVISORY_WARNINGS=1" \
     "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0"
