@@ -17,6 +17,7 @@ N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-$N_GPUS}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.4}"
 SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-flashinfer}"
+RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
 
@@ -29,9 +30,11 @@ if [ "$SMOKE" = "1" ]; then
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
     MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
-    SAVE_FREQ="${SAVE_FREQ:-1000}"
+    SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:-1000}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
+    ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,extra]}"
+    ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,extra]}"
     export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="${MEDSERL_ASSESSOR_MAX_NEW_TOKENS:-128}"
 else
     MAX_PAIRS="${MAX_PAIRS:-50}"
@@ -45,6 +48,8 @@ else
     SAVE_FREQ="${SAVE_FREQ:-50}"
     TEST_FREQ="${TEST_FREQ:-10}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-true}"
+    ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,optimizer,extra]}"
+    ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,optimizer,extra]}"
     export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="${MEDSERL_ASSESSOR_MAX_NEW_TOKENS:-256}"
 fi
 
@@ -73,6 +78,8 @@ echo "Rollout TP: $ROLLOUT_TP"
 echo "Max pairs: $MAX_PAIRS"
 echo "Train batch size: $TRAIN_BATCH_SIZE"
 echo "Total epochs: $TOTAL_EPOCHS"
+echo "Ray CPUs: $RAY_NUM_CPUS"
+echo "Save freq: $SAVE_FREQ"
 echo "SGLang attention backend: $SGLANG_ATTENTION_BACKEND"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
 echo "=================================================="
@@ -90,6 +97,20 @@ fi
 # Set PYTHONPATH so verl can import MedicalGameInteraction
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK=True
+export RAY_DISABLE_DOCKER_CPU_WARNING=1
+export RAY_USE_MULTIPROCESSING_CPU_COUNT=1
+export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+unset TORCH_NCCL_AVOID_RECORD_STREAMS
+
+# Suppress recurring upstream warning noise that does not affect training.
+PY_WARN_FILTERS="ignore:Triton is not supported on current platform, roll back to CPU.:UserWarning"
+PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:Only CUDA, HIP and XPU support AWQ currently.:UserWarning"
+PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:Only CUDA support GGUF quantization currently.:UserWarning"
+PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:ORJSONResponse is deprecated:DeprecationWarning"
+PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:.*torch_dtype.*deprecated.*:UserWarning"
+export PYTHONWARNINGS="${PYTHONWARNINGS:+$PYTHONWARNINGS,}$PY_WARN_FILTERS"
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
 
 # Change to project directory
@@ -185,6 +206,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.entropy_coeff=0.01 \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
+    actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
@@ -218,7 +241,12 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq="$SAVE_FREQ" \
     trainer.test_freq="$TEST_FREQ" \
     trainer.val_before_train="$VAL_BEFORE_TRAIN" \
-    "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG"
+    "++ray_kwargs.ray_init.num_cpus=$RAY_NUM_CPUS" \
+    "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
+    "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
+    "++ray_kwargs.runtime_env.env_vars.TRANSFORMERS_NO_ADVISORY_WARNINGS=1" \
+    "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0" \
+    "++ray_kwargs.runtime_env.env_vars.PYTHONWARNINGS=$PY_WARN_FILTERS"
 
 echo ""
 echo "=================================================="
