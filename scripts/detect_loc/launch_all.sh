@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="${SCRIPT_DIR}/run_detection.sh"
 
 # Models to run (must exist in the MODELS registry in run_detection.sh)
-BASE_MODEL="Qwen3-8B"
+BASE_MODEL="Qwen3-4B"
 FT_MODEL="medrect-sft"
 
 echo "============================================================"
@@ -34,7 +34,7 @@ run_and_wait() {
 }
 
 run_and_wait "${BASE_MODEL}"
-run_and_wait "${FT_MODEL}"
+# run_and_wait "${FT_MODEL}"
 
 echo "============================================================"
 echo "  All done."
