@@ -10,6 +10,11 @@ print:
 3. Which interaction name/class was selected before start_interaction()
 
 The patch is idempotent.
+
+The logging is intentionally unconditional. The current failure mode is that
+env-gated debug prints never appeared even though the patched files were the
+ones being imported, so the next step is to prove whether these code paths are
+reached at all.
 """
 
 from __future__ import annotations
@@ -61,8 +66,8 @@ def patch_tool_agent_loop(path: Path) -> None:
     code = path.read_text()
     changed = False
 
-    target = "        interaction_map = initialize_interactions_from_config(interaction_config_file)\n        return interaction_map\n"
-    replacement = (
+    # Upgrade older env-gated MedSeRL debug prints to unconditional prints.
+    old = (
         "        interaction_map = initialize_interactions_from_config(interaction_config_file)\n"
         "        if __import__('os').environ.get('MEDSERL_DEBUG_LOGGING', '0') == '1':\n"
         "            print(\n"
@@ -72,11 +77,20 @@ def patch_tool_agent_loop(path: Path) -> None:
         "            )\n"
         "        return interaction_map\n"
     )
-    code, did = _replace_once(code, target, replacement, "tool_agent_loop interaction_map print")
-    changed |= did
+    new = (
+        "        interaction_map = initialize_interactions_from_config(interaction_config_file)\n"
+        "        print(\n"
+        "            f\"[MedSeRL][tool_agent_loop] interaction_config_file={interaction_config_file!r} \"\n"
+        "            f\"interaction_map_keys={list(interaction_map.keys())}\",\n"
+        "            flush=True,\n"
+        "        )\n"
+        "        return interaction_map\n"
+    )
+    if old in code:
+        code = code.replace(old, new, 1)
+        changed = True
 
-    target = '            interaction_kwargs = kwargs["extra_info"]["interaction_kwargs"]\n'
-    replacement = (
+    old = (
         '            interaction_kwargs = kwargs["extra_info"]["interaction_kwargs"]\n'
         "            if __import__('os').environ.get('MEDSERL_DEBUG_LOGGING', '0') == '1':\n"
         "                print(\n"
@@ -85,17 +99,71 @@ def patch_tool_agent_loop(path: Path) -> None:
         "                    flush=True,\n"
         "                )\n"
     )
-    code, did = _replace_once(code, target, replacement, "tool_agent_loop interaction_kwargs print")
-    changed |= did
+    new = (
+        '            interaction_kwargs = kwargs["extra_info"]["interaction_kwargs"]\n'
+        "            print(\n"
+        "                f\"[MedSeRL][tool_agent_loop] request_id={request_id!r} \"\n"
+        "                f\"interaction_kwargs={interaction_kwargs!r}\",\n"
+        "                flush=True,\n"
+        "            )\n"
+    )
+    if old in code:
+        code = code.replace(old, new, 1)
+        changed = True
 
-    target = "            await interaction.start_interaction(request_id, **interaction_kwargs)\n"
-    replacement = (
+    old = (
         "            if __import__('os').environ.get('MEDSERL_DEBUG_LOGGING', '0') == '1':\n"
         "                print(\n"
         "                    f\"[MedSeRL][tool_agent_loop] request_id={request_id!r} \"\n"
         "                    f\"interaction_name={interaction_name!r} interaction_cls={type(interaction).__module__}.{type(interaction).__name__}\",\n"
         "                    flush=True,\n"
         "                )\n"
+        "            await interaction.start_interaction(request_id, **interaction_kwargs)\n"
+    )
+    new = (
+        "            print(\n"
+        "                f\"[MedSeRL][tool_agent_loop] request_id={request_id!r} \"\n"
+        "                f\"interaction_name={interaction_name!r} interaction_cls={type(interaction).__module__}.{type(interaction).__name__}\",\n"
+        "                flush=True,\n"
+        "            )\n"
+        "            await interaction.start_interaction(request_id, **interaction_kwargs)\n"
+    )
+    if old in code:
+        code = code.replace(old, new, 1)
+        changed = True
+
+    target = "        interaction_map = initialize_interactions_from_config(interaction_config_file)\n        return interaction_map\n"
+    replacement = (
+        "        interaction_map = initialize_interactions_from_config(interaction_config_file)\n"
+        "        print(\n"
+        "            f\"[MedSeRL][tool_agent_loop] interaction_config_file={interaction_config_file!r} \"\n"
+        "            f\"interaction_map_keys={list(interaction_map.keys())}\",\n"
+        "            flush=True,\n"
+        "        )\n"
+        "        return interaction_map\n"
+    )
+    code, did = _replace_once(code, target, replacement, "tool_agent_loop interaction_map print")
+    changed |= did
+
+    target = '            interaction_kwargs = kwargs["extra_info"]["interaction_kwargs"]\n'
+    replacement = (
+        '            interaction_kwargs = kwargs["extra_info"]["interaction_kwargs"]\n'
+        "            print(\n"
+        "                f\"[MedSeRL][tool_agent_loop] request_id={request_id!r} \"\n"
+        "                f\"interaction_kwargs={interaction_kwargs!r}\",\n"
+        "                flush=True,\n"
+        "            )\n"
+    )
+    code, did = _replace_once(code, target, replacement, "tool_agent_loop interaction_kwargs print")
+    changed |= did
+
+    target = "            await interaction.start_interaction(request_id, **interaction_kwargs)\n"
+    replacement = (
+        "            print(\n"
+        "                f\"[MedSeRL][tool_agent_loop] request_id={request_id!r} \"\n"
+        "                f\"interaction_name={interaction_name!r} interaction_cls={type(interaction).__module__}.{type(interaction).__name__}\",\n"
+        "                flush=True,\n"
+        "            )\n"
         "            await interaction.start_interaction(request_id, **interaction_kwargs)\n"
     )
     code, did = _replace_once(code, target, replacement, "tool_agent_loop selected interaction print")
@@ -112,8 +180,8 @@ def patch_interaction_registry(path: Path) -> None:
     code = path.read_text()
     changed = False
 
-    target = "    interaction_map = {}\n"
-    replacement = (
+    # Upgrade older env-gated MedSeRL debug prints to unconditional prints.
+    old = (
         "    interaction_map = {}\n"
         "    if __import__('os').environ.get('MEDSERL_DEBUG_LOGGING', '0') == '1':\n"
         "        print(\n"
@@ -121,11 +189,18 @@ def patch_interaction_registry(path: Path) -> None:
         "            flush=True,\n"
         "        )\n"
     )
-    code, did = _replace_once(code, target, replacement, "interaction_registry config print")
-    changed |= did
+    new = (
+        "    interaction_map = {}\n"
+        "    print(\n"
+        "        f\"[MedSeRL][interaction_registry] config_file={interaction_config_file!r}\",\n"
+        "        flush=True,\n"
+        "    )\n"
+    )
+    if old in code:
+        code = code.replace(old, new, 1)
+        changed = True
 
-    target = "        interaction_map[name] = interaction\n"
-    replacement = (
+    old = (
         "        interaction_map[name] = interaction\n"
         "        if __import__('os').environ.get('MEDSERL_DEBUG_LOGGING', '0') == '1':\n"
         "            print(\n"
@@ -133,6 +208,38 @@ def patch_interaction_registry(path: Path) -> None:
         "                f\"interaction_cls={type(interaction).__module__}.{type(interaction).__name__}\",\n"
         "                flush=True,\n"
         "            )\n"
+    )
+    new = (
+        "        interaction_map[name] = interaction\n"
+        "        print(\n"
+        "            f\"[MedSeRL][interaction_registry] registered name={name!r} \"\n"
+        "            f\"interaction_cls={type(interaction).__module__}.{type(interaction).__name__}\",\n"
+        "            flush=True,\n"
+        "        )\n"
+    )
+    if old in code:
+        code = code.replace(old, new, 1)
+        changed = True
+
+    target = "    interaction_map = {}\n"
+    replacement = (
+        "    interaction_map = {}\n"
+        "    print(\n"
+        "        f\"[MedSeRL][interaction_registry] config_file={interaction_config_file!r}\",\n"
+        "        flush=True,\n"
+        "    )\n"
+    )
+    code, did = _replace_once(code, target, replacement, "interaction_registry config print")
+    changed |= did
+
+    target = "        interaction_map[name] = interaction\n"
+    replacement = (
+        "        interaction_map[name] = interaction\n"
+        "        print(\n"
+        "            f\"[MedSeRL][interaction_registry] registered name={name!r} \"\n"
+        "            f\"interaction_cls={type(interaction).__module__}.{type(interaction).__name__}\",\n"
+        "            flush=True,\n"
+        "        )\n"
     )
     code, did = _replace_once(code, target, replacement, "interaction_registry registration print")
     changed |= did
