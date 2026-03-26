@@ -74,12 +74,22 @@ _log_lock = threading.Lock()
 _resolved_log_file: "Path | None" = None  # resolved on first write
 
 
+def _debug_enabled() -> bool:
+    return _os.environ.get("MEDSERL_DEBUG_LOGGING", "0") == "1"
+
+
+def _debug(msg: str) -> None:
+    if _debug_enabled():
+        print(f"[MedicalGameInteraction][debug] {msg}", flush=True)
+
+
 def _get_log_file() -> Path:
     """Resolve the log file path once, lazily, so runtime_env env vars are seen."""
     global _resolved_log_file
     if _resolved_log_file is not None:
         return _resolved_log_file
     env_log = _os.environ.get("MEDSERL_GAME_LOG")
+    _debug(f"_get_log_file env MEDSERL_GAME_LOG={env_log!r}")
     if env_log:
         p = Path(env_log)
         try:
@@ -98,6 +108,11 @@ def _get_log_file() -> Path:
 def _write_log(entry: dict) -> None:
     try:
         log_file = _get_log_file()
+        _debug(
+            "_write_log path="
+            f"{log_file} note_id={entry.get('note_id', '')!r} "
+            f"outcome={entry.get('outcome', '')!r}"
+        )
         with _log_lock:
             with open(log_file, "a") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -144,6 +159,10 @@ class MedicalGameInteraction(BaseInteraction):
         self.detection_prompts = self._load_prompts(
             config.get("detection_prompts_path", 
                       "configs/prompts/detection_localization_prompts.json")
+        )
+        _debug(
+            f"initialized name={self.name!r} assessor_max_new_tokens={self.assessor_max_new_tokens} "
+            f"detection_prompts_path={config.get('detection_prompts_path', 'configs/prompts/detection_localization_prompts.json')!r}"
         )
         
     def _load_prompts(self, path: str) -> dict:
@@ -379,6 +398,11 @@ class MedicalGameInteraction(BaseInteraction):
 
         note_data = instance.get("note_data", {})
         assessor_public_answer = self._extract_public_answer(assessor_output)
+        _debug(
+            f"assessor_turn note_id={note_data.get('note_id', '')!r} "
+            f"gt={ground_truth!r} label={label!r} pred_sid={pred_sid!r} "
+            f"public_answer={assessor_public_answer!r}"
+        )
         _write_log({
             "timestamp": datetime.now().isoformat(),
             "data_source": "medec_selfplay",
