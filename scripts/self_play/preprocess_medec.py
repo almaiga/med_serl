@@ -83,6 +83,7 @@ def create_benign_example(
     
     return {
         "data_source": data_source,
+        "agent_name": "tool_agent_loop",
         "prompt": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -153,6 +154,7 @@ def create_error_example(
     
     return {
         "data_source": data_source,
+        "agent_name": "tool_agent_loop",
         "prompt": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -221,6 +223,7 @@ def create_assessor_example(
 
     return {
         "data_source": data_source,
+        "agent_name": "tool_agent_loop",
         "prompt": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -324,6 +327,7 @@ def convert_to_parquet(
         extra_info["interaction_kwargs"] = dict(ex["interaction_kwargs"])
         rows.append({
             "data_source": ex["data_source"],
+            "agent_name": ex.get("agent_name", "tool_agent_loop"),
             "prompt": ex["prompt"],
             "ability": ex["ability"],
             "reward_model": ex["reward_model"],

@@ -179,6 +179,7 @@ python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="$DATA_DIR/train.parquet" \
     data.val_files="$VAL_FILE" \
+    data.return_raw_chat=True \
     data.train_batch_size="$TRAIN_BATCH_SIZE" \
     data.val_batch_size="$VAL_BATCH_SIZE" \
     data.max_prompt_length="$MAX_PROMPT_LENGTH" \
@@ -203,6 +204,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
     actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
+    actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.name=sglang \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
