@@ -103,14 +103,6 @@ export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 export TOKENIZERS_PARALLELISM=false
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 unset TORCH_NCCL_AVOID_RECORD_STREAMS
-
-# Suppress recurring upstream warning noise that does not affect training.
-PY_WARN_FILTERS="ignore:Triton is not supported on current platform, roll back to CPU.:UserWarning"
-PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:Only CUDA, HIP and XPU support AWQ currently.:UserWarning"
-PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:Only CUDA support GGUF quantization currently.:UserWarning"
-PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:ORJSONResponse is deprecated:DeprecationWarning"
-PY_WARN_FILTERS="$PY_WARN_FILTERS,ignore:.*torch_dtype.*deprecated.*:UserWarning"
-export PYTHONWARNINGS="${PYTHONWARNINGS:+$PYTHONWARNINGS,}$PY_WARN_FILTERS"
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
 
 # Change to project directory
@@ -245,8 +237,7 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
     "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
     "++ray_kwargs.runtime_env.env_vars.TRANSFORMERS_NO_ADVISORY_WARNINGS=1" \
-    "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0" \
-    "++ray_kwargs.runtime_env.env_vars.PYTHONWARNINGS=$PY_WARN_FILTERS"
+    "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0"
 
 echo ""
 echo "=================================================="
