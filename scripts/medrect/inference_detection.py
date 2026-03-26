@@ -441,7 +441,7 @@ def main():
     p.add_argument("--temperature",     type=float, default=0.7)
     p.add_argument("--max_new_tokens",  type=int, default=512)
     p.add_argument("--thinking_budget", type=int, default=1024)
-    p.add_argument("--no_thinking",     action="store_true")
+    p.add_argument("--no_thinking",     action="store_true", help="Disable thinking mode")
     p.add_argument("--output_dir",      default="results/detection")
     p.add_argument("--base_model_path", default=None,
                    help="Override base-model path for LoRA adapters "
@@ -463,8 +463,13 @@ def main():
     prompt_config    = load_prompt_config(Path(args.prompt_config))
     test_df          = load_test_data(args.dataset)
 
+    # ── Run inference ────────────────────────────────────────────────────────────
     results = run_inference(
-        model, tokenizer, test_df, model_type, prompt_config,
+        model,
+        tokenizer,
+        test_df,
+        model_type,
+        prompt_config,
         use_thinking=not args.no_thinking,
         max_samples=args.max_samples,
         temperature=args.temperature,
@@ -473,6 +478,8 @@ def main():
         batch_size=args.batch_size,
     )
 
+    # ── Evaluate and save results ────────────────────────────────────────────────
+    df = pd.DataFrame(results)
     metrics = compute_metrics(results)
     print_metrics(metrics)
 
