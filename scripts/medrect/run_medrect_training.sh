@@ -40,6 +40,7 @@ LR="${LR:-1e-4}"
 EPOCHS="${EPOCHS:-3}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
+NPROC_PER_NODE="${NPROC_PER_NODE:-}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MODEL_SHORT=$(basename "${MODEL_PATH}")
@@ -118,6 +119,7 @@ echo "Hyperparameters:"
 echo "  LoRA r=${LORA_R}, alpha=${LORA_ALPHA}, dropout=${LORA_DROPOUT}"
 echo "  LR=${LR}, epochs=${EPOCHS}"
 echo "  Batch=${BATCH_SIZE}, grad_accum=${GRAD_ACCUM}, effective=$((BATCH_SIZE * GRAD_ACCUM))"
+echo "  Processes: ${NPROC_PER_NODE:-auto}"
 echo "  Target modules: ${LORA_TARGET}"
 echo "  Wandb: ${USE_WANDB}"
 echo "  Skip prep: ${SKIP_PREP}"
@@ -128,6 +130,14 @@ if command -v nvidia-smi &> /dev/null; then
     echo "GPU Info:"
     nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
     echo ""
+fi
+
+if [[ -z "${NPROC_PER_NODE}" ]]; then
+    if command -v nvidia-smi &> /dev/null; then
+        NPROC_PER_NODE=$(nvidia-smi -L | wc -l | tr -d ' ')
+    else
+        NPROC_PER_NODE=1
+    fi
 fi
 
 # ---- Build pipeline function ----
@@ -178,7 +188,7 @@ run_pipeline() {
         WANDB_FLAG="--wandb --wandb-project medrect-sft"
     fi
     
-    python3 scripts/medrect/train_medrect_lora.py \
+    torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" scripts/medrect/train_medrect_lora.py \
         --train-file "${PREPARED_DATA}" \
         --model-name "${MODEL_PATH}" \
         --output-dir "${OUTPUT_DIR}" \
