@@ -37,15 +37,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from inference_error_detection import (
-    THINK_END_TOKEN_ID,
-    IM_END_TOKEN_ID,
-    MODEL_TYPE_QWEN,
     detect_model_type,
     load_model_and_tokenizer,
     load_test_data,
 )
 
 DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
+
+# ── Constants ────────────────────────────────────────────────────────────────
+MODEL_TYPE_QWEN = "qwen"
+IM_START_TOKEN = "<|im_start|>"
+IM_END_TOKEN = "₃"
+THINK_TOKEN = "<|think|>"
+THINK_END_TOKEN = "<|end_think|>"
+
+# Special token IDs for Qwen2
+IM_START_TOKEN_ID = 151644
+IM_END_TOKEN_ID = 151645
+THINK_TOKEN_ID = 151646
+THINK_END_TOKEN_ID = 151647
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,12 +84,12 @@ def sentences_to_1indexed(raw: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def split_thinking(content: str) -> Tuple[str, str]:
-    """Split plain-text <think>...</think> from the final answer.
+    """Split plain-text  consolidated from the final answer.
 
     Works for models like HuatuoGPT / DeepSeek-R1 that emit think tags as text.
     Returns (thinking, answer_after_think).
     """
-    m = re.search(r"<think>(.*?)</think>\s*", content, re.DOTALL)
+    m = re.search(r" consolidated\s*", content, re.DOTALL)
     if m:
         return m.group(1).strip(), content[m.end():].strip()
     return "", content
@@ -91,7 +101,7 @@ def parse_output(content: str) -> Tuple[str, Optional[int]]:
     label        : "CORRECT" | "ERROR" | "UNKNOWN"
     sentence_id  : int if label is ERROR, else None
     """
-    # Strip plain-text <think> block so the answer is what remains
+    # Strip plain-text  consolidated so the answer is what remains
     _, content = split_thinking(content)
 
     # Use first non-empty line; strip known prefixes
@@ -215,7 +225,7 @@ def run_inference(
             for i in range(len(prompts)):
                 # NOTE: can't use  != pad_token_id filtering here because
                 # pad_token_id == IM_END_TOKEN_ID == 151645, and the prompt
-                # contains <|im_end|> tokens.  Use position-based slicing.
+                # contains  consolidated tokens.  Use position-based slicing.
                 out_ids = outputs[i, orig_padded_len:].tolist()
                 # Right-strip pad/eos tokens
                 while out_ids and out_ids[-1] == tokenizer.pad_token_id:
@@ -224,7 +234,7 @@ def run_inference(
                 if IM_END_TOKEN_ID not in out_ids:
                     needs_stage2[i] = True
                     if THINK_END_TOKEN_ID not in out_ids:
-                        early_stop = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
+                        early_stop = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n consolidated\n\n"
                         early_ids = tokenizer(early_stop, return_tensors="pt", add_special_tokens=False).input_ids.to(model.device)
                         new_input = torch.cat([outputs[i:i+1], early_ids], dim=-1)
                     else:
@@ -282,7 +292,7 @@ def run_inference(
                 while thinking_all and thinking_all[-1] == tokenizer.pad_token_id:
                     thinking_all.pop()
 
-                # Split at </think> token (151668)
+                # Split at  consolidated token (151668)
                 if THINK_END_TOKEN_ID in thinking_all:
                     idx = thinking_all.index(THINK_END_TOKEN_ID)
                     thinking = tokenizer.decode(thinking_all[:idx], skip_special_tokens=True).strip()
@@ -298,7 +308,7 @@ def run_inference(
                         answer_ids.pop()
                     content = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
                 else:
-                    # Answer was already in stage 1, after </think>
+                    # Answer was already in stage 1, after  consolidated
                     content = tokenizer.decode(after_think, skip_special_tokens=True).strip()
 
                 # Clean up injected early-stop message from thinking
