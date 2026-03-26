@@ -75,11 +75,11 @@ fi
 # ── Inference parameters ─────────────────────────────────────────────────────
 DATASET="${DATASET:-all}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
-TEMPERATURE="${TEMPERATURE:-0.7}"
+TEMPERATURE="${TEMPERATURE:-0}"
 THINKING_BUDGET="${THINKING_BUDGET:-1024}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
-NO_THINKING="${NO_THINKING:-0}"
+NO_THINKING="${NO_THINKING:-1}"
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
 OUTPUT_DIR="results/detection/${MODEL_NAME}"
 
