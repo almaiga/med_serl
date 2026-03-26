@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LoRA SFT training for Qwen3-8B on MEDRECT detection-only task.
+LoRA SFT training for Qwen3-4B on MEDRECT detection-only task.
 
 Stage 0 of the MedSeRL pipeline: ground the model in medical error
 localization before MedPRM chain training (Stage 1) and self-play RL (Stage 2).
@@ -14,7 +14,7 @@ at runtime — nothing is hardcoded.
 Example:
     python scripts/medrect/train_medrect_lora.py \\
         --train-file data_processed/medrect/medrect_sft_train.jsonl \\
-        --output-dir outputs/local_training/qwen3-8b-medrect-sft
+        --output-dir outputs/local_training/qwen3-4b-medrect-sft
 
     # Quick test run
     python scripts/medrect/train_medrect_lora.py \\
@@ -40,7 +40,7 @@ from trl import SFTConfig, SFTTrainer
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "sft" / "medrect_detection_prompts.json"
 DEFAULT_DATA_FILE = PROJECT_ROOT / "data_processed" / "medrect" / "medrect_sft_train.jsonl"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "local_training" / "qwen3-8b-medrect-sft"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "local_training" / "qwen3-4b-medrect-sft"
 
 
 # =============================================================================
@@ -196,8 +196,8 @@ def parse_args() -> argparse.Namespace:
     
     # Model arguments
     parser.add_argument(
-        "--model-name", default="Qwen/Qwen3-8B",
-        help="HuggingFace model name or local path (default: Qwen/Qwen3-8B)"
+        "--model-name", default="Qwen/Qwen3-4B",
+        help="HuggingFace model name or local path (default: Qwen/Qwen3-4B)"
     )
     parser.add_argument(
         "--output-dir", default=str(DEFAULT_OUTPUT_DIR),
@@ -207,12 +207,12 @@ def parse_args() -> argparse.Namespace:
     # Training hyperparameters (paper defaults: lr=1e-4, r=64, alpha=128)
     parser.add_argument("--max-seq-length", type=int, default=4096)
     parser.add_argument(
-        "--per-device-train-batch-size", type=int, default=1,
-        help="Batch size per GPU (default: 1 for 8B model)"
+        "--per-device-train-batch-size", type=int, default=2,
+        help="Batch size per GPU (default: 2 for 4B model)"
     )
     parser.add_argument(
-        "--gradient-accumulation-steps", type=int, default=16,
-        help="Gradient accumulation (default: 16, effective batch=16)"
+        "--gradient-accumulation-steps", type=int, default=8,
+        help="Gradient accumulation (default: 8, effective batch=16)"
     )
     parser.add_argument(
         "--learning-rate", type=float, default=1e-4,

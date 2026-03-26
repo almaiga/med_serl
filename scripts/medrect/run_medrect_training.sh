@@ -6,15 +6,15 @@ set -euo pipefail
 # =============================================================================
 # Stage 0 of MedSeRL pipeline:
 #   1. Prepare MEDRECT data → data_processed/medrect/medrect_sft_train.jsonl
-#   2. Train Qwen3-8B LoRA on detection-only task
+#   2. Train Qwen3-4B LoRA on detection-only task
 #
 # Usage:
 #   bash scripts/medrect/run_medrect_training.sh
 #   bash scripts/medrect/run_medrect_training.sh --skip-prep     # skip data preparation
-#   MODEL_PATH=/local/Qwen3-8B bash scripts/medrect/run_medrect_training.sh
+#   MODEL_PATH=/local/Qwen3-4B bash scripts/medrect/run_medrect_training.sh
 #
 # Environment overrides:
-#   MODEL_PATH    — HF model name or local path (default: Qwen/Qwen3-8B)
+#   MODEL_PATH    — HF model name or local path (default: Qwen/Qwen3-4B)
 #   MEDRECT_DATA  — path to medrect-en-train.json (default: data/medrect/medrect-en-train.json)
 #   LORA_R        — LoRA rank (default: 64)
 #   LORA_ALPHA    — LoRA alpha (default: 128)
@@ -27,7 +27,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 # ---- Configuration (overridable via env) ----
-MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-8B}"
+MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-4B}"
 MEDRECT_DATA="${MEDRECT_DATA:-/workspace/medrect/data/medrect/medrect-en-train.json}"
 PROMPT_CONFIG="configs/prompts/sft/medrect_detection_prompts.json"
 PREPARED_DATA="data_processed/medrect/medrect_sft_train.jsonl"
@@ -38,12 +38,12 @@ LORA_DROPOUT="0.05"
 LORA_TARGET="all-linear"
 LR="${LR:-1e-4}"
 EPOCHS="${EPOCHS:-3}"
-BATCH_SIZE="${BATCH_SIZE:-1}"
-GRAD_ACCUM="${GRAD_ACCUM:-16}"
+BATCH_SIZE="${BATCH_SIZE:-2}"
+GRAD_ACCUM="${GRAD_ACCUM:-8}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MODEL_SHORT=$(basename "${MODEL_PATH}")
-OUTPUT_DIR="outputs/local_training/qwen3-8b-medrect-sft"
+OUTPUT_DIR="outputs/local_training/qwen3-4b-medrect-sft"
 LOG_DIR="outputs/local_training/logs"
 LOG_FILE="${LOG_DIR}/medrect_sft_${TIMESTAMP}.log"
 SCREEN_NAME="medrect_sft"
