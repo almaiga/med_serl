@@ -85,6 +85,16 @@ def _get_trace_file() -> Path:
     return _FALLBACK_LOG_DIR / "interaction_trace.log"
 
 
+def _write_trace_line(line: str) -> None:
+    try:
+        trace_file = _get_trace_file()
+        with _trace_lock:
+            with open(trace_file, "a") as f:
+                f.write(line + "\n")
+    except Exception as e:
+        print(f"[MedicalGameInteraction] trace write FAILED: {e}", flush=True)
+
+
 def _debug_enabled() -> bool:
     return _os.environ.get("MEDSERL_DEBUG_LOGGING", "0") == "1"
 
@@ -93,13 +103,14 @@ def _debug(msg: str) -> None:
     if _debug_enabled():
         line = f"[MedicalGameInteraction][debug] {datetime.now().isoformat()} {msg}"
         print(line, flush=True)
-        try:
-            trace_file = _get_trace_file()
-            with _trace_lock:
-                with open(trace_file, "a") as f:
-                    f.write(line + "\n")
-        except Exception as e:
-            print(f"[MedicalGameInteraction] trace write FAILED: {e}", flush=True)
+        _write_trace_line(line)
+
+
+if _os.environ.get("MEDSERL_DEBUG_LOGGING", "0") == "1":
+    _write_trace_line(
+        f"[MedicalGameInteraction][import] {datetime.now().isoformat()} "
+        f"module={__file__} pid={_os.getpid()} MEDSERL_GAME_LOG={_os.environ.get('MEDSERL_GAME_LOG', '')!r}"
+    )
 
 
 def _get_log_file() -> Path:
@@ -238,6 +249,11 @@ class MedicalGameInteraction(BaseInteraction):
             "assessor_output": None,
             "turn": 0,
         }
+
+        _debug(
+            f"start_interaction instance_id={instance_id!r} note_id={note_data.get('note_id', '')!r} "
+            f"mode={(mode or kwargs.get('mode'))!r} ground_truth={(ground_truth or kwargs.get('ground_truth'))!r}"
+        )
         
         return instance_id
     

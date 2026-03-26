@@ -318,12 +318,16 @@ def convert_to_parquet(
     
     rows = []
     for ex in verl_examples:
+        extra_info = dict(ex["extra_info"])
+        # Compatibility: some verl versions read interaction_kwargs from
+        # extra_info["interaction_kwargs"] instead of the top-level column.
+        extra_info["interaction_kwargs"] = dict(ex["interaction_kwargs"])
         rows.append({
             "data_source": ex["data_source"],
             "prompt": ex["prompt"],
             "ability": ex["ability"],
             "reward_model": ex["reward_model"],
-            "extra_info": ex["extra_info"],
+            "extra_info": extra_info,
             "interaction_kwargs": ex["interaction_kwargs"],
         })
     
