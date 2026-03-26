@@ -271,6 +271,11 @@ class MedicalGameInteraction(BaseInteraction):
         """
         instance = self._instance_dict[instance_id]
         current_turn = instance["turn"]
+        _debug(
+            f"generate_response instance_id={instance_id!r} "
+            f"current_turn={current_turn} messages={len(messages)} "
+            f"roles={[msg.get('role', '?') for msg in messages]}"
+        )
         instance["turn"] += 1
 
         if current_turn == 0:
@@ -301,6 +306,10 @@ class MedicalGameInteraction(BaseInteraction):
         Returns sampling_params for the assessor turn (temperature=0.3).
         """
         instance = self._instance_dict[instance_id]
+        _debug(
+            f"injector_turn_enter instance_id={instance_id!r} "
+            f"note_id={instance.get('note_data', {}).get('note_id', '')!r}"
+        )
 
         # Extract Injector's response (last assistant message)
         injector_output = ""
@@ -310,6 +319,10 @@ class MedicalGameInteraction(BaseInteraction):
                 break
 
         instance["injector_output"] = injector_output
+        _debug(
+            f"injector_turn_output instance_id={instance_id!r} "
+            f"output_preview={injector_output[:160]!r}"
+        )
 
         # Parse compact output: "N. <modified sentence>"
         parsed = parse_injector_output(injector_output)
@@ -356,6 +369,11 @@ class MedicalGameInteraction(BaseInteraction):
         }
 
         # Return the injector's per-turn reward so verl applies it to injector tokens.
+        _debug(
+            f"injector_turn_exit instance_id={instance_id!r} "
+            f"injector_reward={injector_reward} "
+            f"changed_sid={instance.get('changed_sid')!r}"
+        )
         return False, assessor_prompt, injector_reward, info
 
     def _compute_injector_proxy_reward(self, changed_sid: int, instance: dict) -> float:
@@ -386,6 +404,10 @@ class MedicalGameInteraction(BaseInteraction):
     ) -> Tuple[bool, str, float, Dict[str, Any]]:
         """Process Phase 2 (Assessor) output and compute 3-tier reward."""
         instance = self._instance_dict[instance_id]
+        _debug(
+            f"assessor_turn_enter instance_id={instance_id!r} "
+            f"note_id={instance.get('note_data', {}).get('note_id', '')!r}"
+        )
         
         # Extract Assessor's response
         assessor_output = ""
