@@ -115,7 +115,9 @@ mkdir -p results/self_play/interactions
 
 # Use a run-specific multi-turn interaction log unless the caller overrides it.
 export MEDSERL_GAME_LOG="${MEDSERL_GAME_LOG:-$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl}"
+export MEDSERL_INTERACTION_TRACE="${MEDSERL_INTERACTION_TRACE:-$PROJECT_ROOT/results/self_play/interactions/interaction_trace.log}"
 echo "✓ Game log set to: $MEDSERL_GAME_LOG"
+echo "✓ Interaction trace set to: $MEDSERL_INTERACTION_TRACE"
 
 # Step 1: Regenerate training data with updated prompts (no answer leakage)
 echo ""
@@ -235,8 +237,11 @@ python3 -m verl.trainer.main_ppo \
     trainer.test_freq="$TEST_FREQ" \
     trainer.val_before_train="$VAL_BEFORE_TRAIN" \
     "++ray_kwargs.ray_init.num_cpus=$RAY_NUM_CPUS" \
+    "++ray_kwargs.runtime_env.working_dir=$PROJECT_ROOT" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
+    "++ray_kwargs.runtime_env.env_vars.MEDSERL_INTERACTION_TRACE=$MEDSERL_INTERACTION_TRACE" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_DEBUG_LOGGING=${MEDSERL_DEBUG_LOGGING:-0}" \
+    "++ray_kwargs.runtime_env.env_vars.PYTHONPATH=$PYTHONPATH" \
     "++ray_kwargs.runtime_env.env_vars.PYTHONUNBUFFERED=1" \
     "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
     "++ray_kwargs.runtime_env.env_vars.TRANSFORMERS_NO_ADVISORY_WARNINGS=1" \
