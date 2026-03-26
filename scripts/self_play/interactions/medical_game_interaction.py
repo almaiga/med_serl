@@ -72,6 +72,17 @@ import os as _os
 _FALLBACK_LOG_DIR = Path(__file__).parent.parent.parent.parent / "results" / "self_play" / "interactions"
 _log_lock = threading.Lock()
 _resolved_log_file: "Path | None" = None  # resolved on first write
+_trace_lock = threading.Lock()
+
+
+def _get_trace_file() -> Path:
+    env_trace = _os.environ.get("MEDSERL_INTERACTION_TRACE")
+    if env_trace:
+        p = Path(env_trace)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+    _FALLBACK_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return _FALLBACK_LOG_DIR / "interaction_trace.log"
 
 
 def _debug_enabled() -> bool:
@@ -80,7 +91,15 @@ def _debug_enabled() -> bool:
 
 def _debug(msg: str) -> None:
     if _debug_enabled():
-        print(f"[MedicalGameInteraction][debug] {msg}", flush=True)
+        line = f"[MedicalGameInteraction][debug] {datetime.now().isoformat()} {msg}"
+        print(line, flush=True)
+        try:
+            trace_file = _get_trace_file()
+            with _trace_lock:
+                with open(trace_file, "a") as f:
+                    f.write(line + "\n")
+        except Exception as e:
+            print(f"[MedicalGameInteraction] trace write FAILED: {e}", flush=True)
 
 
 def _get_log_file() -> Path:
