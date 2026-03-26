@@ -19,6 +19,11 @@ ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.6}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
 ZERO_SUM="${ZERO_SUM:-1}"
 SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
+WANDB="${WANDB:-0}"
+WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
+WANDB_ENTITY="${WANDB_ENTITY:-}"
+WANDB_BASE_URL="${WANDB_BASE_URL:-}"
+WANDB_MODE="${WANDB_MODE:-online}"
 
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
@@ -39,7 +44,7 @@ if [ "$SMOKE" = "1" ]; then
     ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,extra]}"
     ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,extra]}"
 else
-    MAX_PAIRS="${MAX_PAIRS:-50}"
+    MAX_PAIRS="${MAX_PAIRS:-}"
     TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
     VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-16}"
     TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
@@ -66,6 +71,11 @@ DATA_DIR="$PROJECT_ROOT/data_processed/self_play"
 TRAIN_PARQUET="$DATA_DIR/train_chained.parquet"
 VAL_PARQUET="$DATA_DIR/val_chained.parquet"
 
+TRAINER_LOGGER="console"
+if [ "$WANDB" = "1" ]; then
+    TRAINER_LOGGER="[console,wandb]"
+fi
+
 echo "=================================================="
 echo "MedSeRL Self-Play Training (Chained vLLM)"
 echo "=================================================="
@@ -75,12 +85,18 @@ echo "Output: $OUTPUT_DIR"
 echo "Smoke mode: $SMOKE"
 echo "GPUs: $N_GPUS"
 echo "Rollout TP: $ROLLOUT_TP"
-echo "Max pairs: $MAX_PAIRS"
+if [ -n "$MAX_PAIRS" ]; then
+    echo "Max pairs: $MAX_PAIRS"
+else
+    echo "Max pairs: ALL"
+fi
 echo "Train batch size: $TRAIN_BATCH_SIZE"
 echo "Total epochs: $TOTAL_EPOCHS"
 echo "Ray CPUs: $RAY_NUM_CPUS"
 echo "Save freq: $SAVE_FREQ"
 echo "Zero-sum pass: $ZERO_SUM"
+echo "W&B: $WANDB"
+echo "Logger: $TRAINER_LOGGER"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
 echo "=================================================="
 
@@ -100,6 +116,17 @@ export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 export TOKENIZERS_PARALLELISM=false
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 export PYTHONUNBUFFERED=1
+export WANDB_PROJECT
+export WANDB_MODE
+if [ -n "${WANDB_API_KEY:-}" ]; then
+    export WANDB_API_KEY
+fi
+if [ -n "$WANDB_ENTITY" ]; then
+    export WANDB_ENTITY
+fi
+if [ -n "$WANDB_BASE_URL" ]; then
+    export WANDB_BASE_URL
+fi
 unset TORCH_NCCL_AVOID_RECORD_STREAMS
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
 
@@ -109,6 +136,11 @@ mkdir -p "$DATA_DIR"
 
 echo ""
 echo "=== Phase A: Chained Data Generation ==="
+DATAGEN_MAX_PAIRS_ARGS=()
+if [ -n "$MAX_PAIRS" ] && [ "$MAX_PAIRS" != "0" ]; then
+    DATAGEN_MAX_PAIRS_ARGS=(--max-pairs "$MAX_PAIRS")
+fi
+
 if [ "$SKIP_DATAGEN" = "1" ] && [ -f "$TRAIN_PARQUET" ]; then
     echo "SKIP_DATAGEN=1 — reusing existing $TRAIN_PARQUET"
 else
@@ -123,7 +155,7 @@ else
         --output "$TRAIN_PARQUET" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
-        --max-pairs "$MAX_PAIRS" \
+        "${DATAGEN_MAX_PAIRS_ARGS[@]}" \
         $ZERO_SUM_FLAG
 fi
 
@@ -138,7 +170,7 @@ if [ -f "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl"
         --output "$VAL_PARQUET" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
-        --max-pairs "$MAX_PAIRS" \
+        "${DATAGEN_MAX_PAIRS_ARGS[@]}" \
         $ZERO_SUM_FLAG
 elif [ ! -f "$VAL_PARQUET" ]; then
     echo "Warning: No separate validation parquet, copying training parquet"
@@ -213,8 +245,8 @@ python3 -m verl.trainer.main_ppo \
     reward_model.enable=False \
     custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/simple_judge_reward.py" \
     custom_reward_function.name=async_compute_score \
-    trainer.logger=console \
-    trainer.project_name='medserl-selfplay' \
+    trainer.logger="$TRAINER_LOGGER" \
+    trainer.project_name="$WANDB_PROJECT" \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.default_local_dir="$OUTPUT_DIR" \
     trainer.n_gpus_per_node="$N_GPUS" \
@@ -230,7 +262,12 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
     "++ray_kwargs.runtime_env.env_vars.TRANSFORMERS_NO_ADVISORY_WARNINGS=1" \
     "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0" \
-    "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1"
+    "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
+    "++ray_kwargs.runtime_env.env_vars.WANDB_PROJECT=$WANDB_PROJECT" \
+    "++ray_kwargs.runtime_env.env_vars.WANDB_MODE=$WANDB_MODE" \
+    "++ray_kwargs.runtime_env.env_vars.WANDB_API_KEY=${WANDB_API_KEY:-}" \
+    "++ray_kwargs.runtime_env.env_vars.WANDB_ENTITY=$WANDB_ENTITY" \
+    "++ray_kwargs.runtime_env.env_vars.WANDB_BASE_URL=$WANDB_BASE_URL"
 
 echo ""
 echo "=================================================="
