@@ -1,0 +1,36 @@
+# MedSeRL Separated REINFORCE++ Configuration
+#
+# Batched injector -> assessor self-play using standard single-turn rollout.
+# This follows the simpler MAGIC-style chained-data path rather than VERL's
+# interaction-system multi-turn runtime.
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  max_prompt_length: 1024
+  max_response_length: 3072
+  train_batch_size: 16
+  return_raw_chat: True
+
+actor_rollout_ref:
+  hybrid_engine: True
+  rollout:
+    name: vllm
+    temperature: 0.7
+    top_p: 0.9
+    top_k: -1
+    gpu_memory_utilization: 0.6
+    tensor_model_parallel_size: 1
+    n: 1
+
+algorithm:
+  adv_estimator: reinforce_plus_plus
+
+critic:
+  enable: false

@@ -1,25 +1,28 @@
 #!/bin/bash
-# MedSeRL True Self-Play Training Script
-# Two-phase game with multi-turn enabled:
-# Turn 1: Injector modifies note → Turn 2: Assessor classifies
+# MedSeRL self-play training launcher.
 #
-# This script properly activates the conda environment and sets PYTHONPATH
-# so that verl can import MedicalGameInteraction from scripts.self_play.interactions
+# Active path: batched chained injector -> assessor self-play using offline vLLM
+# data generation plus standard single-turn VERL training.
+#
+# This aligns with the simpler official VERL rollout setup for vLLM and avoids
+# the SGLang interaction-system runtime for this experiment.
 
 set -e
 
-# Configuration
 SMOKE="${SMOKE:-0}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_multiturn}"
-EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_multiturn}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_chained_vllm}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_vllm}"
 MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-$N_GPUS}"
-ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.4}"
-SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-flashinfer}"
+ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.6}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
+ZERO_SUM="${ZERO_SUM:-1}"
+SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
+
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
+export VLLM_USE_V1="${VLLM_USE_V1:-1}"
 
 if [ "$SMOKE" = "1" ]; then
     MAX_PAIRS="${MAX_PAIRS:-12}"
@@ -29,13 +32,12 @@ if [ "$SMOKE" = "1" ]; then
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-3072}"
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:-1000}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
     ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,extra]}"
     ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,extra]}"
-    export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="${MEDSERL_ASSESSOR_MAX_NEW_TOKENS:-128}"
 else
     MAX_PAIRS="${MAX_PAIRS:-50}"
     TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
@@ -44,16 +46,14 @@ else
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
     PPO_EPOCHS="${PPO_EPOCHS:-2}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-2048}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-3072}"
     SAVE_FREQ="${SAVE_FREQ:-50}"
     TEST_FREQ="${TEST_FREQ:-10}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-true}"
     ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,optimizer,extra]}"
     ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,optimizer,extra]}"
-    export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="${MEDSERL_ASSESSOR_MAX_NEW_TOKENS:-256}"
 fi
 
-# Detect environment (runpod vs local)
 if [ -d "/workspace/med_serl" ]; then
     PROJECT_ROOT="/workspace/med_serl"
     CONDA_BASE="/workspace/miniconda3"
@@ -62,12 +62,12 @@ else
     CONDA_BASE="${HOME}/miniconda3"
 fi
 
-CONFIG_DIR="$PROJECT_ROOT/scripts/self_play/configs"
 DATA_DIR="$PROJECT_ROOT/data_processed/self_play"
+TRAIN_PARQUET="$DATA_DIR/train_chained.parquet"
+VAL_PARQUET="$DATA_DIR/val_chained.parquet"
 
-# Activate conda environment
 echo "=================================================="
-echo "MedSeRL True Self-Play Training (Multi-Turn)"
+echo "MedSeRL Self-Play Training (Chained vLLM)"
 echo "=================================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Model: $MODEL_PATH"
@@ -80,11 +80,10 @@ echo "Train batch size: $TRAIN_BATCH_SIZE"
 echo "Total epochs: $TOTAL_EPOCHS"
 echo "Ray CPUs: $RAY_NUM_CPUS"
 echo "Save freq: $SAVE_FREQ"
-echo "SGLang attention backend: $SGLANG_ATTENTION_BACKEND"
+echo "Zero-sum pass: $ZERO_SUM"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
 echo "=================================================="
 
-# Source conda
 if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
     source "$CONDA_BASE/etc/profile.d/conda.sh"
     conda activate med_serl
@@ -94,9 +93,7 @@ elif [ -f "$PROJECT_ROOT/med_serl/bin/activate" ]; then
     echo "✓ Virtual environment activated"
 fi
 
-# Set PYTHONPATH so verl can import MedicalGameInteraction
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
-export SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK=True
 export RAY_DISABLE_DOCKER_CPU_WARNING=1
 export RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
@@ -106,88 +103,81 @@ export PYTHONUNBUFFERED=1
 unset TORCH_NCCL_AVOID_RECORD_STREAMS
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
 
-# Change to project directory
 cd "$PROJECT_ROOT"
-
-# Create output directories
 mkdir -p "$OUTPUT_DIR"
-mkdir -p results/self_play/interactions
+mkdir -p "$DATA_DIR"
 
-# Use a run-specific multi-turn interaction log unless the caller overrides it.
-export MEDSERL_GAME_LOG="${MEDSERL_GAME_LOG:-$PROJECT_ROOT/$OUTPUT_DIR/game_interactions.jsonl}"
-export MEDSERL_INTERACTION_TRACE="${MEDSERL_INTERACTION_TRACE:-$PROJECT_ROOT/results/self_play/interactions/interaction_trace.log}"
-echo "✓ Game log set to: $MEDSERL_GAME_LOG"
-echo "✓ Interaction trace set to: $MEDSERL_INTERACTION_TRACE"
-
-# Step 1: Regenerate training data with updated prompts (no answer leakage)
 echo ""
-echo "=== Step 1: Preprocessing MEDEC data with updated prompts ==="
-echo "Prompts no longer include final_answer (Injector outputs only generated_note)"
-
-python3 scripts/self_play/preprocess_medec.py \
-    --input data_processed/medec_paired/train_val_split/rl_train.jsonl \
-    --output "$DATA_DIR/train.parquet" \
-    --injection-prompts configs/prompts/error_injection_prompts_v4.json \
-    --max-pairs "$MAX_PAIRS" \
-    --roles injector
-
-# Validation data
-VAL_FILE="$DATA_DIR/val.parquet"
-if [ -f "data_processed/medec_paired/train_val_split/rl_val.jsonl" ]; then
-    python3 scripts/self_play/preprocess_medec.py \
-        --input data_processed/medec_paired/train_val_split/rl_val.jsonl \
-        --output "$VAL_FILE" \
-        --injection-prompts configs/prompts/error_injection_prompts_v4.json \
-        --max-pairs "$MAX_PAIRS" \
-        --roles injector
+echo "=== Phase A: Chained Data Generation ==="
+if [ "$SKIP_DATAGEN" = "1" ] && [ -f "$TRAIN_PARQUET" ]; then
+    echo "SKIP_DATAGEN=1 — reusing existing $TRAIN_PARQUET"
 else
-    echo "Warning: No separate validation file, using training file"
-    VAL_FILE="$DATA_DIR/train.parquet"
+    ZERO_SUM_FLAG=""
+    if [ "$ZERO_SUM" = "1" ]; then
+        ZERO_SUM_FLAG="--zero-sum"
+    fi
+
+    python3 scripts/self_play/generate_chained_data.py \
+        --model "$MODEL_PATH" \
+        --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
+        --output "$TRAIN_PARQUET" \
+        --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
+        --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
+        --max-pairs "$MAX_PAIRS" \
+        $ZERO_SUM_FLAG
 fi
 
-# Verify data
-echo ""
-echo "=== Verifying training data format ==="
-python3 -c "
-import pyarrow.parquet as pq
-table = pq.read_table('$DATA_DIR/train.parquet')
-df = table.to_pandas()
-print(f'Total examples: {len(df)}')
-# Check prompts don't contain final_answer in instructions
-for i in range(min(2, len(df))):
-    prompt = df.iloc[i]['prompt']
-    if isinstance(prompt, list):
-        content = ' '.join(m.get('content','') for m in prompt)
-    else:
-        content = str(prompt)
-    has_final_in_template = 'final_answer:' in content and 'OUTPUT' in content.upper()
-    mode = df.iloc[i]['extra_info'].get('mode', '')
-    print(f'  [{mode}] Template contains final_answer: {has_final_in_template}')
-print('✓ Data preprocessing complete')
-"
+if [ -f "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl" ] && [ "$SKIP_DATAGEN" != "1" ]; then
+    ZERO_SUM_FLAG=""
+    if [ "$ZERO_SUM" = "1" ]; then
+        ZERO_SUM_FLAG="--zero-sum"
+    fi
+    python3 scripts/self_play/generate_chained_data.py \
+        --model "$MODEL_PATH" \
+        --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl" \
+        --output "$VAL_PARQUET" \
+        --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
+        --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
+        --max-pairs "$MAX_PAIRS" \
+        $ZERO_SUM_FLAG
+elif [ ! -f "$VAL_PARQUET" ]; then
+    echo "Warning: No separate validation parquet, copying training parquet"
+    cp "$TRAIN_PARQUET" "$VAL_PARQUET"
+fi
 
-# Step 2: Launch multi-turn training with verl
 echo ""
-echo "=== Step 2: Starting Multi-Turn Self-Play Training ==="
-echo "Turn 1: Model as Injector (generates modified note)"
-echo "Turn 2: Model as Assessor (classifies the note)"
-echo "MedicalGameInteraction orchestrates the game"
+echo "=== Verifying Chained Data Format ==="
+python3 - <<PY
+import pyarrow.parquet as pq
+table = pq.read_table("$TRAIN_PARQUET")
+df = table.to_pandas()
+print(f"Total examples: {len(df)}")
+print("Roles:", df["extra_info"].apply(lambda x: x.get("role", "?")).value_counts().to_dict())
+print("Chained assessor rows:", int(df["extra_info"].apply(lambda x: bool(x.get("chained"))).sum()))
+print("Prompt type:", type(df.iloc[0]["prompt"]))
+print("✓ Chained data ready")
+PY
+
+echo ""
+echo "=== Phase B: vLLM REINFORCE++ Training ==="
+echo "Stage 1: offline injector batch via vLLM"
+echo "Stage 2: offline assessor batch via vLLM"
+echo "Stage 3: standard single-turn VERL training on chained parquet"
 
 python3 -m verl.trainer.main_ppo \
-    --config-path="$CONFIG_DIR" \
-    --config-name="ppo_multiturn" \
+    --config-name="ppo_trainer" \
     algorithm.adv_estimator=reinforce_plus_plus \
-    data.train_files="$DATA_DIR/train.parquet" \
-    data.val_files="$VAL_FILE" \
+    data.train_files="$TRAIN_PARQUET" \
+    data.val_files="$VAL_PARQUET" \
     data.return_raw_chat=True \
     data.train_batch_size="$TRAIN_BATCH_SIZE" \
     data.val_batch_size="$VAL_BATCH_SIZE" \
     data.max_prompt_length="$MAX_PROMPT_LENGTH" \
     data.max_response_length="$MAX_RESPONSE_LENGTH" \
     data.filter_overlong_prompts=True \
-    data.truncation='error' \
+    data.truncation=error \
     data.shuffle=True \
-    actor_rollout_ref.model.path=$MODEL_PATH \
+    actor_rollout_ref.model.path="$MODEL_PATH" \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.model.trust_remote_code=True \
@@ -205,19 +195,14 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
     actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.rollout.name=sglang \
-    actor_rollout_ref.rollout.temperature=0.6 \
-    actor_rollout_ref.rollout.top_p=0.95 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.temperature=0.7 \
+    actor_rollout_ref.rollout.top_p=0.9 \
+    actor_rollout_ref.rollout.top_k=-1 \
+    actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
     actor_rollout_ref.rollout.gpu_memory_utilization="$ROLLOUT_GPU_MEMORY_UTILIZATION" \
-    ++actor_rollout_ref.rollout.engine_kwargs.sglang.attention_backend="$SGLANG_ATTENTION_BACKEND" \
-    actor_rollout_ref.rollout.enforce_eager=True \
-    actor_rollout_ref.rollout.multi_turn.enable=True \
-    actor_rollout_ref.rollout.multi_turn.max_user_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.max_assistant_turns=2 \
-    actor_rollout_ref.rollout.multi_turn.interaction_config_path="$CONFIG_DIR/interaction_config.yaml" \
-    actor_rollout_ref.rollout.multi_turn.use_inference_chat_template=True \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
@@ -230,8 +215,8 @@ python3 -m verl.trainer.main_ppo \
     custom_reward_function.name=async_compute_score \
     trainer.logger=console \
     trainer.project_name='medserl-selfplay' \
-    trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.default_local_dir=$OUTPUT_DIR \
+    trainer.experiment_name="$EXPERIMENT_NAME" \
+    trainer.default_local_dir="$OUTPUT_DIR" \
     trainer.n_gpus_per_node="$N_GPUS" \
     trainer.nnodes=1 \
     trainer.total_epochs="$TOTAL_EPOCHS" \
@@ -240,29 +225,17 @@ python3 -m verl.trainer.main_ppo \
     trainer.val_before_train="$VAL_BEFORE_TRAIN" \
     "++ray_kwargs.ray_init.num_cpus=$RAY_NUM_CPUS" \
     "++ray_kwargs.runtime_env.working_dir=$PROJECT_ROOT" \
-    "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
-    "++ray_kwargs.runtime_env.env_vars.MEDSERL_INTERACTION_TRACE=$MEDSERL_INTERACTION_TRACE" \
-    "++ray_kwargs.runtime_env.env_vars.MEDSERL_DEBUG_LOGGING=${MEDSERL_DEBUG_LOGGING:-0}" \
     "++ray_kwargs.runtime_env.env_vars.PYTHONPATH=$PYTHONPATH" \
     "++ray_kwargs.runtime_env.env_vars.PYTHONUNBUFFERED=1" \
     "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
     "++ray_kwargs.runtime_env.env_vars.TRANSFORMERS_NO_ADVISORY_WARNINGS=1" \
-    "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0"
+    "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0" \
+    "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1"
 
 echo ""
 echo "=================================================="
 echo "Training Complete!"
 echo "=================================================="
 echo "Outputs: $OUTPUT_DIR"
-echo "Logs: results/self_play/interactions/"
-
-# Step 3: Analyze results
-echo ""
-echo "=== Step 3: Analyzing Training Results ==="
-if [ -f "$MEDSERL_GAME_LOG" ]; then
-    python3 scripts/self_play/analyze_training.py \
-        --log-dir "$MEDSERL_GAME_LOG" \
-        --samples 3
-fi
-
-echo "=================================================="
+echo "Train parquet: $TRAIN_PARQUET"
+echo "Val parquet: $VAL_PARQUET"
