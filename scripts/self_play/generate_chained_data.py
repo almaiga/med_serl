@@ -329,7 +329,12 @@ def main():
         "--detection-prompts",
         default="configs/prompts/detection_localization_prompts.json",
     )
-    parser.add_argument("--max-pairs", type=int, default=20)
+    parser.add_argument(
+        "--max-pairs",
+        type=int,
+        default=0,
+        help="Maximum number of note pairs to use. Set to 0 for all pairs.",
+    )
     parser.add_argument("--data-source", default="medec_chained")
     parser.add_argument(
         "--zero-sum", action="store_true",
@@ -345,13 +350,15 @@ def main():
     injection_prompts = load_json(args.injection_prompts)
     detection_prompts = load_json(args.detection_prompts)
     pairs = load_jsonl(args.input)
+    max_pairs = args.max_pairs if args.max_pairs and args.max_pairs > 0 else None
+    max_pairs_display = max_pairs if max_pairs is not None else "ALL"
     print(
         f"[generate_chained] Loaded {len(pairs)} pairs,"
-        f" capping at {args.max_pairs}"
+        f" capping at {max_pairs_display}"
     )
 
     # 1. Build all injector prompts
-    injector_items = build_injector_prompts(pairs, injection_prompts, args.max_pairs)
+    injector_items = build_injector_prompts(pairs, injection_prompts, max_pairs)
     n_benign = sum(1 for _, m, *_ in injector_items if m == "benign")
     n_error = sum(1 for _, m, *_ in injector_items if m == "error_injection")
     print(
@@ -377,7 +384,8 @@ def main():
     # (inj_row_idx, mode, assessor_gt, assessor_prompt_msgs)
     zero_sum_queue = []
 
-    pairs_by_idx = {i: p for i, p in enumerate(pairs[:args.max_pairs])}
+    selected_pairs = pairs[:max_pairs] if max_pairs is not None else pairs
+    pairs_by_idx = {i: p for i, p in enumerate(selected_pairs)}
 
     for (pair_idx, mode, messages, meta), raw_output in zip(injector_items, outputs):
         pair = pairs_by_idx[pair_idx]
