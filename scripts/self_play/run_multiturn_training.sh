@@ -157,9 +157,12 @@ export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export RAY_DISABLE_DOCKER_CPU_WARNING=1
 export RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+export RAY_DEDUP_LOGS=0
 export TOKENIZERS_PARALLELISM=false
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 export PYTHONUNBUFFERED=1
+export PYTHONFAULTHANDLER=1
+export HYDRA_FULL_ERROR=1
 export WANDB_PROJECT
 export WANDB_MODE
 if [ -n "${WANDB_API_KEY:-}" ]; then
@@ -173,6 +176,18 @@ if [ -n "$WANDB_BASE_URL" ]; then
 fi
 unset TORCH_NCCL_AVOID_RECORD_STREAMS
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
+
+python3 - <<'PY'
+import ray, torch
+
+print(f"Version check: ray={ray.__version__}")
+print(f"Version check: torch={torch.__version__}")
+try:
+    import vllm
+    print(f"Version check: vllm={vllm.__version__}")
+except Exception as exc:
+    print(f"Version check: vllm import failed: {exc}")
+PY
 
 cd "$PROJECT_ROOT"
 mkdir -p "$OUTPUT_DIR"
@@ -279,6 +294,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.top_p=0.9 \
     actor_rollout_ref.rollout.top_k=-1 \
     actor_rollout_ref.rollout.n=1 \
+    actor_rollout_ref.rollout.disable_log_stats=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
     actor_rollout_ref.rollout.gpu_memory_utilization="$ROLLOUT_GPU_MEMORY_UTILIZATION" \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
@@ -306,9 +322,12 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.working_dir=$PROJECT_ROOT" \
     "++ray_kwargs.runtime_env.env_vars.PYTHONPATH=$PYTHONPATH" \
     "++ray_kwargs.runtime_env.env_vars.PYTHONUNBUFFERED=1" \
+    "++ray_kwargs.runtime_env.env_vars.PYTHONFAULTHANDLER=1" \
     "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
     "++ray_kwargs.runtime_env.env_vars.TRANSFORMERS_NO_ADVISORY_WARNINGS=1" \
     "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0" \
+    "++ray_kwargs.runtime_env.env_vars.RAY_DEDUP_LOGS=0" \
+    "++ray_kwargs.runtime_env.env_vars.HYDRA_FULL_ERROR=1" \
     "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_PROJECT=$WANDB_PROJECT" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_MODE=$WANDB_MODE" \
