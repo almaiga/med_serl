@@ -150,7 +150,12 @@ def build_injector_prompts(pairs, injection_prompts, max_pairs=None):
 
 # ─── inference ──────────────────────────────────────────────────────────────
 
-def _make_llm_and_tokenizer(model_path: str):
+def _make_llm_and_tokenizer(
+    model_path: str,
+    *,
+    gpu_memory_utilization: float = 0.45,
+    max_model_len: int = 4096,
+):
     """Load vllm LLM + tokenizer. Returns (llm, tokenizer, apply_fn)."""
     from vllm import LLM
     from transformers import AutoTokenizer
@@ -158,8 +163,8 @@ def _make_llm_and_tokenizer(model_path: str):
     print(f"[generate_chained] Loading model {model_path} with vllm ...")
     llm = LLM(
         model=model_path,
-        max_model_len=4096,
-        gpu_memory_utilization=0.70,
+        max_model_len=max_model_len,
+        gpu_memory_utilization=gpu_memory_utilization,
         enforce_eager=True,
         enable_prefix_caching=False,
     )
@@ -188,6 +193,8 @@ def run_vllm_inference(
     max_tokens: int = 3072,
     temperature: float = 0.7,
     top_p: float = 0.9,
+    gpu_memory_utilization: float = 0.45,
+    max_model_len: int = 4096,
 ) -> list:
     """Run offline vllm batch inference. Returns one response string per input.
 
@@ -198,7 +205,11 @@ def run_vllm_inference(
     from vllm import SamplingParams
 
     if llm is None or apply_fn is None:
-        llm, _, apply_fn = _make_llm_and_tokenizer(model_path)
+        llm, _, apply_fn = _make_llm_and_tokenizer(
+            model_path,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_model_len=max_model_len,
+        )
 
     sampling = SamplingParams(
         temperature=temperature, top_p=top_p, max_tokens=max_tokens
@@ -337,6 +348,24 @@ def main():
     )
     parser.add_argument("--data-source", default="medec_chained")
     parser.add_argument(
+        "--gpu-memory-utilization",
+        type=float,
+        default=0.45,
+        help="vLLM GPU memory utilization for chained datagen.",
+    )
+    parser.add_argument(
+        "--max-model-len",
+        type=int,
+        default=4096,
+        help="vLLM max model length for chained datagen.",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1024,
+        help="Injector generation max tokens for chained datagen.",
+    )
+    parser.add_argument(
         "--zero-sum", action="store_true",
         help=(
             "Run a second assessor inference pass in Phase A. "
@@ -356,6 +385,11 @@ def main():
         f"[generate_chained] Loaded {len(pairs)} pairs,"
         f" capping at {max_pairs_display}"
     )
+    print(
+        f"[generate_chained] vLLM gpu_mem={args.gpu_memory_utilization}"
+        f" max_model_len={args.max_model_len}"
+        f" max_tokens={args.max_tokens}"
+    )
 
     # 1. Build all injector prompts
     injector_items = build_injector_prompts(pairs, injection_prompts, max_pairs)
@@ -369,13 +403,29 @@ def main():
     # 2. Run injector inference (load model once; reuse for zero-sum pass)
     chat_inputs = [msgs for _, _, msgs, _ in injector_items]
     if args.zero_sum:
-        llm, _, apply_fn = _make_llm_and_tokenizer(args.model)
+        llm, _, apply_fn = _make_llm_and_tokenizer(
+            args.model,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            max_model_len=args.max_model_len,
+        )
         outputs = run_vllm_inference(
-            args.model, chat_inputs, llm=llm, apply_fn=apply_fn
+            args.model,
+            chat_inputs,
+            llm=llm,
+            apply_fn=apply_fn,
+            max_tokens=args.max_tokens,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            max_model_len=args.max_model_len,
         )
     else:
         llm, apply_fn = None, None
-        outputs = run_vllm_inference(args.model, chat_inputs)
+        outputs = run_vllm_inference(
+            args.model,
+            chat_inputs,
+            max_tokens=args.max_tokens,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            max_model_len=args.max_model_len,
+        )
 
     # 3. Parse outputs and build rows
     rows = []
@@ -455,6 +505,8 @@ def main():
             llm=llm, apply_fn=apply_fn,
             # Assessor needs thinking enabled; lower temperature for precision
             temperature=0.3, top_p=0.95, max_tokens=1024,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            max_model_len=args.max_model_len,
         )
         zs_exact = zs_partial = zs_miss = 0
         for (inj_idx, mode, assessor_gt, _), asm_out in zip(

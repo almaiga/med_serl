@@ -44,7 +44,10 @@ EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_vllm}"
 MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
-ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.6}"
+ROLLOUT_MODE="${ROLLOUT_MODE:-sync}"
+ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
+DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
+DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
 ZERO_SUM="${ZERO_SUM:-1}"
 SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
@@ -66,7 +69,7 @@ if [ "$SMOKE" = "1" ]; then
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-3072}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1536}"
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
@@ -80,7 +83,7 @@ else
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
     PPO_EPOCHS="${PPO_EPOCHS:-2}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-3072}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1536}"
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
@@ -113,7 +116,11 @@ echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
 echo "Smoke mode: $SMOKE"
 echo "GPUs: $N_GPUS"
+echo "Rollout mode: $ROLLOUT_MODE"
 echo "Rollout TP: $ROLLOUT_TP"
+echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
+echo "Datagen GPU mem util: $DATAGEN_GPU_MEMORY_UTILIZATION"
+echo "Datagen max tokens: $DATAGEN_MAX_TOKENS"
 if [ -n "$MAX_PAIRS" ]; then
     echo "Max pairs: $MAX_PAIRS"
 else
@@ -121,6 +128,7 @@ else
 fi
 echo "Train batch size: $TRAIN_BATCH_SIZE"
 echo "Total epochs: $TOTAL_EPOCHS"
+echo "Max response length: $MAX_RESPONSE_LENGTH"
 echo "Ray CPUs: $RAY_NUM_CPUS"
 echo "Save freq: $SAVE_FREQ"
 echo "Test freq: $TEST_FREQ"
@@ -186,6 +194,8 @@ else
         --output "$TRAIN_PARQUET" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
+        --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
+        --max-tokens "$DATAGEN_MAX_TOKENS" \
         "${DATAGEN_MAX_PAIRS_ARGS[@]}" \
         $ZERO_SUM_FLAG
 fi
@@ -201,6 +211,8 @@ if [ -f "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl"
         --output "$VAL_PARQUET" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
+        --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
+        --max-tokens "$DATAGEN_MAX_TOKENS" \
         "${DATAGEN_MAX_PAIRS_ARGS[@]}" \
         $ZERO_SUM_FLAG
 elif [ ! -f "$VAL_PARQUET" ]; then
@@ -257,7 +269,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
     actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
-    actor_rollout_ref.rollout.mode=async \
+    actor_rollout_ref.rollout.mode="$ROLLOUT_MODE" \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.9 \
