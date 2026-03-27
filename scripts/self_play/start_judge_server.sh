@@ -15,6 +15,9 @@
 
 SCREEN_SESSION="${SCREEN_SESSION:-medserl_judge_server}"
 AUTO_SCREEN="${AUTO_SCREEN:-1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SCREEN_LOG_DIR="${SCREEN_LOG_DIR:-${REPO_ROOT}/logs/screen}"
 
 if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
     if ! command -v screen >/dev/null 2>&1; then
@@ -29,16 +32,20 @@ if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
         exit 1
     fi
 
-    SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    mkdir -p "${SCREEN_LOG_DIR}"
+    LOG_TS="$(date +%Y%m%d_%H%M%S)"
+    SCREEN_LOG_FILE="${SCREEN_LOG_DIR}/${SCREEN_SESSION}_${LOG_TS}.log"
+    SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
     QUOTED_ARGS=""
     for arg in "$@"; do
         QUOTED_ARGS+=" $(printf '%q' "$arg")"
     done
 
     echo "Launching ${SCRIPT_PATH} in screen session '${SCREEN_SESSION}'..."
-    screen -dmS "${SCREEN_SESSION}" bash -lc "AUTO_SCREEN=0 bash $(printf '%q' "$SCRIPT_PATH")${QUOTED_ARGS}"
+    screen -L -Logfile "${SCREEN_LOG_FILE}" -dmS "${SCREEN_SESSION}" bash -lc "AUTO_SCREEN=0 bash $(printf '%q' "$SCRIPT_PATH")${QUOTED_ARGS}"
     echo "Attach with: screen -r ${SCREEN_SESSION}"
     echo "Kill with:   screen -X -S ${SCREEN_SESSION} quit"
+    echo "Log file:    ${SCREEN_LOG_FILE}"
     exit 0
 fi
 
