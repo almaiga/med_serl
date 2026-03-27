@@ -51,7 +51,6 @@ EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_vllm}"
 MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
-ROLLOUT_MODE="${ROLLOUT_MODE:-sync}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
 DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
 DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
@@ -123,7 +122,6 @@ echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
 echo "Smoke mode: $SMOKE"
 echo "GPUs: $N_GPUS"
-echo "Rollout mode: $ROLLOUT_MODE"
 echo "Rollout TP: $ROLLOUT_TP"
 echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
 echo "Datagen GPU mem util: $DATAGEN_GPU_MEMORY_UTILIZATION"
@@ -276,7 +274,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
     actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
-    actor_rollout_ref.rollout.mode="$ROLLOUT_MODE" \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.9 \
