@@ -82,7 +82,7 @@ echo "Installing MedSeRL runtime extras without breaking SGLang image pins..."
     aiofiles \
     aiohttp \
     "antlr4-python3-runtime==4.9.3" \
-    "nvidia-cutlass-dsl==4.2.1" \
+    "nvidia-cutlass-dsl>=4.4.1" \
     datasets \
     jsonlines \
     "openai==2.6.1" \

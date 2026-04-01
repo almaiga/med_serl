@@ -50,6 +50,7 @@ N_GPUS="${N_GPUS:-2}"
 ROLLOUT_BACKEND="${ROLLOUT_BACKEND:-sglang}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
 ROLLOUT_MODE="${ROLLOUT_MODE:-sync}"
+SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-flashinfer}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
 ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
 ROLLOUT_FREE_CACHE_ENGINE="${ROLLOUT_FREE_CACHE_ENGINE:-true}"
@@ -131,6 +132,8 @@ echo "Rollout backend: $ROLLOUT_BACKEND"
 echo "Rollout TP: $ROLLOUT_TP"
 if [ "$ROLLOUT_BACKEND" = "vllm" ]; then
     echo "Rollout mode: $ROLLOUT_MODE"
+elif [ "$ROLLOUT_BACKEND" = "sglang" ]; then
+    echo "SGLang attention backend: $SGLANG_ATTENTION_BACKEND"
 fi
 echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
 echo "Rollout max num seqs: $ROLLOUT_MAX_NUM_SEQS"
@@ -295,6 +298,8 @@ fi
 BACKEND_ARGS=()
 if [ "$ROLLOUT_BACKEND" = "vllm" ]; then
     BACKEND_ARGS+=("actor_rollout_ref.rollout.mode=$ROLLOUT_MODE")
+elif [ "$ROLLOUT_BACKEND" = "sglang" ]; then
+    BACKEND_ARGS+=("actor_rollout_ref.rollout.engine_kwargs.sglang.attention_backend=$SGLANG_ATTENTION_BACKEND")
 fi
 
 RUNTIME_ENV_ARGS=()
