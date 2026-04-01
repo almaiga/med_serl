@@ -44,7 +44,7 @@ if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
 fi
 
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
-ONLINE_ROUNDS="${ONLINE_ROUNDS:-4}"
+ONLINE_ROUNDS="${ONLINE_ROUNDS:-5}"
 TRAIN_EPOCHS_PER_ROUND="${TRAIN_EPOCHS_PER_ROUND:-1}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/self_play_online_vllm}"
 EXPERIMENT_NAME_BASE="${EXPERIMENT_NAME_BASE:-medserl_selfplay_online_vllm}"
@@ -76,6 +76,7 @@ echo "Train/round : $TRAIN_EPOCHS_PER_ROUND"
 echo "Initial mdl : $INITIAL_MODEL_PATH"
 echo "Save freq   : $ROUND_SAVE_FREQ"
 echo "Judge req   : $REQUIRE_JUDGE"
+echo "Reward mode : remote judge + rule reward"
 echo "=================================================="
 
 CURRENT_MODEL_PATH="$INITIAL_MODEL_PATH"
@@ -97,6 +98,7 @@ for ROUND in $(seq 1 "$ONLINE_ROUNDS"); do
     EXPERIMENT_NAME="$ROUND_NAME" \
     TOTAL_EPOCHS="$TRAIN_EPOCHS_PER_ROUND" \
     SAVE_FREQ="$ROUND_SAVE_FREQ" \
+    REQUIRE_JUDGE="$REQUIRE_JUDGE" \
     SKIP_DATAGEN=0 \
     bash "$PROJECT_ROOT/scripts/self_play/run_multiturn_training.sh"
 

@@ -59,6 +59,7 @@ RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
 RAY_CLEAN_START="${RAY_CLEAN_START:-1}"
 ZERO_SUM="${ZERO_SUM:-1}"
 SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
+REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
 WANDB="${WANDB:-0}"
 WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 WANDB_ENTITY="${WANDB_ENTITY:-}"
@@ -145,6 +146,7 @@ echo "Zero-sum pass: $ZERO_SUM"
 echo "W&B: $WANDB"
 echo "Logger: $TRAINER_LOGGER"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
+echo "Require judge: $REQUIRE_JUDGE"
 echo "=================================================="
 
 if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
@@ -179,6 +181,12 @@ if [ -n "$WANDB_BASE_URL" ]; then
 fi
 unset TORCH_NCCL_AVOID_RECORD_STREAMS
 echo "✓ PYTHONPATH set to include: $PROJECT_ROOT"
+
+if [ "$REQUIRE_JUDGE" = "1" ] && [ -z "${JUDGE_VLLM_URL:-}" ]; then
+    echo "ERROR: JUDGE_VLLM_URL is not set."
+    echo "Start the judge server and export JUDGE_VLLM_URL before training."
+    exit 1
+fi
 
 python3 - <<'PY'
 import ray, torch
