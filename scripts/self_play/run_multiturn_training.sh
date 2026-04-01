@@ -82,7 +82,7 @@ if [ "$SMOKE" = "1" ]; then
     SAVE_FREQ="${SAVE_FREQ:-auto}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
-    ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,extra]}"
+    ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,hf_model,extra]}"
     ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,extra]}"
 else
     MAX_PAIRS="${MAX_PAIRS:-}"
@@ -96,7 +96,7 @@ else
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
-    ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,optimizer,extra]}"
+    ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,optimizer,extra,hf_model]}"
     ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,optimizer,extra]}"
 fi
 

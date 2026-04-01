@@ -58,6 +58,17 @@ find_latest_actor_checkpoint() {
     find "$round_dir" -maxdepth 1 -type d -name "global_step_*" | sort -V | tail -1
 }
 
+resolve_actor_model_path() {
+    local step_dir="$1"
+    if [ -f "$step_dir/actor/huggingface/config.json" ]; then
+        echo "$step_dir/actor/huggingface"
+    elif [ -f "$step_dir/actor/config.json" ]; then
+        echo "$step_dir/actor"
+    else
+        echo ""
+    fi
+}
+
 if [ "$REQUIRE_JUDGE" = "1" ] && [ -z "${JUDGE_VLLM_URL:-}" ]; then
     echo "ERROR: JUDGE_VLLM_URL is not set."
     echo "Start the judge pod first and export JUDGE_VLLM_URL on this training pod."
@@ -116,7 +127,12 @@ for ROUND in $(seq 1 "$ONLINE_ROUNDS"); do
         done < <(find "$ROUND_DIR" -maxdepth 1 -type d -name "global_step_*" | sort -V)
     fi
 
-    CURRENT_MODEL_PATH="$LATEST_STEP_DIR/actor"
+    CURRENT_MODEL_PATH="$(resolve_actor_model_path "$LATEST_STEP_DIR")"
+    if [ -z "$CURRENT_MODEL_PATH" ]; then
+        echo "ERROR: No loadable Hugging Face actor export found after round $ROUND."
+        echo "Expected config.json under $LATEST_STEP_DIR/actor/huggingface or $LATEST_STEP_DIR/actor"
+        exit 1
+    fi
     printf '%s\n' "$CURRENT_MODEL_PATH" > "$PROJECT_ROOT/$OUTPUT_ROOT/latest_actor_path.txt"
     echo "Next round actor checkpoint: $CURRENT_MODEL_PATH"
 done
