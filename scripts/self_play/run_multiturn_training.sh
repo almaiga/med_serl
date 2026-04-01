@@ -56,6 +56,7 @@ ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
 DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
 DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
+RAY_CLEAN_START="${RAY_CLEAN_START:-1}"
 ZERO_SUM="${ZERO_SUM:-1}"
 SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
 WANDB="${WANDB:-0}"
@@ -260,6 +261,17 @@ echo "=== Phase B: vLLM REINFORCE++ Training ==="
 echo "Stage 1: offline injector batch via vLLM"
 echo "Stage 2: offline assessor batch via vLLM"
 echo "Stage 3: standard single-turn VERL training on chained parquet"
+
+if [ "$RAY_CLEAN_START" = "1" ]; then
+    if command -v ray >/dev/null 2>&1; then
+        echo ""
+        echo "=== Cleaning Existing Ray Processes ==="
+        ray stop --force >/dev/null 2>&1 || true
+        sleep 2
+    else
+        echo "Warning: 'ray' command not found; skipping Ray cleanup"
+    fi
+fi
 
 python3 -m verl.trainer.main_ppo \
     --config-name="ppo_trainer" \
