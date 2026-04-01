@@ -2,11 +2,7 @@
 # MedSeRL self-play training launcher.
 #
 # Active path: batched chained injector -> assessor self-play using offline
-# chained data generation plus VERL training with SGLang rollout.
-#
-# Note: chained data generation is still implemented with offline vLLM in
-# scripts/self_play/generate_chained_data.py. On a clean SGLang-only image,
-# reuse an existing parquet via SKIP_DATAGEN=1 unless vLLM is also installed.
+# chained data generation plus VERL training.
 
 set -e
 
@@ -57,6 +53,8 @@ ROLLOUT_MODE="${ROLLOUT_MODE:-sync}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
 ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
 ROLLOUT_FREE_CACHE_ENGINE="${ROLLOUT_FREE_CACHE_ENGINE:-true}"
+DATAGEN_BACKEND="${DATAGEN_BACKEND:-$ROLLOUT_BACKEND}"
+DATAGEN_TP="${DATAGEN_TP:-1}"
 DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
 DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
@@ -72,7 +70,7 @@ WANDB_MODE="${WANDB_MODE:-online}"
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
 export VLLM_USE_V1="${VLLM_USE_V1:-1}"
-export SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK="${SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK:-True}"
+export SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK="${SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK:-true}"
 
 if [ "$SMOKE" = "1" ]; then
     MAX_PAIRS="${MAX_PAIRS:-12}"
@@ -137,6 +135,8 @@ fi
 echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
 echo "Rollout max num seqs: $ROLLOUT_MAX_NUM_SEQS"
 echo "Rollout free cache engine: $ROLLOUT_FREE_CACHE_ENGINE"
+echo "Datagen backend: $DATAGEN_BACKEND"
+echo "Datagen TP: $DATAGEN_TP"
 echo "Datagen GPU mem util: $DATAGEN_GPU_MEMORY_UTILIZATION"
 echo "Datagen max tokens: $DATAGEN_MAX_TOKENS"
 if [ -n "$MAX_PAIRS" ]; then
@@ -211,27 +211,6 @@ cd "$PROJECT_ROOT"
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$DATA_DIR"
 
-HAS_VLLM=0
-if python3 - <<'PY'
-import importlib.util, sys
-sys.exit(0 if importlib.util.find_spec("vllm") else 1)
-PY
-then
-    HAS_VLLM=1
-fi
-
-if [ "$ROLLOUT_BACKEND" = "sglang" ] && [ "$SKIP_DATAGEN" != "1" ] && [ "$HAS_VLLM" != "1" ]; then
-    if [ -f "$TRAIN_PARQUET" ]; then
-        echo "No vLLM installation detected in this SGLang environment."
-        echo "Reusing existing chained parquet with SKIP_DATAGEN=1."
-        SKIP_DATAGEN=1
-    else
-        echo "ERROR: chained data generation currently requires vLLM, but vLLM is not installed."
-        echo "Either install vLLM for datagen or relaunch with SKIP_DATAGEN=1 after copying existing parquet files."
-        exit 1
-    fi
-fi
-
 echo ""
 echo "=== Phase A: Chained Data Generation ==="
 DATAGEN_MAX_PAIRS_ARGS=()
@@ -251,6 +230,8 @@ else
         --model "$MODEL_PATH" \
         --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
         --output "$TRAIN_PARQUET" \
+        --backend "$DATAGEN_BACKEND" \
+        --tensor-parallel-size "$DATAGEN_TP" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
         --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
@@ -268,6 +249,8 @@ if [ -f "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl"
         --model "$MODEL_PATH" \
         --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl" \
         --output "$VAL_PARQUET" \
+        --backend "$DATAGEN_BACKEND" \
+        --tensor-parallel-size "$DATAGEN_TP" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
         --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
@@ -315,7 +298,7 @@ if [ "$ROLLOUT_BACKEND" = "vllm" ]; then
 fi
 
 RUNTIME_ENV_ARGS=()
-RUNTIME_ENV_ARGS+=("++ray_kwargs.runtime_env.env_vars.SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK=$SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK")
+RUNTIME_ENV_ARGS+=("++ray_kwargs.runtime_env.env_vars.SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK=$SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK")
 if [ "$ROLLOUT_BACKEND" = "vllm" ]; then
     RUNTIME_ENV_ARGS+=("++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1")
 fi

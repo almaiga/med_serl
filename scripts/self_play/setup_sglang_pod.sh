@@ -77,13 +77,15 @@ echo "Installing editable VERL without touching image-pinned dependencies..."
 )
 
 echo ""
-echo "Installing MedSeRL runtime extras that are not rollout-backend specific..."
+echo "Installing MedSeRL runtime extras without breaking SGLang image pins..."
 "$PYTHON_BIN" -m pip install --upgrade --upgrade-strategy only-if-needed \
     aiofiles \
     aiohttp \
+    "antlr4-python3-runtime==4.9.3" \
+    "nvidia-cutlass-dsl==4.2.1" \
     datasets \
     jsonlines \
-    openai \
+    "openai==2.6.1" \
     pandas \
     pyarrow \
     python-dotenv \
@@ -94,7 +96,6 @@ echo "Installing MedSeRL runtime extras that are not rollout-backend specific...
     loralib \
     bitsandbytes \
     optimum \
-    "math-verify[antlr4_13_2]" \
     rouge_score
 
 echo ""
@@ -117,7 +118,6 @@ echo ""
 echo "Bootstrap complete."
 echo "Recommended first launch on a clean SGLang image:"
 echo "  cd $MED_SERL_DIR"
-echo "  SKIP_DATAGEN=1 bash scripts/self_play/run_multiturn_training.sh"
+echo "  bash scripts/self_play/run_multiturn_training.sh"
 echo ""
-echo "If you need to regenerate chained parquet from scratch, note that"
-echo "scripts/self_play/generate_chained_data.py still uses offline vLLM."
+echo "Chained datagen now supports SGLang and vLLM backends."
