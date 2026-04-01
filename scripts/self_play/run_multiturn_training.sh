@@ -78,7 +78,7 @@ if [ "$SMOKE" = "1" ]; then
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
     MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1280}"
-    SAVE_FREQ="${SAVE_FREQ:--1}"
+    SAVE_FREQ="${SAVE_FREQ:-auto}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
     ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,extra]}"
@@ -245,7 +245,7 @@ fi
 
 echo ""
 echo "=== Verifying Chained Data Format ==="
-python3 - <<PY
+TRAIN_EXAMPLE_COUNT="$(python3 - <<PY
 import pyarrow.parquet as pq
 table = pq.read_table("$TRAIN_PARQUET")
 df = table.to_pandas()
@@ -254,7 +254,22 @@ print("Roles:", df["extra_info"].apply(lambda x: x.get("role", "?")).value_count
 print("Chained assessor rows:", int(df["extra_info"].apply(lambda x: bool(x.get("chained"))).sum()))
 print("Prompt type:", type(df.iloc[0]["prompt"]))
 print("✓ Chained data ready")
+print(len(df))
 PY
+) "
+printf '%s\n' "$TRAIN_EXAMPLE_COUNT" | sed '$d'
+TRAIN_EXAMPLE_COUNT="$(printf '%s\n' "$TRAIN_EXAMPLE_COUNT" | tail -n 1)"
+
+RESOLVED_SAVE_FREQ="$SAVE_FREQ"
+if [ "$SAVE_FREQ" = "auto" ]; then
+    if [ -z "$TRAIN_EXAMPLE_COUNT" ] || [ "$TRAIN_EXAMPLE_COUNT" -le 0 ] 2>/dev/null; then
+        RESOLVED_SAVE_FREQ=1
+    else
+        RESOLVED_SAVE_FREQ=$(( (TRAIN_EXAMPLE_COUNT + TRAIN_BATCH_SIZE - 1) / TRAIN_BATCH_SIZE ))
+        [ "$RESOLVED_SAVE_FREQ" -lt 1 ] && RESOLVED_SAVE_FREQ=1
+    fi
+fi
+echo "Resolved save freq: $RESOLVED_SAVE_FREQ"
 
 echo ""
 echo "=== Phase B: vLLM REINFORCE++ Training ==="
@@ -331,7 +346,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node="$N_GPUS" \
     trainer.nnodes=1 \
     trainer.total_epochs="$TOTAL_EPOCHS" \
-    trainer.save_freq="$SAVE_FREQ" \
+    trainer.save_freq="$RESOLVED_SAVE_FREQ" \
     trainer.test_freq="$TEST_FREQ" \
     trainer.val_before_train="$VAL_BEFORE_TRAIN" \
     "++ray_kwargs.ray_init.num_cpus=$RAY_NUM_CPUS" \
