@@ -52,6 +52,7 @@ MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
+ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
 DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
 DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
@@ -75,7 +76,7 @@ if [ "$SMOKE" = "1" ]; then
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1280}"
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
@@ -89,7 +90,7 @@ else
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
     PPO_EPOCHS="${PPO_EPOCHS:-2}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1280}"
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
@@ -124,6 +125,7 @@ echo "Smoke mode: $SMOKE"
 echo "GPUs: $N_GPUS"
 echo "Rollout TP: $ROLLOUT_TP"
 echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
+echo "Rollout max num seqs: $ROLLOUT_MAX_NUM_SEQS"
 echo "Datagen GPU mem util: $DATAGEN_GPU_MEMORY_UTILIZATION"
 echo "Datagen max tokens: $DATAGEN_MAX_TOKENS"
 if [ -n "$MAX_PAIRS" ]; then
@@ -297,6 +299,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.disable_log_stats=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
     actor_rollout_ref.rollout.gpu_memory_utilization="$ROLLOUT_GPU_MEMORY_UTILIZATION" \
+    actor_rollout_ref.rollout.max_num_seqs="$ROLLOUT_MAX_NUM_SEQS" \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
