@@ -1,8 +1,11 @@
 #!/bin/bash
 # MedSeRL self-play training launcher.
 #
-# Active path: batched chained injector -> assessor self-play using offline
-# chained data generation plus VERL training.
+# Active path: batched chained injector -> assessor self-play using offline vLLM
+# data generation plus standard single-turn VERL training.
+#
+# This aligns with the simpler official VERL rollout setup for vLLM and avoids
+# the SGLang interaction-system runtime for this experiment.
 
 set -e
 
@@ -43,19 +46,13 @@ if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
 fi
 
 SMOKE="${SMOKE:-0}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_chained_sglang}"
-EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_sglang}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_chained_vllm}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_vllm}"
 MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
 N_GPUS="${N_GPUS:-2}"
-ROLLOUT_BACKEND="${ROLLOUT_BACKEND:-sglang}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
-ROLLOUT_MODE="${ROLLOUT_MODE:-sync}"
-SGLANG_ATTENTION_BACKEND="${SGLANG_ATTENTION_BACKEND:-flashinfer}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
 ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
-ROLLOUT_FREE_CACHE_ENGINE="${ROLLOUT_FREE_CACHE_ENGINE:-true}"
-DATAGEN_BACKEND="${DATAGEN_BACKEND:-$ROLLOUT_BACKEND}"
-DATAGEN_TP="${DATAGEN_TP:-1}"
 DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
 DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
@@ -71,7 +68,6 @@ WANDB_MODE="${WANDB_MODE:-online}"
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
 export VLLM_USE_V1="${VLLM_USE_V1:-1}"
-export SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK="${SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK:-true}"
 
 if [ "$SMOKE" = "1" ]; then
     MAX_PAIRS="${MAX_PAIRS:-12}"
@@ -121,25 +117,16 @@ if [ "$WANDB" = "1" ]; then
 fi
 
 echo "=================================================="
-echo "MedSeRL Self-Play Training (Chained ${ROLLOUT_BACKEND})"
+echo "MedSeRL Self-Play Training (Chained vLLM)"
 echo "=================================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
 echo "Smoke mode: $SMOKE"
 echo "GPUs: $N_GPUS"
-echo "Rollout backend: $ROLLOUT_BACKEND"
 echo "Rollout TP: $ROLLOUT_TP"
-if [ "$ROLLOUT_BACKEND" = "vllm" ]; then
-    echo "Rollout mode: $ROLLOUT_MODE"
-elif [ "$ROLLOUT_BACKEND" = "sglang" ]; then
-    echo "SGLang attention backend: $SGLANG_ATTENTION_BACKEND"
-fi
 echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
 echo "Rollout max num seqs: $ROLLOUT_MAX_NUM_SEQS"
-echo "Rollout free cache engine: $ROLLOUT_FREE_CACHE_ENGINE"
-echo "Datagen backend: $DATAGEN_BACKEND"
-echo "Datagen TP: $DATAGEN_TP"
 echo "Datagen GPU mem util: $DATAGEN_GPU_MEMORY_UTILIZATION"
 echo "Datagen max tokens: $DATAGEN_MAX_TOKENS"
 if [ -n "$MAX_PAIRS" ]; then
@@ -199,11 +186,6 @@ import ray, torch
 print(f"Version check: ray={ray.__version__}")
 print(f"Version check: torch={torch.__version__}")
 try:
-    import sglang
-    print(f"Version check: sglang={sglang.__version__}")
-except Exception as exc:
-    print(f"Version check: sglang import failed: {exc}")
-try:
     import vllm
     print(f"Version check: vllm={vllm.__version__}")
 except Exception as exc:
@@ -233,8 +215,6 @@ else
         --model "$MODEL_PATH" \
         --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
         --output "$TRAIN_PARQUET" \
-        --backend "$DATAGEN_BACKEND" \
-        --tensor-parallel-size "$DATAGEN_TP" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
         --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
@@ -252,8 +232,6 @@ if [ -f "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl"
         --model "$MODEL_PATH" \
         --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl" \
         --output "$VAL_PARQUET" \
-        --backend "$DATAGEN_BACKEND" \
-        --tensor-parallel-size "$DATAGEN_TP" \
         --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
         --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
         --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
@@ -279,10 +257,10 @@ print("✓ Chained data ready")
 PY
 
 echo ""
-echo "=== Phase B: ${ROLLOUT_BACKEND} REINFORCE++ Training ==="
-echo "Stage 1: offline injector batch via chained parquet"
-echo "Stage 2: offline assessor batch via chained parquet"
-echo "Stage 3: VERL training on chained parquet with ${ROLLOUT_BACKEND} rollout"
+echo "=== Phase B: vLLM REINFORCE++ Training ==="
+echo "Stage 1: offline injector batch via vLLM"
+echo "Stage 2: offline assessor batch via vLLM"
+echo "Stage 3: standard single-turn VERL training on chained parquet"
 
 if [ "$RAY_CLEAN_START" = "1" ]; then
     if command -v ray >/dev/null 2>&1; then
@@ -293,19 +271,6 @@ if [ "$RAY_CLEAN_START" = "1" ]; then
     else
         echo "Warning: 'ray' command not found; skipping Ray cleanup"
     fi
-fi
-
-BACKEND_ARGS=()
-if [ "$ROLLOUT_BACKEND" = "vllm" ]; then
-    BACKEND_ARGS+=("actor_rollout_ref.rollout.mode=$ROLLOUT_MODE")
-elif [ "$ROLLOUT_BACKEND" = "sglang" ]; then
-    BACKEND_ARGS+=("actor_rollout_ref.rollout.engine_kwargs.sglang.attention_backend=$SGLANG_ATTENTION_BACKEND")
-fi
-
-RUNTIME_ENV_ARGS=()
-RUNTIME_ENV_ARGS+=("++ray_kwargs.runtime_env.env_vars.SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK=$SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK")
-if [ "$ROLLOUT_BACKEND" = "vllm" ]; then
-    RUNTIME_ENV_ARGS+=("++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1")
 fi
 
 python3 -m verl.trainer.main_ppo \
@@ -338,7 +303,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
     actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
-    actor_rollout_ref.rollout.name="$ROLLOUT_BACKEND" \
+    actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.top_p=0.9 \
     actor_rollout_ref.rollout.top_k=-1 \
@@ -347,9 +312,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
     actor_rollout_ref.rollout.gpu_memory_utilization="$ROLLOUT_GPU_MEMORY_UTILIZATION" \
     actor_rollout_ref.rollout.max_num_seqs="$ROLLOUT_MAX_NUM_SEQS" \
-    actor_rollout_ref.rollout.free_cache_engine="$ROLLOUT_FREE_CACHE_ENGINE" \
+    actor_rollout_ref.rollout.free_cache_engine=False \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
-    "${BACKEND_ARGS[@]}" \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
@@ -380,7 +344,7 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0" \
     "++ray_kwargs.runtime_env.env_vars.RAY_DEDUP_LOGS=0" \
     "++ray_kwargs.runtime_env.env_vars.HYDRA_FULL_ERROR=1" \
-    "${RUNTIME_ENV_ARGS[@]}" \
+    "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_PROJECT=$WANDB_PROJECT" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_MODE=$WANDB_MODE" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_API_KEY=${WANDB_API_KEY:-}" \

@@ -150,7 +150,26 @@ def build_injector_prompts(pairs, injection_prompts, max_pairs=None):
 
 # ─── inference ──────────────────────────────────────────────────────────────
 
-def _make_chat_applier(tokenizer):
+def _make_llm_and_tokenizer(
+    model_path: str,
+    *,
+    gpu_memory_utilization: float = 0.45,
+    max_model_len: int = 4096,
+):
+    """Load vllm LLM + tokenizer. Returns (llm, tokenizer, apply_fn)."""
+    from vllm import LLM
+    from transformers import AutoTokenizer
+
+    print(f"[generate_chained] Loading model {model_path} with vllm ...")
+    llm = LLM(
+        model=model_path,
+        max_model_len=max_model_len,
+        gpu_memory_utilization=gpu_memory_utilization,
+        enforce_eager=True,
+        enable_prefix_caching=False,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+
     def apply_no_think(msgs):
         try:
             return tokenizer.apply_chat_template(
@@ -162,79 +181,7 @@ def _make_chat_applier(tokenizer):
                 msgs, tokenize=False, add_generation_prompt=True,
             )
 
-    return apply_no_think
-
-
-def _make_vllm_and_tokenizer(
-    model_path: str,
-    *,
-    gpu_memory_utilization: float = 0.45,
-    max_model_len: int = 4096,
-    tensor_parallel_size: int = 1,
-):
-    """Load vllm LLM + tokenizer. Returns (llm, tokenizer, apply_fn)."""
-    from vllm import LLM
-    from transformers import AutoTokenizer
-
-    print(f"[generate_chained] Loading model {model_path} with vllm ...")
-    llm = LLM(
-        model=model_path,
-        max_model_len=max_model_len,
-        gpu_memory_utilization=gpu_memory_utilization,
-        tensor_parallel_size=tensor_parallel_size,
-        enforce_eager=True,
-        enable_prefix_caching=False,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    return llm, tokenizer, _make_chat_applier(tokenizer)
-
-
-def _make_sglang_and_tokenizer(
-    model_path: str,
-    *,
-    gpu_memory_utilization: float = 0.45,
-    max_model_len: int = 4096,
-    tensor_parallel_size: int = 1,
-):
-    """Load SGLang offline engine + tokenizer. Returns (engine, tokenizer, apply_fn)."""
-    import sglang as sgl
-    from transformers import AutoTokenizer
-
-    print(f"[generate_chained] Loading model {model_path} with sglang ...")
-    llm = sgl.Engine(
-        model_path=model_path,
-        trust_remote_code=True,
-        mem_fraction_static=gpu_memory_utilization,
-        context_length=max_model_len,
-        tp_size=tensor_parallel_size,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    return llm, tokenizer, _make_chat_applier(tokenizer)
-
-
-def _make_engine_and_tokenizer(
-    backend: str,
-    model_path: str,
-    *,
-    gpu_memory_utilization: float = 0.45,
-    max_model_len: int = 4096,
-    tensor_parallel_size: int = 1,
-):
-    if backend == "vllm":
-        return _make_vllm_and_tokenizer(
-            model_path,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            tensor_parallel_size=tensor_parallel_size,
-        )
-    if backend == "sglang":
-        return _make_sglang_and_tokenizer(
-            model_path,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            tensor_parallel_size=tensor_parallel_size,
-        )
-    raise ValueError(f"Unsupported backend: {backend}")
+    return llm, tokenizer, apply_no_think
 
 
 def run_vllm_inference(
@@ -248,7 +195,6 @@ def run_vllm_inference(
     top_p: float = 0.9,
     gpu_memory_utilization: float = 0.45,
     max_model_len: int = 4096,
-    tensor_parallel_size: int = 1,
 ) -> list:
     """Run offline vllm batch inference. Returns one response string per input.
 
@@ -259,11 +205,10 @@ def run_vllm_inference(
     from vllm import SamplingParams
 
     if llm is None or apply_fn is None:
-        llm, _, apply_fn = _make_vllm_and_tokenizer(
+        llm, _, apply_fn = _make_llm_and_tokenizer(
             model_path,
             gpu_memory_utilization=gpu_memory_utilization,
             max_model_len=max_model_len,
-            tensor_parallel_size=tensor_parallel_size,
         )
 
     sampling = SamplingParams(
@@ -272,90 +217,6 @@ def run_vllm_inference(
     prompts = [apply_fn(msgs) for msgs in chat_inputs]
     outputs = llm.generate(prompts, sampling)
     return [o.outputs[0].text.strip() for o in outputs]
-
-
-def run_sglang_inference(
-    model_path: str,
-    chat_inputs: list,
-    *,
-    llm=None,
-    apply_fn=None,
-    max_tokens: int = 3072,
-    temperature: float = 0.7,
-    top_p: float = 0.9,
-    gpu_memory_utilization: float = 0.45,
-    max_model_len: int = 4096,
-    tensor_parallel_size: int = 1,
-) -> list:
-    """Run offline SGLang batch inference. Returns one response string per input."""
-    if llm is None or apply_fn is None:
-        llm, _, apply_fn = _make_sglang_and_tokenizer(
-            model_path,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            tensor_parallel_size=tensor_parallel_size,
-        )
-
-    sampling = {
-        "temperature": temperature,
-        "top_p": top_p,
-        "max_new_tokens": max_tokens,
-    }
-    prompts = [apply_fn(msgs) for msgs in chat_inputs]
-    outputs = llm.generate(prompts, sampling)
-    if isinstance(outputs, dict):
-        outputs = [outputs]
-
-    texts = []
-    for output in outputs:
-        if isinstance(output, dict):
-            texts.append(str(output.get("text", "")).strip())
-        else:
-            texts.append(str(getattr(output, "text", "")).strip())
-    return texts
-
-
-def run_batch_inference(
-    backend: str,
-    model_path: str,
-    chat_inputs: list,
-    *,
-    llm=None,
-    apply_fn=None,
-    max_tokens: int = 3072,
-    temperature: float = 0.7,
-    top_p: float = 0.9,
-    gpu_memory_utilization: float = 0.45,
-    max_model_len: int = 4096,
-    tensor_parallel_size: int = 1,
-) -> list:
-    if backend == "vllm":
-        return run_vllm_inference(
-            model_path,
-            chat_inputs,
-            llm=llm,
-            apply_fn=apply_fn,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            tensor_parallel_size=tensor_parallel_size,
-        )
-    if backend == "sglang":
-        return run_sglang_inference(
-            model_path,
-            chat_inputs,
-            llm=llm,
-            apply_fn=apply_fn,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_model_len=max_model_len,
-            tensor_parallel_size=tensor_parallel_size,
-        )
-    raise ValueError(f"Unsupported backend: {backend}")
 
 
 # ─── zero-sum reward helper ──────────────────────────────────────────────────
@@ -487,28 +348,16 @@ def main():
     )
     parser.add_argument("--data-source", default="medec_chained")
     parser.add_argument(
-        "--backend",
-        choices=["vllm", "sglang"],
-        default="vllm",
-        help="Offline batch inference backend used for injector and assessor passes.",
-    )
-    parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
         default=0.45,
-        help="Backend GPU memory utilization / static memory fraction for chained datagen.",
-    )
-    parser.add_argument(
-        "--tensor-parallel-size",
-        type=int,
-        default=1,
-        help="Tensor parallel size for the offline inference backend.",
+        help="vLLM GPU memory utilization for chained datagen.",
     )
     parser.add_argument(
         "--max-model-len",
         type=int,
         default=4096,
-        help="Backend max model/context length for chained datagen.",
+        help="vLLM max model length for chained datagen.",
     )
     parser.add_argument(
         "--max-tokens",
@@ -537,9 +386,7 @@ def main():
         f" capping at {max_pairs_display}"
     )
     print(
-        f"[generate_chained] backend={args.backend}"
-        f" gpu_mem={args.gpu_memory_utilization}"
-        f" tp={args.tensor_parallel_size}"
+        f"[generate_chained] vLLM gpu_mem={args.gpu_memory_utilization}"
         f" max_model_len={args.max_model_len}"
         f" max_tokens={args.max_tokens}"
     )
@@ -556,15 +403,12 @@ def main():
     # 2. Run injector inference (load model once; reuse for zero-sum pass)
     chat_inputs = [msgs for _, _, msgs, _ in injector_items]
     if args.zero_sum:
-        llm, _, apply_fn = _make_engine_and_tokenizer(
-            args.backend,
+        llm, _, apply_fn = _make_llm_and_tokenizer(
             args.model,
             gpu_memory_utilization=args.gpu_memory_utilization,
             max_model_len=args.max_model_len,
-            tensor_parallel_size=args.tensor_parallel_size,
         )
-        outputs = run_batch_inference(
-            args.backend,
+        outputs = run_vllm_inference(
             args.model,
             chat_inputs,
             llm=llm,
@@ -572,18 +416,15 @@ def main():
             max_tokens=args.max_tokens,
             gpu_memory_utilization=args.gpu_memory_utilization,
             max_model_len=args.max_model_len,
-            tensor_parallel_size=args.tensor_parallel_size,
         )
     else:
         llm, apply_fn = None, None
-        outputs = run_batch_inference(
-            args.backend,
+        outputs = run_vllm_inference(
             args.model,
             chat_inputs,
             max_tokens=args.max_tokens,
             gpu_memory_utilization=args.gpu_memory_utilization,
             max_model_len=args.max_model_len,
-            tensor_parallel_size=args.tensor_parallel_size,
         )
 
     # 3. Parse outputs and build rows
@@ -659,15 +500,13 @@ def main():
             f" on {len(zero_sum_queue)} prompts ..."
         )
         asm_prompts = [prompt_msgs for _, _, _, prompt_msgs in zero_sum_queue]
-        asm_outputs = run_batch_inference(
-            args.backend,
+        asm_outputs = run_vllm_inference(
             args.model, asm_prompts,
             llm=llm, apply_fn=apply_fn,
             # Assessor needs thinking enabled; lower temperature for precision
             temperature=0.3, top_p=0.95, max_tokens=1024,
             gpu_memory_utilization=args.gpu_memory_utilization,
             max_model_len=args.max_model_len,
-            tensor_parallel_size=args.tensor_parallel_size,
         )
         zs_exact = zs_partial = zs_miss = 0
         for (inj_idx, mode, assessor_gt, _), asm_out in zip(
