@@ -52,7 +52,7 @@ MODEL_PATH="${ACTOR_MODEL:-Abdine/qwen3-4b-medrect-mixed}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
-ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-8}"
+ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-6}"
 DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
 DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
@@ -70,6 +70,7 @@ WANDB_MODE="${WANDB_MODE:-online}"
 KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
 LIVE_CHECKPOINT_RETENTION="${LIVE_CHECKPOINT_RETENTION:-2}"
 CHECKPOINT_PRUNE_INTERVAL_SEC="${CHECKPOINT_PRUNE_INTERVAL_SEC:-120}"
+ACTOR_LR="${ACTOR_LR:-5e-7}"
 
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
@@ -83,21 +84,21 @@ if [ "$SMOKE" = "1" ]; then
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1280}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
     SAVE_FREQ="${SAVE_FREQ:-auto}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
     ACTOR_CKPT_SAVE_CONTENTS="${ACTOR_CKPT_SAVE_CONTENTS:-[model,hf_model,extra]}"
     ACTOR_CKPT_LOAD_CONTENTS="${ACTOR_CKPT_LOAD_CONTENTS:-[model,extra]}"
 else
-    MAX_PAIRS="${MAX_PAIRS:-}"
-    TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
+    MAX_PAIRS="${MAX_PAIRS:-400}"
+    TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-16}"
     VAL_BATCH_SIZE="${VAL_BATCH_SIZE:-16}"
-    TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
-    PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
-    PPO_EPOCHS="${PPO_EPOCHS:-2}"
+    TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
+    PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
+    PPO_EPOCHS="${PPO_EPOCHS:-1}"
     MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1280}"
+    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
@@ -141,6 +142,7 @@ else
     echo "Max pairs: ALL"
 fi
 echo "Train batch size: $TRAIN_BATCH_SIZE"
+echo "Actor LR: $ACTOR_LR"
 echo "Total epochs: $TOTAL_EPOCHS"
 echo "Max response length: $MAX_RESPONSE_LENGTH"
 echo "Ray CPUs: $RAY_NUM_CPUS"
@@ -382,7 +384,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr="$ACTOR_LR" \
     actor_rollout_ref.actor.ppo_mini_batch_size="$PPO_MINI_BATCH_SIZE" \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.ppo_epochs="$PPO_EPOCHS" \
