@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 ACTOR_DIR="${ACTOR_DIR:-${REPO_ROOT}/outputs/self_play_online_vllm/round_1/global_step_202/actor/huggingface}"
-HF_NAMESPACE="${HF_NAMESPACE:-almaiga}"
+HF_NAMESPACE="${HF_NAMESPACE:-Abdine}"
 HF_MODEL_NAME="${HF_MODEL_NAME:-medserl-qwen3-4b-medrect-mixed-selfplay-r1}"
 HF_REPO_ID="${HF_REPO_ID:-${HF_NAMESPACE}/${HF_MODEL_NAME}}"
 HF_PRIVATE="${HF_PRIVATE:-0}"
