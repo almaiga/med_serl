@@ -48,7 +48,7 @@ fi
 SMOKE="${SMOKE:-0}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_chained_vllm}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_vllm}"
-MODEL_PATH="${ACTOR_MODEL:-Qwen/Qwen3-4B}"
+MODEL_PATH="${ACTOR_MODEL:-Abdine/qwen3-4b-medrect-mixed}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
