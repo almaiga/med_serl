@@ -47,6 +47,8 @@ CHECKPOINT_RESTART_GRACE_SEC="${CHECKPOINT_RESTART_GRACE_SEC:-20}"
 RESTART_ON_FAILURE="${RESTART_ON_FAILURE:-1}"
 MAX_AUTORESTARTS="${MAX_AUTORESTARTS:-100}"
 UPLOAD_FINAL_TO_HF="${UPLOAD_FINAL_TO_HF:-0}"
+WANDB="${WANDB:-1}"
+WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 
 mkdir -p "${RUN_LOG_DIR}"
 
@@ -61,6 +63,7 @@ echo "Restart grace (sec)    : ${CHECKPOINT_RESTART_GRACE_SEC}"
 echo "Restart on failure     : ${RESTART_ON_FAILURE}"
 echo "Max auto restarts      : ${MAX_AUTORESTARTS}"
 echo "Upload final to HF     : ${UPLOAD_FINAL_TO_HF}"
+echo "W&B                    : ${WANDB} (${WANDB_PROJECT})"
 echo "=================================================="
 
 restart_count=0

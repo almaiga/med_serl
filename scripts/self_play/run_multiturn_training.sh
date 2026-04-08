@@ -62,7 +62,7 @@ SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
 REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
 RESUME_MODE="${RESUME_MODE:-disable}"
 RESUME_FROM_PATH="${RESUME_FROM_PATH:-}"
-WANDB="${WANDB:-0}"
+WANDB="${WANDB:-1}"
 WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 WANDB_ENTITY="${WANDB_ENTITY:-}"
 WANDB_BASE_URL="${WANDB_BASE_URL:-}"
@@ -212,6 +212,51 @@ PY
 cd "$PROJECT_ROOT"
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$DATA_DIR"
+
+RUN_CONFIG_PATH="$OUTPUT_DIR/launcher_config.json"
+python3 - <<PY
+import json
+from pathlib import Path
+
+config = {
+    "model_path": "$MODEL_PATH",
+    "output_dir": "$OUTPUT_DIR",
+    "data_dir": "$DATA_DIR",
+    "smoke": "$SMOKE",
+    "n_gpus": "$N_GPUS",
+    "rollout_tp": "$ROLLOUT_TP",
+    "rollout_gpu_memory_utilization": "$ROLLOUT_GPU_MEMORY_UTILIZATION",
+    "rollout_max_num_seqs": "$ROLLOUT_MAX_NUM_SEQS",
+    "datagen_gpu_memory_utilization": "$DATAGEN_GPU_MEMORY_UTILIZATION",
+    "datagen_max_tokens": "$DATAGEN_MAX_TOKENS",
+    "max_pairs": "$MAX_PAIRS",
+    "train_batch_size": "$TRAIN_BATCH_SIZE",
+    "val_batch_size": "$VAL_BATCH_SIZE",
+    "ppo_mini_batch_size": "$PPO_MINI_BATCH_SIZE",
+    "ppo_epochs": "$PPO_EPOCHS",
+    "actor_lr": "$ACTOR_LR",
+    "total_epochs": "$TOTAL_EPOCHS",
+    "max_prompt_length": "$MAX_PROMPT_LENGTH",
+    "max_response_length": "$MAX_RESPONSE_LENGTH",
+    "save_freq": "$SAVE_FREQ",
+    "test_freq": "$TEST_FREQ",
+    "val_before_train": "$VAL_BEFORE_TRAIN",
+    "zero_sum": "$ZERO_SUM",
+    "skip_datagen": "$SKIP_DATAGEN",
+    "require_judge": "$REQUIRE_JUDGE",
+    "resume_mode": "$RESUME_MODE",
+    "resume_from_path": "$RESUME_FROM_PATH",
+    "wandb": "$WANDB",
+    "wandb_project": "$WANDB_PROJECT",
+    "wandb_entity": "$WANDB_ENTITY",
+    "wandb_base_url": "$WANDB_BASE_URL",
+    "wandb_mode": "$WANDB_MODE",
+    "experiment_name": "$EXPERIMENT_NAME",
+    "trainer_logger": "$TRAINER_LOGGER",
+}
+Path("$RUN_CONFIG_PATH").write_text(json.dumps(config, indent=2) + "\\n", encoding="utf-8")
+print(f"Saved launcher config to $RUN_CONFIG_PATH")
+PY
 
 echo ""
 echo "=== Phase A: Chained Data Generation ==="

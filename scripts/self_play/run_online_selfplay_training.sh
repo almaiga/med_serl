@@ -53,6 +53,8 @@ REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
 KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
 ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ:-40}"
 RESUME_INCOMPLETE_ROUND="${RESUME_INCOMPLETE_ROUND:-1}"
+WANDB="${WANDB:-1}"
+WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 
 find_latest_actor_checkpoint() {
     local round_dir="$1"
@@ -90,6 +92,7 @@ echo "Save freq   : $ROUND_SAVE_FREQ"
 echo "Judge req   : $REQUIRE_JUDGE"
 echo "Reward mode : remote judge + rule reward"
 echo "Resume inc. : $RESUME_INCOMPLETE_ROUND"
+echo "W&B         : $WANDB ($WANDB_PROJECT)"
 echo "=================================================="
 
 CURRENT_MODEL_PATH="$INITIAL_MODEL_PATH"
