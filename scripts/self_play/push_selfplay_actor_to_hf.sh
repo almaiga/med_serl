@@ -5,7 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-ACTOR_DIR="${ACTOR_DIR:-${REPO_ROOT}/outputs/self_play_online_vllm/round_1/global_step_202/actor/huggingface}"
+LATEST_ACTOR_PATH_FILE="${LATEST_ACTOR_PATH_FILE:-${REPO_ROOT}/outputs/self_play_online_vllm/latest_actor_path.txt}"
+DEFAULT_ACTOR_DIR="${REPO_ROOT}/outputs/self_play_online_vllm/round_1/global_step_202/actor/huggingface"
+if [ -z "${ACTOR_DIR:-}" ] && [ -f "${LATEST_ACTOR_PATH_FILE}" ]; then
+    ACTOR_DIR="$(cat "${LATEST_ACTOR_PATH_FILE}")"
+fi
+ACTOR_DIR="${ACTOR_DIR:-${DEFAULT_ACTOR_DIR}}"
 HF_NAMESPACE="${HF_NAMESPACE:-Abdine}"
 HF_MODEL_NAME="${HF_MODEL_NAME:-medserl-qwen3-4b-medrect-mixed-selfplay-r1}"
 HF_REPO_ID="${HF_REPO_ID:-${HF_NAMESPACE}/${HF_MODEL_NAME}}"
