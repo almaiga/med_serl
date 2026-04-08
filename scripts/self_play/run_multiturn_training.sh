@@ -67,6 +67,9 @@ WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 WANDB_ENTITY="${WANDB_ENTITY:-}"
 WANDB_BASE_URL="${WANDB_BASE_URL:-}"
 WANDB_MODE="${WANDB_MODE:-online}"
+KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
+LIVE_CHECKPOINT_RETENTION="${LIVE_CHECKPOINT_RETENTION:-2}"
+CHECKPOINT_PRUNE_INTERVAL_SEC="${CHECKPOINT_PRUNE_INTERVAL_SEC:-120}"
 
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
@@ -150,6 +153,7 @@ echo "W&B: $WANDB"
 echo "Logger: $TRAINER_LOGGER"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
 echo "Require judge: $REQUIRE_JUDGE"
+echo "Keep latest ckpt only: $KEEP_ONLY_LATEST_CHECKPOINT"
 echo "=================================================="
 
 if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
@@ -286,6 +290,39 @@ elif [[ "$SAVE_FREQ" =~ ^[0-9]+$ ]] && [ "$SAVE_FREQ" -gt 0 ]; then
 fi
 echo "Resolved save freq: $RESOLVED_SAVE_FREQ"
 
+prune_old_checkpoints() {
+    local output_dir="$1"
+    local keep_count="$2"
+    [ -d "$output_dir" ] || return 0
+    mapfile -t step_dirs < <(find "$output_dir" -maxdepth 1 -type d -name "global_step_*" | sort -V)
+    local total="${#step_dirs[@]}"
+    if [ "$total" -le "$keep_count" ]; then
+        return 0
+    fi
+    local prune_upto=$((total - keep_count))
+    for ((i = 0; i < prune_upto; i++)); do
+        echo "Pruning old checkpoint: ${step_dirs[$i]}"
+        rm -rf "${step_dirs[$i]}"
+    done
+}
+
+PRUNER_PID=""
+cleanup_checkpoint_pruner() {
+    local exit_status="$?"
+    if [ -n "$PRUNER_PID" ]; then
+        kill "$PRUNER_PID" >/dev/null 2>&1 || true
+        wait "$PRUNER_PID" 2>/dev/null || true
+    fi
+    if [ "$KEEP_ONLY_LATEST_CHECKPOINT" = "1" ]; then
+        local keep_count=1
+        if [ "$exit_status" -ne 0 ]; then
+            keep_count="$LIVE_CHECKPOINT_RETENTION"
+        fi
+        prune_old_checkpoints "$OUTPUT_DIR" "$keep_count"
+    fi
+}
+trap cleanup_checkpoint_pruner EXIT
+
 echo ""
 echo "=== Phase B: vLLM REINFORCE++ Training ==="
 echo "Stage 1: offline injector batch via vLLM"
@@ -311,6 +348,19 @@ if [ "$RESUME_MODE" = "resume_path" ]; then
         exit 1
     fi
     RESUME_ARGS+=("trainer.resume_from_path=$RESUME_FROM_PATH")
+fi
+
+if [ "$KEEP_ONLY_LATEST_CHECKPOINT" = "1" ]; then
+    prune_old_checkpoints "$OUTPUT_DIR" "$LIVE_CHECKPOINT_RETENTION"
+    if [[ "$RESOLVED_SAVE_FREQ" =~ ^[0-9]+$ ]] && [ "$RESOLVED_SAVE_FREQ" -gt 0 ]; then
+        (
+            while true; do
+                sleep "$CHECKPOINT_PRUNE_INTERVAL_SEC"
+                prune_old_checkpoints "$OUTPUT_DIR" "$LIVE_CHECKPOINT_RETENTION"
+            done
+        ) &
+        PRUNER_PID="$!"
+    fi
 fi
 
 python3 -m verl.trainer.main_ppo \
