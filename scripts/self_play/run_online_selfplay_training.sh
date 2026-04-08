@@ -51,7 +51,8 @@ EXPERIMENT_NAME_BASE="${EXPERIMENT_NAME_BASE:-medserl_selfplay_online_vllm}"
 INITIAL_MODEL_PATH="${INITIAL_MODEL_PATH:-${ACTOR_MODEL:-Qwen/Qwen3-4B}}"
 REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
 KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
-ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ:-auto}"
+ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ:-60}"
+RESUME_INCOMPLETE_ROUND="${RESUME_INCOMPLETE_ROUND:-1}"
 
 find_latest_actor_checkpoint() {
     local round_dir="$1"
@@ -88,6 +89,7 @@ echo "Initial mdl : $INITIAL_MODEL_PATH"
 echo "Save freq   : $ROUND_SAVE_FREQ"
 echo "Judge req   : $REQUIRE_JUDGE"
 echo "Reward mode : remote judge + rule reward"
+echo "Resume inc. : $RESUME_INCOMPLETE_ROUND"
 echo "=================================================="
 
 CURRENT_MODEL_PATH="$INITIAL_MODEL_PATH"
@@ -95,22 +97,49 @@ CURRENT_MODEL_PATH="$INITIAL_MODEL_PATH"
 for ROUND in $(seq 1 "$ONLINE_ROUNDS"); do
     ROUND_DIR="$PROJECT_ROOT/$OUTPUT_ROOT/round_${ROUND}"
     ROUND_NAME="${EXPERIMENT_NAME_BASE}_round_${ROUND}"
+    ROUND_DATA_DIR="$ROUND_DIR/data"
+    ROUND_COMPLETE_MARKER="$ROUND_DIR/round_complete.txt"
 
     echo ""
     echo "=================================================="
     echo "Round $ROUND / $ONLINE_ROUNDS"
-    echo "Injector model: $CURRENT_MODEL_PATH"
     echo "Round output  : $ROUND_DIR"
     echo "=================================================="
+
+    mkdir -p "$ROUND_DIR"
+
+    if [ -f "$ROUND_COMPLETE_MARKER" ]; then
+        CURRENT_MODEL_PATH="$(cat "$ROUND_COMPLETE_MARKER")"
+        echo "Round $ROUND already complete."
+        echo "Using saved actor checkpoint: $CURRENT_MODEL_PATH"
+        continue
+    fi
+
+    ROUND_SKIP_DATAGEN=0
+    ROUND_RESUME_MODE="disable"
+    if [ "$RESUME_INCOMPLETE_ROUND" = "1" ] && [ -d "$ROUND_DIR" ]; then
+        LATEST_STEP_DIR="$(find_latest_actor_checkpoint "$ROUND_DIR")"
+        if [ -n "$LATEST_STEP_DIR" ] && [ -f "$ROUND_DATA_DIR/train_chained.parquet" ]; then
+            ROUND_SKIP_DATAGEN=1
+            ROUND_RESUME_MODE="auto"
+            echo "Resuming incomplete round $ROUND from $LATEST_STEP_DIR"
+        fi
+    fi
+
+    echo "Injector model: $CURRENT_MODEL_PATH"
+    echo "Skip datagen : $ROUND_SKIP_DATAGEN"
+    echo "Resume mode  : $ROUND_RESUME_MODE"
 
     AUTO_SCREEN=0 \
     ACTOR_MODEL="$CURRENT_MODEL_PATH" \
     OUTPUT_DIR="$ROUND_DIR" \
+    DATA_DIR="$ROUND_DATA_DIR" \
     EXPERIMENT_NAME="$ROUND_NAME" \
     TOTAL_EPOCHS="$TRAIN_EPOCHS_PER_ROUND" \
     SAVE_FREQ="$ROUND_SAVE_FREQ" \
     REQUIRE_JUDGE="$REQUIRE_JUDGE" \
-    SKIP_DATAGEN=0 \
+    RESUME_MODE="$ROUND_RESUME_MODE" \
+    SKIP_DATAGEN="$ROUND_SKIP_DATAGEN" \
     bash "$PROJECT_ROOT/scripts/self_play/run_multiturn_training.sh"
 
     LATEST_STEP_DIR="$(find_latest_actor_checkpoint "$ROUND_DIR")"
@@ -133,6 +162,7 @@ for ROUND in $(seq 1 "$ONLINE_ROUNDS"); do
         echo "Expected config.json under $LATEST_STEP_DIR/actor/huggingface or $LATEST_STEP_DIR/actor"
         exit 1
     fi
+    printf '%s\n' "$CURRENT_MODEL_PATH" > "$ROUND_COMPLETE_MARKER"
     printf '%s\n' "$CURRENT_MODEL_PATH" > "$PROJECT_ROOT/$OUTPUT_ROOT/latest_actor_path.txt"
     echo "Next round actor checkpoint: $CURRENT_MODEL_PATH"
 done

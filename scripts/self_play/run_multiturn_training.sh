@@ -60,6 +60,8 @@ RAY_CLEAN_START="${RAY_CLEAN_START:-1}"
 ZERO_SUM="${ZERO_SUM:-1}"
 SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
 REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
+RESUME_MODE="${RESUME_MODE:-disable}"
+RESUME_FROM_PATH="${RESUME_FROM_PATH:-}"
 WANDB="${WANDB:-0}"
 WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 WANDB_ENTITY="${WANDB_ENTITY:-}"
@@ -108,7 +110,7 @@ else
     CONDA_BASE="${HOME}/miniconda3"
 fi
 
-DATA_DIR="$PROJECT_ROOT/data_processed/self_play"
+DATA_DIR="${DATA_DIR:-$PROJECT_ROOT/data_processed/self_play}"
 TRAIN_PARQUET="$DATA_DIR/train_chained.parquet"
 VAL_PARQUET="$DATA_DIR/val_chained.parquet"
 
@@ -143,6 +145,7 @@ echo "Save freq: $SAVE_FREQ"
 echo "Test freq: $TEST_FREQ"
 echo "Val before train: $VAL_BEFORE_TRAIN"
 echo "Zero-sum pass: $ZERO_SUM"
+echo "Resume mode: $RESUME_MODE"
 echo "W&B: $WANDB"
 echo "Logger: $TRAINER_LOGGER"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
@@ -269,12 +272,16 @@ printf '%s\n' "$TRAIN_EXAMPLE_COUNT" | sed '$d'
 TRAIN_EXAMPLE_COUNT="$(printf '%s\n' "$TRAIN_EXAMPLE_COUNT" | tail -n 1)"
 
 RESOLVED_SAVE_FREQ="$SAVE_FREQ"
+STEPS_PER_EPOCH=1
+if [ -n "$TRAIN_EXAMPLE_COUNT" ] && [ "$TRAIN_EXAMPLE_COUNT" -gt 0 ] 2>/dev/null; then
+    STEPS_PER_EPOCH=$(( (TRAIN_EXAMPLE_COUNT + TRAIN_BATCH_SIZE - 1) / TRAIN_BATCH_SIZE ))
+    [ "$STEPS_PER_EPOCH" -lt 1 ] && STEPS_PER_EPOCH=1
+fi
 if [ "$SAVE_FREQ" = "auto" ]; then
-    if [ -z "$TRAIN_EXAMPLE_COUNT" ] || [ "$TRAIN_EXAMPLE_COUNT" -le 0 ] 2>/dev/null; then
-        RESOLVED_SAVE_FREQ=1
-    else
-        RESOLVED_SAVE_FREQ=$(( (TRAIN_EXAMPLE_COUNT + TRAIN_BATCH_SIZE - 1) / TRAIN_BATCH_SIZE ))
-        [ "$RESOLVED_SAVE_FREQ" -lt 1 ] && RESOLVED_SAVE_FREQ=1
+    RESOLVED_SAVE_FREQ="$STEPS_PER_EPOCH"
+elif [[ "$SAVE_FREQ" =~ ^[0-9]+$ ]] && [ "$SAVE_FREQ" -gt 0 ]; then
+    if [ "$SAVE_FREQ" -gt "$STEPS_PER_EPOCH" ]; then
+        RESOLVED_SAVE_FREQ="$STEPS_PER_EPOCH"
     fi
 fi
 echo "Resolved save freq: $RESOLVED_SAVE_FREQ"
@@ -294,6 +301,16 @@ if [ "$RAY_CLEAN_START" = "1" ]; then
     else
         echo "Warning: 'ray' command not found; skipping Ray cleanup"
     fi
+fi
+
+RESUME_ARGS=()
+RESUME_ARGS+=("trainer.resume_mode=$RESUME_MODE")
+if [ "$RESUME_MODE" = "resume_path" ]; then
+    if [ -z "$RESUME_FROM_PATH" ]; then
+        echo "ERROR: RESUME_MODE=resume_path requires RESUME_FROM_PATH"
+        exit 1
+    fi
+    RESUME_ARGS+=("trainer.resume_from_path=$RESUME_FROM_PATH")
 fi
 
 python3 -m verl.trainer.main_ppo \
@@ -355,6 +372,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.total_epochs="$TOTAL_EPOCHS" \
     trainer.save_freq="$RESOLVED_SAVE_FREQ" \
+    "${RESUME_ARGS[@]}" \
     trainer.test_freq="$TEST_FREQ" \
     trainer.val_before_train="$VAL_BEFORE_TRAIN" \
     "++ray_kwargs.ray_init.num_cpus=$RAY_NUM_CPUS" \
