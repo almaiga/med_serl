@@ -46,7 +46,7 @@ RESTART_AFTER_CHECKPOINT="${RESTART_AFTER_CHECKPOINT:-1}"
 CHECKPOINT_RESTART_GRACE_SEC="${CHECKPOINT_RESTART_GRACE_SEC:-20}"
 RESTART_ON_FAILURE="${RESTART_ON_FAILURE:-1}"
 MAX_AUTORESTARTS="${MAX_AUTORESTARTS:-100}"
-UPLOAD_FINAL_TO_HF="${UPLOAD_FINAL_TO_HF:-0}"
+UPLOAD_FINAL_TO_HF="${UPLOAD_FINAL_TO_HF:-1}"
 WANDB="${WANDB:-1}"
 WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 
@@ -144,8 +144,12 @@ while true; do
         echo "Runner exited successfully."
         if [ "${UPLOAD_FINAL_TO_HF}" = "1" ]; then
             if [ -f "${latest_actor_path_file}" ]; then
-                ACTOR_DIR="$(cat "${latest_actor_path_file}")" \
-                bash "${SCRIPT_DIR}/push_selfplay_actor_to_hf.sh"
+                if [ -n "${HF_TOKEN:-}" ] || [ -n "${HUGGING_FACE_HUB_TOKEN:-}" ]; then
+                    ACTOR_DIR="$(cat "${latest_actor_path_file}")" \
+                    bash "${SCRIPT_DIR}/push_selfplay_actor_to_hf.sh"
+                else
+                    echo "WARNING: UPLOAD_FINAL_TO_HF=1 but no HF token is set; skipping upload."
+                fi
             else
                 echo "WARNING: latest actor path file not found; skipping HF upload."
             fi
