@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -22,12 +23,50 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-
-from self_play.utils import parse_assessor_answer  # noqa: E402
 
 
 UNKNOWN_LABELS = {"UNKNOWN", "ERROR_UNKNOWN"}
+
+
+def parse_assessor_answer(text: str) -> Tuple[str, Optional[int]]:
+    """Canonical parser for assessor output.
+
+    Returns:
+        ("CORRECT", None)  — note is correct
+        ("ERROR", sentence_id)  — error at sentence_id (1-indexed)
+        ("UNKNOWN", None)  — could not parse
+    """
+    m = re.search(r"<think>(.*?)</think>\s*", text, re.DOTALL)
+    if m:
+        content = text[m.end():].strip()
+    else:
+        content = text
+
+    answer = ""
+    for line in content.split("\n"):
+        line = line.strip()
+        if line:
+            answer = re.sub(
+                r"^(answer|label|output|result|final_answer)\s*[:=]\s*",
+                "",
+                line,
+                flags=re.IGNORECASE,
+            )
+            break
+
+    if re.search(r"\bcorrect\b", answer, re.IGNORECASE) and not re.search(
+        r"\bincorrect\b", answer, re.IGNORECASE
+    ):
+        return "CORRECT", None
+
+    m = re.search(r"\b(\d+)\b", answer)
+    if m:
+        return "ERROR", int(m.group(1))
+
+    if re.search(r"error|incorrect|mistake|wrong", answer, re.IGNORECASE):
+        return "ERROR", None
+
+    return "UNKNOWN", None
 
 
 def load_rows(path: Path) -> List[Dict]:
