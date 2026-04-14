@@ -379,17 +379,17 @@ def compute_metrics(results: List[Dict]) -> Dict:
     f1   = 2 * prec * rec / (prec + rec) if (prec + rec) else 0
 
     detected = [r for r in error_cases if r["pred_label"] not in ("CORRECT", "UNKNOWN")]
-    loc_ok   = sum(1 for r in detected if r["localization_correct"])
+    sent_ok  = sum(1 for r in error_cases if r["localization_correct"])
 
     by_type: Dict = {}
     for r in error_cases:
         et = r["error_type"] or "unknown"
-        s  = by_type.setdefault(et, {"total": 0, "detected": 0, "localized": 0})
+        s  = by_type.setdefault(et, {"total": 0, "detected": 0, "sentence_correct": 0})
         s["total"] += 1
         if r["pred_label"] not in ("CORRECT", "UNKNOWN"):
             s["detected"] += 1
-            if r["localization_correct"]:
-                s["localized"] += 1
+        if r["localization_correct"]:
+            s["sentence_correct"] += 1
 
     det_acc = sum(1 for r in results if r["detection_correct"]) / total if total else 0
 
@@ -399,31 +399,33 @@ def compute_metrics(results: List[Dict]) -> Dict:
             accuracy=det_acc, precision=prec, recall=rec, f1=f1,
             tp=tp, fp=fp, tn=tn, fn=fn,
         ),
-        localization=dict(
+        sentence_extraction=dict(
             total_errors=len(error_cases),
             detected_errors=len(detected),
-            correctly_localized=loc_ok,
-            accuracy=loc_ok / len(detected) if detected else 0,
+            exact_matches=sent_ok,
+            accuracy=sent_ok / len(error_cases) if error_cases else 0,
         ),
         by_error_type=by_type,
     )
 
 
 def print_metrics(m: Dict) -> None:
-    det, loc = m["detection"], m["localization"]
+    det, sent = m["detection"], m["sentence_extraction"]
     print(f"\n{'='*50}")
     print("Detection (error vs no-error)")
     print(f"  Accuracy : {det['accuracy']:.3f}")
     print(f"  Precision: {det['precision']:.3f}  Recall: {det['recall']:.3f}  F1: {det['f1']:.3f}")
     print(f"  TP={det['tp']} FP={det['fp']} TN={det['tn']} FN={det['fn']}")
-    print(f"\nLocalization (exact sentence match)")
-    print(f"  Error cases: {loc['total_errors']}  Detected: {loc['detected_errors']}  Localized: {loc['correctly_localized']}")
-    print(f"  Accuracy : {loc['accuracy']:.3f}")
+    print(f"\nSentence extraction (exact sentence match)")
+    print(f"  Gold error cases : {sent['total_errors']}")
+    print(f"  Predicted errors  : {sent['detected_errors']}")
+    print(f"  Exact matches     : {sent['exact_matches']}")
+    print(f"  Accuracy          : {sent['accuracy']:.3f}")
     print(f"\nBy error type")
     for et, s in sorted(m["by_error_type"].items(), key=lambda x: -x[1]["total"]):
         dr = s["detected"] / s["total"] if s["total"] else 0
-        lr = s["localized"] / s["detected"] if s["detected"] else 0
-        print(f"  {et}: n={s['total']}  det={dr:.2f}  loc={lr:.2f}")
+        sr = s["sentence_correct"] / s["total"] if s["total"] else 0
+        print(f"  {et}: n={s['total']}  det_recall={dr:.2f}  sent_acc={sr:.2f}")
     print(f"{'='*50}\n")
 
 
