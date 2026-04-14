@@ -84,12 +84,12 @@ def sentences_to_1indexed(raw: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def split_thinking(content: str) -> Tuple[str, str]:
-    """Split plain-text  consolidated from the final answer.
+    """Split model thinking from the final answer.
 
-    Works for models like HuatuoGPT / DeepSeek-R1 that emit think tags as text.
+    Handles explicit think tags emitted in text form.
     Returns (thinking, answer_after_think).
     """
-    m = re.search(r" consolidated\s*", content, re.DOTALL)
+    m = re.search(r"<think>(.*?)</think>\s*", content, re.DOTALL | re.IGNORECASE)
     if m:
         return m.group(1).strip(), content[m.end():].strip()
     return "", content
@@ -190,8 +190,8 @@ def run_inference(
                 {"role": "user", "content": user_template.format(sentences=sentences)},
             ]
             prompt_kwargs = dict(tokenize=False, add_generation_prompt=True)
-            if is_qwen and use_thinking:
-                prompt_kwargs["enable_thinking"] = True
+            if is_qwen:
+                prompt_kwargs["enable_thinking"] = bool(use_thinking)
             prompts.append(tokenizer.apply_chat_template(messages, **prompt_kwargs))
 
         inputs = tokenizer(
