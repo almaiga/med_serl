@@ -41,6 +41,7 @@ from inference_error_detection import (
     load_model_and_tokenizer,
     load_test_data,
 )
+from self_play.utils import parse_assessor_answer
 
 DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
 
@@ -51,11 +52,11 @@ IM_END_TOKEN = "₃"
 THINK_TOKEN = "<|think|>"
 THINK_END_TOKEN = "<|end_think|>"
 
-# Special token IDs for Qwen2
+# Qwen3 special token IDs
 IM_START_TOKEN_ID = 151644
 IM_END_TOKEN_ID = 151645
 THINK_TOKEN_ID = 151646
-THINK_END_TOKEN_ID = 151647
+THINK_END_TOKEN_ID = 151668
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,31 +102,7 @@ def parse_output(content: str) -> Tuple[str, Optional[int]]:
     label        : "CORRECT" | "ERROR" | "UNKNOWN"
     sentence_id  : int if label is ERROR, else None
     """
-    # Strip plain-text  consolidated so the answer is what remains
-    _, content = split_thinking(content)
-
-    # Use first non-empty line; strip known prefixes
-    answer = ""
-    for line in content.split("\n"):
-        line = line.strip()
-        if line:
-            answer = re.sub(r"^(answer|label|output|result)\s*:\s*", "", line, flags=re.IGNORECASE)
-            break
-
-    if re.search(r"\bcorrect\b", answer, re.IGNORECASE) and not re.search(
-        r"\bincorrect\b", answer, re.IGNORECASE
-    ):
-        return "CORRECT", None
-
-    m = re.search(r"\b(\d+)\b", answer)
-    if m:
-        return "ERROR", int(m.group(1))
-
-    # Fallback: only search the answer portion, not the thinking
-    if re.search(r"error|incorrect|mistake|wrong", answer, re.IGNORECASE):
-        return "ERROR", None
-
-    return "UNKNOWN", None
+    return parse_assessor_answer(content)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -234,7 +211,7 @@ def run_inference(
                 if IM_END_TOKEN_ID not in out_ids:
                     needs_stage2[i] = True
                     if THINK_END_TOKEN_ID not in out_ids:
-                        early_stop = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n consolidated\n\n"
+                        early_stop = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
                         early_ids = tokenizer(early_stop, return_tensors="pt", add_special_tokens=False).input_ids.to(model.device)
                         new_input = torch.cat([outputs[i:i+1], early_ids], dim=-1)
                     else:
@@ -292,7 +269,7 @@ def run_inference(
                 while thinking_all and thinking_all[-1] == tokenizer.pad_token_id:
                     thinking_all.pop()
 
-                # Split at  consolidated token (151668)
+                # Split at Qwen3 </think> token.
                 if THINK_END_TOKEN_ID in thinking_all:
                     idx = thinking_all.index(THINK_END_TOKEN_ID)
                     thinking = tokenizer.decode(thinking_all[:idx], skip_special_tokens=True).strip()
@@ -328,7 +305,7 @@ def run_inference(
                     content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
 
             pred_type, pred_sid = parse_output(content)
-            pred_label = "CORRECT" if pred_type == "CORRECT" else (str(pred_sid) if pred_sid else "ERROR_UNKNOWN")
+            pred_label = "CORRECT" if pred_type == "CORRECT" else (str(pred_sid) if pred_sid is not None else "UNKNOWN")
 
             detection_correct = (m["gt_label"] == "CORRECT" and pred_label == "CORRECT") or (
                 m["gt_label"] != "CORRECT" and pred_label not in ("CORRECT", "UNKNOWN")

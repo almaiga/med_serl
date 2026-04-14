@@ -46,6 +46,8 @@ resolve_model_path() {
         Qwen3-8B)        echo "Qwen/Qwen3-8B" ;;
         Qwen3-14B)       echo "Qwen/Qwen3-14B" ;;
         Qwen3-32B)       echo "Qwen/Qwen3-32B" ;;
+        medrect-mixed|qwen3-4b-medrect-mixed|Abdine/qwen3-4b-medrect-mixed)
+                         echo "Abdine/qwen3-4b-medrect-mixed" ;;
         medrect-sft)     echo "outputs/local_training/qwen3-8b-medrect-sft" ;;
         *)               echo "" ;;
     esac
@@ -62,15 +64,18 @@ if [[ -z "${MODEL_NAME}" ]]; then
     echo "  Qwen3-8B                   Qwen/Qwen3-8B"
     echo "  Qwen3-14B                  Qwen/Qwen3-14B"
     echo "  Qwen3-32B                  Qwen/Qwen3-32B"
+    echo "  medrect-mixed              Abdine/qwen3-4b-medrect-mixed"
     echo "  medrect-sft                outputs/local_training/qwen3-8b-medrect-sft"
     exit 1
 fi
 
 MODEL_PATH="$(resolve_model_path "${MODEL_NAME}")"
 if [[ -z "${MODEL_PATH}" ]]; then
-    echo "ERROR: unknown model '${MODEL_NAME}'. Add it to resolve_model_path() in this script."
-    exit 1
+    # Allow direct local paths and HF repo ids in addition to registry aliases.
+    MODEL_PATH="${MODEL_NAME}"
 fi
+
+MODEL_SLUG="${MODEL_NAME//\//_}"
 
 # ── Inference parameters ─────────────────────────────────────────────────────
 DATASET="${DATASET:-all}"
@@ -81,12 +86,12 @@ MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
 NO_THINKING="${NO_THINKING:-1}"
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
-OUTPUT_DIR="results/detection/${MODEL_NAME}"
+OUTPUT_DIR="results/detection/${MODEL_SLUG}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${OUTPUT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/${DATASET}_${TIMESTAMP}.log"
-SCREEN_NAME="detect_${MODEL_NAME}"
+SCREEN_NAME="detect_${MODEL_SLUG}"
 
 # ── Ensure screen is installed ──────────────────────────────────────────────
 if ! command -v screen &>/dev/null; then
