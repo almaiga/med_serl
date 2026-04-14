@@ -105,6 +105,28 @@ def parse_output(content: str) -> Tuple[str, Optional[int]]:
     return parse_assessor_answer(content)
 
 
+def parse_output_candidates(*candidates: str) -> Tuple[str, Optional[int]]:
+    """Try parsing multiple candidate texts, from most to least trusted."""
+    for text in candidates:
+        if not text or not text.strip():
+            continue
+        label, sid = parse_output(text)
+        if label != "UNKNOWN":
+            return label, sid
+
+        # Last-line fallback: useful when the answer was serialized after the
+        # thinking block but the main split missed it.
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines:
+            last = lines[-1]
+            if re.fullmatch(r"\d+", last):
+                return "ERROR", int(last)
+            if re.fullmatch(r"CORRECT", last, flags=re.IGNORECASE):
+                return "CORRECT", None
+
+    return "UNKNOWN", None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Inference
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,11 +266,11 @@ def run_inference(
                         input_ids=input_ids2,
                         attention_mask=attn_mask2,
                         max_new_tokens=16,
-                        temperature=0.3,
-                        do_sample=True,
-                        top_p=0.95,
-                        top_k=20,
-                        min_p=0.05,
+                        temperature=temperature if temperature > 0 else None,
+                        do_sample=temperature > 0,
+                        top_p=0.95 if temperature > 0 else None,
+                        top_k=20 if temperature > 0 else None,
+                        min_p=0.05 if temperature > 0 else None,
                         repetition_penalty=1.3,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=tokenizer.eos_token_id,
@@ -260,6 +282,7 @@ def run_inference(
         for i, m in enumerate(meta):
             thinking = ""
             content = ""
+            full_text = ""
 
             if is_qwen and use_thinking and batch_final:
                 # ── Extract thinking from batch_final (pre-stage2 data) ──
@@ -268,6 +291,7 @@ def run_inference(
                 # Right-strip pad/eos (safe — they sit after the real content)
                 while thinking_all and thinking_all[-1] == tokenizer.pad_token_id:
                     thinking_all.pop()
+                full_text = tokenizer.decode(thinking_all, skip_special_tokens=False).strip()
 
                 # Split at Qwen3 </think> token.
                 if THINK_END_TOKEN_ID in thinking_all:
@@ -284,8 +308,11 @@ def run_inference(
                     while answer_ids and answer_ids[-1] == tokenizer.pad_token_id:
                         answer_ids.pop()
                     content = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+                    if answer_ids:
+                        answer_raw = tokenizer.decode(answer_ids, skip_special_tokens=False).strip()
+                        full_text = f"{full_text}\n{answer_raw}".strip()
                 else:
-                    # Answer was already in stage 1, after  consolidated
+                    # Answer was already in stage 1, after </think>.
                     content = tokenizer.decode(after_think, skip_special_tokens=True).strip()
 
                 # Clean up injected early-stop message from thinking
@@ -300,11 +327,12 @@ def run_inference(
                 while out_ids and out_ids[-1] == tokenizer.pad_token_id:
                     out_ids.pop()
                 raw = tokenizer.decode(out_ids, skip_special_tokens=False).strip()
+                full_text = raw
                 thinking, content = split_thinking(raw)
                 if not thinking:
                     content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
 
-            pred_type, pred_sid = parse_output(content)
+            pred_type, pred_sid = parse_output_candidates(content, full_text, thinking)
             pred_label = "CORRECT" if pred_type == "CORRECT" else (str(pred_sid) if pred_sid is not None else "UNKNOWN")
 
             detection_correct = (m["gt_label"] == "CORRECT" and pred_label == "CORRECT") or (
