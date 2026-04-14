@@ -285,35 +285,30 @@ def run_inference(
             full_text = ""
 
             if is_qwen and use_thinking and batch_final:
-                # ── Extract thinking from batch_final (pre-stage2 data) ──
+                # Decode the complete generated text first, then split on the
+                # textual think tags. This is more robust than relying on a
+                # single token ID boundary, especially for fine-tuned models.
                 bf = batch_final[i].squeeze(0)
                 thinking_all = bf[orig_padded_len:].tolist()
-                # Right-strip pad/eos (safe — they sit after the real content)
                 while thinking_all and thinking_all[-1] == tokenizer.pad_token_id:
                     thinking_all.pop()
-                full_text = tokenizer.decode(thinking_all, skip_special_tokens=False).strip()
-
-                # Split at Qwen3 </think> token.
-                if THINK_END_TOKEN_ID in thinking_all:
-                    idx = thinking_all.index(THINK_END_TOKEN_ID)
-                    thinking = tokenizer.decode(thinking_all[:idx], skip_special_tokens=True).strip()
-                    after_think = thinking_all[idx + 1 :]
-                else:
-                    thinking = tokenizer.decode(thinking_all, skip_special_tokens=True).strip()
-                    after_think = []
 
                 if needs_stage2[i]:
-                    # Answer = only the NEW tokens from stage 2
                     answer_ids = outputs[i, stage2_input_len:].tolist()
                     while answer_ids and answer_ids[-1] == tokenizer.pad_token_id:
                         answer_ids.pop()
-                    content = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
-                    if answer_ids:
-                        answer_raw = tokenizer.decode(answer_ids, skip_special_tokens=False).strip()
-                        full_text = f"{full_text}\n{answer_raw}".strip()
+                    combined_ids = thinking_all + answer_ids
                 else:
-                    # Answer was already in stage 1, after </think>.
-                    content = tokenizer.decode(after_think, skip_special_tokens=True).strip()
+                    combined_ids = thinking_all
+
+                full_text = tokenizer.decode(combined_ids, skip_special_tokens=False).strip()
+                thinking, content = split_thinking(full_text)
+
+                if not content:
+                    visible_text = tokenizer.decode(combined_ids, skip_special_tokens=True).strip()
+                    # If the textual split failed, keep the visible text as the
+                    # parse candidate instead of dropping the answer entirely.
+                    content = visible_text
 
                 # Clean up injected early-stop message from thinking
                 thinking = re.sub(
