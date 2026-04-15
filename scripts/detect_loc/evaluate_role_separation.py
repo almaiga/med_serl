@@ -21,6 +21,7 @@ import random
 import re
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -192,6 +193,17 @@ def main():
     parser.add_argument("--think", action="store_true", default=False)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--show", type=int, default=5, help="Number of flagged examples to print")
+    parser.add_argument(
+        "--full-output",
+        action="store_true",
+        default=False,
+        help="Print full thinking/answer text for flagged examples instead of truncating",
+    )
+    parser.add_argument(
+        "--output-jsonl",
+        default=None,
+        help="Optional path to save all probe results as JSONL",
+    )
     args = parser.parse_args()
 
     pairs = load_clean_pairs(Path(args.assessor_data), Path(args.injector_data))
@@ -296,9 +308,28 @@ def main():
             print(f"Assessor pred       : {row['assessor_label']} {row['assessor_pred_sid']}")
             print(f"Injector GT / pred  : {row['injector_gt']} / {row['injector_pred_sid']}")
             print(f"Leak marker         : {row['assessor_leak_marker']}")
-            print(f"Assessor answer     : {short(row['assessor_answer'])}")
-            print(f"Injector answer     : {short(row['injector_answer'])}")
-            print(f"Assessor thinking   : {short(row['assessor_thinking'], 260)}")
+            if args.full_output:
+                print("Assessor answer")
+                print(row["assessor_answer"])
+                print("Injector answer")
+                print(row["injector_answer"])
+                print("Assessor thinking")
+                print(row["assessor_thinking"])
+            else:
+                print(f"Assessor answer     : {short(row['assessor_answer'])}")
+                print(f"Injector answer     : {short(row['injector_answer'])}")
+                print(f"Assessor thinking   : {short(row['assessor_thinking'], 260)}")
+
+    if args.output_jsonl:
+        out_path = Path(args.output_jsonl)
+    else:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = PROJECT_ROOT / "results" / "detection" / f"role_separation_{ts}.jsonl"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w") as f:
+        for row in results:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    print(f"\nSaved raw results    : {out_path}")
 
 
 if __name__ == "__main__":
