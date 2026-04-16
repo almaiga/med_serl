@@ -21,21 +21,21 @@ Output format per record:
 Usage:
     # Standard conversion
     python scripts/medrect/prepare_medrect_sft.py \\
-        --input data/medrect/medrect-en-train.json \\
+        --input medrect/data/medrect/medrect-en-train.json \\
         --output data_processed/medrect/medrect_sft_train.jsonl
 
     # Bilingual (en + ja)
     python scripts/medrect/prepare_medrect_sft.py \\
-        --input data/medrect/medrect-en-train.json data/medrect/medrect-ja-train.json \\
+        --input medrect/data/medrect/medrect-en-train.json medrect/data/medrect/medrect-ja-train.json \\
         --output data_processed/medrect/medrect_sft_train.jsonl
 
     # Dry run (print 5 samples, don't write)
     python scripts/medrect/prepare_medrect_sft.py \\
-        --input data/medrect/medrect-en-train.json --dry-run
+        --input medrect/data/medrect/medrect-en-train.json --dry-run
 
     # With reasoning field (if your data has precomputed traces)
     python scripts/medrect/prepare_medrect_sft.py \\
-        --input data/medrect/medrect-en-train.json \\
+        --input medrect/data/medrect/medrect-en-train.json \\
         --reasoning-field thinking
 """
 

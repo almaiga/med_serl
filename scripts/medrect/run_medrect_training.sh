@@ -15,7 +15,7 @@ set -euo pipefail
 #
 # Environment overrides:
 #   MODEL_PATH    — HF model name or local path (default: Qwen/Qwen3-4B)
-#   MEDRECT_DATA  — path to medrect-en-train.json (default: data/medrect/medrect-en-train.json)
+#   MEDRECT_DATA  — path to medrect-en-train.json (default: medrect/data/medrect/medrect-en-train.json)
 #   LORA_R        — LoRA rank (default: 64)
 #   LORA_ALPHA    — LoRA alpha (default: 128)
 #   LR            — learning rate (default: 1e-4)
@@ -28,7 +28,7 @@ cd "${PROJECT_ROOT}"
 
 # ---- Configuration (overridable via env) ----
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-4B}"
-MEDRECT_DATA="${MEDRECT_DATA:-/workspace/medrect/data/medrect/medrect-en-train.json}"
+MEDRECT_DATA="${MEDRECT_DATA:-medrect/data/medrect/medrect-en-train.json}"
 PROMPT_CONFIG="configs/prompts/sft/medrect_detection_prompts.json"
 PREPARED_DATA="data_processed/medrect/medrect_sft_train.jsonl"
 
