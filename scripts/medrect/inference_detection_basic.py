@@ -78,6 +78,22 @@ def parse_output_candidates(*candidates: str) -> Tuple[str, Optional[int]]:
     return "UNKNOWN", None
 
 
+class _SanitizeLogits(LogitsProcessor):
+    """Replace NaN/inf logits with a large negative value before sampling.
+
+    bfloat16 can produce inf/-inf logits for rare token positions; those
+    propagate through softmax into NaN probabilities and crash torch.multinomial.
+    Clamping them to a finite negative value makes them zero-probability tokens
+    without altering anything else.
+    """
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        bad = torch.isnan(scores) | torch.isinf(scores)
+        if bad.any():
+            scores = scores.masked_fill(bad, -1e4)
+        return scores
+
+
 def build_generation_kwargs(tokenizer, *, temperature: float, max_new_tokens: int) -> Dict:
     kwargs = {
         "max_new_tokens": max_new_tokens,
@@ -85,8 +101,12 @@ def build_generation_kwargs(tokenizer, *, temperature: float, max_new_tokens: in
         "pad_token_id": tokenizer.pad_token_id,
     }
     if temperature > 0:
+        # Qwen3 non-thinking recommended params; top_k narrows the distribution
+        # before top_p, which helps numerical stability in bfloat16.
         kwargs["temperature"] = temperature
-        kwargs["top_p"] = 0.95
+        kwargs["top_p"] = 0.8
+        kwargs["top_k"] = 20
+        kwargs["logits_processor"] = LogitsProcessorList([_SanitizeLogits()])
     return kwargs
 
 
