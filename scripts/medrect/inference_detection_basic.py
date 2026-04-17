@@ -79,18 +79,17 @@ def parse_output_candidates(*candidates: str) -> Tuple[str, Optional[int]]:
 
 
 class _SanitizeLogits(LogitsProcessor):
-    """Replace NaN/inf logits with a large negative value before sampling.
+    """Upcast bfloat16 logits to float32 and scrub NaN/inf before sampling.
 
-    bfloat16 can produce inf/-inf logits for rare token positions; those
-    propagate through softmax into NaN probabilities and crash torch.multinomial.
-    Clamping them to a finite negative value makes them zero-probability tokens
-    without altering anything else.
+    The model runs in bfloat16 whose limited exponent range can produce inf/-inf
+    logits for rare token positions.  Temperature scaling then turns inf→nan,
+    which crashes torch.multinomial.  Upcasting to float32 here means every
+    subsequent warper (temperature, top_k, top_p) operates in full precision.
     """
 
     def __call__(self, _input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        bad = torch.isnan(scores) | torch.isinf(scores)
-        if bad.any():
-            scores = scores.masked_fill(bad, -1e4)
+        scores = scores.to(torch.float32)
+        scores = torch.nan_to_num(scores, nan=-1e4, posinf=1e4, neginf=-1e4)
         return scores
 
 
