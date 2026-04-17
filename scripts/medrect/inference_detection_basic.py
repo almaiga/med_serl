@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import torch
 from tqdm import tqdm
+from transformers import LogitsProcessor, LogitsProcessorList
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
