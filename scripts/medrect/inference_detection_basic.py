@@ -87,7 +87,7 @@ class _SanitizeLogits(LogitsProcessor):
     without altering anything else.
     """
 
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+    def __call__(self, _input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
         bad = torch.isnan(scores) | torch.isinf(scores)
         if bad.any():
             scores = scores.masked_fill(bad, -1e4)
