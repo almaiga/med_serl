@@ -52,8 +52,6 @@ from self_play.utils import parse_assessor_answer  # noqa: E402
 DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
 
 MODEL_TYPE_QWEN = "qwen"
-IM_END_TOKEN_ID = 151645
-THINK_END_TOKEN_ID = 151668
 
 
 def load_prompt_config(path: Path = DEFAULT_PROMPT_CONFIG) -> Dict:
@@ -112,7 +110,6 @@ def build_generation_kwargs(
         "do_sample": temperature > 0,
         "repetition_penalty": repetition_penalty,
         "pad_token_id": tokenizer.pad_token_id,
-        "eos_token_id": tokenizer.eos_token_id,
     }
     if temperature > 0:
         kwargs["temperature"] = temperature
@@ -199,131 +196,30 @@ def run_inference(
         ).to(model.device)
 
         prompt_padded_len = inputs.input_ids.shape[1]
-
-        stage1_kwargs = build_generation_kwargs(
+        max_new_tokens = (
+            thinking_budget + answer_max_new_tokens
+            if (is_qwen and use_thinking)
+            else answer_max_new_tokens
+        )
+        gen_kwargs = build_generation_kwargs(
             tokenizer,
-            max_new_tokens=thinking_budget if (is_qwen and use_thinking) else answer_max_new_tokens,
+            max_new_tokens=max_new_tokens,
             temperature=temperature,
             qwen_thinking_mode=is_qwen and use_thinking,
-            repetition_penalty=1.1 if (is_qwen and use_thinking) else 1.05,
+            repetition_penalty=1.05,
         )
         with torch.no_grad():
-            stage1_outputs = model.generate(**inputs, **stage1_kwargs)
-
-        needs_stage2 = [False] * len(prompts)
-        staged_rows = []
-
-        if is_qwen and use_thinking:
-            for i in range(len(prompts)):
-                generated_ids = stage1_outputs[i, prompt_padded_len:].tolist()
-                while generated_ids and generated_ids[-1] == tokenizer.pad_token_id:
-                    generated_ids.pop()
-
-                full_row = stage1_outputs[i:i + 1]
-                if IM_END_TOKEN_ID not in generated_ids:
-                    needs_stage2[i] = True
-                    if THINK_END_TOKEN_ID not in generated_ids:
-                        early_stop_text = (
-                            "\n\nConsidering the limited time by the user, I have to give the "
-                            "solution based on the thinking directly now.\n</think>\n\n"
-                        )
-                        early_stop_ids = tokenizer(
-                            early_stop_text,
-                            return_tensors="pt",
-                            add_special_tokens=False,
-                        ).input_ids.to(model.device)
-                        full_row = torch.cat([full_row, early_stop_ids], dim=-1)
-                staged_rows.append(full_row)
-
-            max_stage2_input = max(row.size(-1) for row in staged_rows)
-            padded_rows = []
-            padded_masks = []
-            for row in staged_rows:
-                pad_len = max_stage2_input - row.size(-1)
-                if pad_len > 0:
-                    pad = torch.full(
-                        (1, pad_len),
-                        tokenizer.pad_token_id,
-                        dtype=row.dtype,
-                        device=row.device,
-                    )
-                    padded_rows.append(torch.cat([pad, row], dim=-1))
-                    padded_masks.append(
-                        torch.cat(
-                            [
-                                torch.zeros(1, pad_len, dtype=torch.long, device=row.device),
-                                torch.ones(1, row.size(-1), dtype=torch.long, device=row.device),
-                            ],
-                            dim=-1,
-                        )
-                    )
-                else:
-                    padded_rows.append(row)
-                    padded_masks.append(torch.ones_like(row, dtype=torch.long))
-
-            stage2_inputs = torch.cat(padded_rows, dim=0)
-            stage2_attention_mask = torch.cat(padded_masks, dim=0)
-            stage2_input_len = stage2_inputs.size(1)
-
-            if any(needs_stage2):
-                stage2_kwargs = build_generation_kwargs(
-                    tokenizer,
-                    max_new_tokens=answer_max_new_tokens,
-                    temperature=temperature,
-                    qwen_thinking_mode=False,
-                    repetition_penalty=1.3,
-                )
-                with torch.no_grad():
-                    stage2_outputs = model.generate(
-                        input_ids=stage2_inputs,
-                        attention_mask=stage2_attention_mask,
-                        **stage2_kwargs,
-                    )
-            else:
-                stage2_outputs = stage2_inputs
-        else:
-            staged_rows = [stage1_outputs[i:i + 1] for i in range(len(prompts))]
-            stage2_outputs = stage1_outputs
-            stage2_input_len = prompt_padded_len
+            outputs = model.generate(**inputs, **gen_kwargs)
 
         for i, item in enumerate(meta):
-            thinking = ""
-            answer_text = ""
-            full_text = ""
+            answer_ids = outputs[i, prompt_padded_len:].tolist()
+            while answer_ids and answer_ids[-1] == tokenizer.pad_token_id:
+                answer_ids.pop()
 
-            if is_qwen and use_thinking:
-                stage1_row = staged_rows[i].squeeze(0)
-                visible_stage1_ids = stage1_row[prompt_padded_len:].tolist()
-                while visible_stage1_ids and visible_stage1_ids[-1] == tokenizer.pad_token_id:
-                    visible_stage1_ids.pop()
-
-                if needs_stage2[i]:
-                    answer_ids = stage2_outputs[i, stage2_input_len:].tolist()
-                    while answer_ids and answer_ids[-1] == tokenizer.pad_token_id:
-                        answer_ids.pop()
-                    combined_ids = visible_stage1_ids + answer_ids
-                else:
-                    combined_ids = visible_stage1_ids
-
-                full_text = tokenizer.decode(combined_ids, skip_special_tokens=False).strip()
-                thinking, answer_text = split_thinking(full_text)
-                if not answer_text:
-                    answer_text = tokenizer.decode(combined_ids, skip_special_tokens=True).strip()
-
-                thinking = re.sub(
-                    r"\n*Considering the limited time by the user.*$",
-                    "",
-                    thinking,
-                    flags=re.DOTALL,
-                ).strip()
-            else:
-                answer_ids = stage2_outputs[i, prompt_padded_len:].tolist()
-                while answer_ids and answer_ids[-1] == tokenizer.pad_token_id:
-                    answer_ids.pop()
-                full_text = tokenizer.decode(answer_ids, skip_special_tokens=False).strip()
-                thinking, answer_text = split_thinking(full_text)
-                if not thinking:
-                    answer_text = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+            full_text = tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+            thinking, answer_text = split_thinking(full_text)
+            if not answer_text:
+                answer_text = full_text
 
             pred_type, pred_sid = parse_output_candidates(answer_text, full_text, thinking)
             if pred_type == "CORRECT":
