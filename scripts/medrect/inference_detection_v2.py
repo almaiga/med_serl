@@ -74,17 +74,6 @@ def split_thinking(content: str) -> Tuple[str, str]:
     if match:
         return match.group(1).strip(), content[match.end():].strip()
     return "", content
-
-
-def apply_qwen_thinking_mode(content: str, *, use_thinking: bool) -> str:
-    """Control Qwen3 thinking mode using prompt content, per official docs."""
-    suffix = "/think" if use_thinking else "/no_think"
-    stripped = content.rstrip()
-    if stripped.endswith("/think") or stripped.endswith("/no_think"):
-        return stripped
-    return f"{stripped}{suffix}"
-
-
 def parse_output_candidates(*candidates: str) -> Tuple[str, Optional[int]]:
     """Parse final output from the most trusted candidate text available."""
     for text in candidates:
@@ -185,13 +174,7 @@ def run_inference(
 
             messages = [
                 {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": apply_qwen_thinking_mode(
-                        user_template.format(sentences=sentences),
-                        use_thinking=use_thinking,
-                    ) if is_qwen else user_template.format(sentences=sentences),
-                },
+                {"role": "user", "content": user_template.format(sentences=sentences)},
             ]
             prompts.append(
                 tokenizer.apply_chat_template(
