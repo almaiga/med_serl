@@ -186,7 +186,13 @@ def run_inference(
             while out_ids and out_ids[-1] == tokenizer.pad_token_id:
                 out_ids.pop()
 
-            full_text = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+            # Keep special tokens so split_thinking can find <think>...</think>.
+            # Strip only the EOS / pad sentinels manually afterwards.
+            full_text = tokenizer.decode(out_ids, skip_special_tokens=False).strip()
+            # Remove padding / EOS artifacts that may appear at the boundaries.
+            for _tok in (tokenizer.eos_token, tokenizer.pad_token):
+                if _tok:
+                    full_text = full_text.replace(_tok, "").strip()
             thinking, answer_text = split_thinking(full_text)
             if not answer_text:
                 answer_text = full_text
