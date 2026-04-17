@@ -24,6 +24,12 @@ Usage:
         --input data/medrect/medrect-en-train.json \\
         --output data_processed/medrect/medrect_sft_train.jsonl
 
+    # Generated assessor chains from local SFT pairs
+    python scripts/medrect/prepare_medrect_sft.py \\
+        --input data_processed/medrect/generated_assessor_all_accepted.jsonl \\
+        --output data_processed/medrect/generated_assessor_all_sft.jsonl \\
+        --language en
+
     # Bilingual (en + ja)
     python scripts/medrect/prepare_medrect_sft.py \\
         --input data/medrect/medrect-en-train.json data/medrect/medrect-ja-train.json \\
@@ -257,6 +263,12 @@ def parse_args() -> argparse.Namespace:
         help=f"Prompt config JSON (default: {DEFAULT_PROMPT_CONFIG})"
     )
     parser.add_argument(
+        "--language",
+        choices=["en", "ja", "unknown"],
+        default=None,
+        help="Override language for all input files instead of inferring from filename"
+    )
+    parser.add_argument(
         "--reasoning-field", type=str, default=None,
         help="Field name in input data that contains reasoning traces (e.g. 'thinking')"
     )
@@ -286,7 +298,7 @@ def main() -> None:
     # Process each input file
     all_records = []
     for input_path in args.input:
-        language = detect_language(input_path)
+        language = args.language or detect_language(input_path)
         print(f"\nLoading: {input_path} (language={language})")
         
         raw_data = load_medrect_json(input_path)

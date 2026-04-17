@@ -5,7 +5,7 @@ set -euo pipefail
 # MedRECT-Style Mixed SFT Launcher
 # =============================================================================
 # Trains Qwen3-4B on the existing MedRECT-style mixed-role corpus:
-#   - recovered assessor SFT (+ UW backfill)
+#   - generated assessor SFT
 #   - injector error DeepSeek chains
 #   - injector benign DeepSeek chains
 #
@@ -38,7 +38,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
 MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-4B}"
-TRAIN_FILES="${TRAIN_FILES:-data_processed/medrect/assessor_sft_recovered_plus_uw.jsonl,data_processed/medrect/injector_error_chains_20260310_135156.jsonl,data_processed/medrect/injector_benign_chains_20260310_135156.jsonl}"
+TRAIN_FILES="${TRAIN_FILES:-data_processed/medrect/generated_assessor_all_sft.jsonl,data_processed/medrect/injector_error_chains_20260310_135156.jsonl,data_processed/medrect/injector_benign_chains_20260310_135156.jsonl}"
 
 OUTPUT_NAME="${OUTPUT_NAME:-qwen3-4b-medrect-mixed-sft}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/local_training/${OUTPUT_NAME}}"

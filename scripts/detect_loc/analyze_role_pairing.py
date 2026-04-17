@@ -39,6 +39,9 @@ def base_sample_id(sample_id: str) -> str:
     for suffix in ("_injector_error", "_injector_benign", "_assessor_error", "_assessor_benign"):
         if sample_id.endswith(suffix):
             return sample_id[: -len(suffix)]
+    m = re.match(r"^(.*)_[01]$", sample_id)
+    if m:
+        return m.group(1)
     return sample_id
 
 
@@ -98,7 +101,10 @@ def load_assessor_rows(path: Path) -> Dict[str, dict]:
     rows = {}
     for row in load_jsonl(path):
         sid = base_sample_id(row.get("sample_id", ""))
-        if sid:
+        if not sid:
+            continue
+        existing = rows.get(sid)
+        if existing is None or (not str(existing.get("label", "")).isdigit() and str(row.get("label", "")).isdigit()):
             rows[sid] = row
     return rows
 
@@ -107,7 +113,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Compare paired assessor/injector training rows.")
     parser.add_argument(
         "--assessor",
-        default="data_processed/medrect/assessor_sft_recovered_plus_uw.jsonl",
+        default="data_processed/medrect/generated_assessor_all_sft.jsonl",
         help="Assessor SFT JSONL",
     )
     parser.add_argument(

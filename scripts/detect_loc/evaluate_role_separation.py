@@ -99,7 +99,11 @@ def differing_sentence_ids(note_a: str, note_b: str) -> list[int]:
 def load_clean_pairs(assessor_path: Path, injector_path: Path) -> list[tuple[str, dict, dict]]:
     assessor = {}
     for row in load_jsonl(assessor_path):
-        assessor[row["sample_id"]] = row
+        sample_id = row.get("sample_id", "")
+        base_id = re.sub(r"_[01]$", "", sample_id)
+        existing = assessor.get(base_id)
+        if existing is None or (not str(existing.get("label", "")).isdigit() and str(row.get("label", "")).isdigit()):
+            assessor[base_id] = row
 
     pairs = []
     for inj_row in load_jsonl(injector_path):
@@ -184,7 +188,7 @@ def short(text: str, limit: int = 180) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Evaluate role separation on paired mixed-role samples.")
     parser.add_argument("--model_path", default="Abdine/qwen3-4b-medrect-mixed")
-    parser.add_argument("--assessor-data", default="data_processed/medrect/assessor_sft_recovered_plus_uw.jsonl")
+    parser.add_argument("--assessor-data", default="data_processed/medrect/generated_assessor_all_sft.jsonl")
     parser.add_argument("--injector-data", default="data_processed/medrect/injector_error_chains_20260310_135156.jsonl")
     parser.add_argument("--n", type=int, default=8, help="Number of clean paired samples to test")
     parser.add_argument("--seed", type=int, default=42)

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate missing MedRECT-style assessor chains for unmatched local SFT pairs.
+Generate MedRECT-style assessor chains for local SFT pairs.
 
 Pipeline:
-1. Select local SFT pairs that were not recovered from medrect-en-train
+1. Select local SFT pairs based on the requested scope
 2. Generate reasoning with DeepSeek
 3. Clean meta-references
 4. Accept or reject based on exact gold answer
@@ -16,11 +16,13 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
 
 from tqdm import tqdm
 
@@ -84,6 +86,46 @@ def load_json(path: Path) -> Any:
         return json.load(handle)
 
 
+def now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def durable_write_jsonl(handle, row: Dict[str, Any]) -> None:
+    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+def durable_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
+def load_existing_sample_ids(*paths: Path) -> set[str]:
+    processed: set[str] = set()
+    for path in paths:
+        if not path.exists() or path.stat().st_size == 0:
+            continue
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("Skipping unreadable JSONL line in %s", path)
+                    continue
+                sample_id = row.get("sample_id")
+                if sample_id:
+                    processed.add(sample_id)
+    return processed
+
+
 def load_pairs(path: Path, selected_ids: set[str], limit: Optional[int]) -> List[PairRecord]:
     records: List[PairRecord] = []
     with open(path, "r", encoding="utf-8") as handle:
@@ -119,7 +161,13 @@ def load_pairs(path: Path, selected_ids: set[str], limit: Optional[int]) -> List
     return records
 
 
-def build_selected_ids(summary_path: Path, scope: str) -> set[str]:
+def build_selected_ids(summary_path: Optional[Path], scope: str) -> set[str]:
+    if scope == "all":
+        return set()
+
+    if summary_path is None:
+        raise ValueError(f"--match-summary is required for scope={scope}")
+
     summary = load_json(summary_path)
     if scope == "uw_only":
         return {
@@ -225,7 +273,11 @@ async def process_task(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate missing MedRECT assessor chains.")
     parser.add_argument("--sft-path", default=str(DEFAULT_SFT_PATH))
-    parser.add_argument("--match-summary", default=str(DEFAULT_MATCH_SUMMARY))
+    parser.add_argument(
+        "--match-summary",
+        default=str(DEFAULT_MATCH_SUMMARY),
+        help="Required for scopes that depend on recovered-match subsets; ignored for --scope all",
+    )
     parser.add_argument(
         "--scope",
         choices=["uw_only", "missing_train", "raw_missing", "all"],
@@ -235,8 +287,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--prompt-config", default=str(DEFAULT_PROMPT_CONFIG))
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--concurrency", type=int, default=20)
+    parser.add_argument("--concurrency", type=int, default=40)
     parser.add_argument("--max-retries", type=int, default=3)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Append to existing accepted/rejected outputs and skip already written sample_ids",
+    )
     return parser.parse_args()
 
 
@@ -246,7 +303,8 @@ async def run() -> None:
     cleaner = ReasoningCleaner(config)
     client = DeepSeekR1Client(max_concurrent=args.concurrency, max_retries=args.max_retries)
 
-    selected_ids = build_selected_ids(Path(args.match_summary), args.scope)
+    match_summary = Path(args.match_summary) if args.match_summary else None
+    selected_ids = build_selected_ids(match_summary, args.scope)
     pairs = load_pairs(Path(args.sft_path), selected_ids, args.limit)
     tasks = [Task(pair=pair, scenario=scenario) for pair in pairs for scenario in ("correct", "incorrect")]
 
@@ -255,44 +313,54 @@ async def run() -> None:
     accepted_path = output_dir / f"generated_assessor_{args.scope}_accepted.jsonl"
     rejected_path = output_dir / f"generated_assessor_{args.scope}_rejected.jsonl"
     summary_path = output_dir / f"generated_assessor_{args.scope}_summary.json"
+    processed_sample_ids = load_existing_sample_ids(accepted_path, rejected_path) if args.resume else set()
+    if processed_sample_ids:
+        logger.info("Resuming from existing outputs: %d sample_ids already written", len(processed_sample_ids))
+        tasks = [task for task in tasks if task.sample_id not in processed_sample_ids]
 
     accepted = 0
     rejected = 0
-    accepted_rows: List[Dict[str, Any]] = []
-    rejected_rows: List[Dict[str, Any]] = []
+    skipped = len(processed_sample_ids)
+    started_at = now_iso()
+
+    def build_summary(status: str) -> Dict[str, Any]:
+        return {
+            "scope": args.scope,
+            "status": status,
+            "started_at": started_at,
+            "updated_at": now_iso(),
+            "pairs_selected": len(pairs),
+            "tasks_total": len(tasks),
+            "completed": skipped + accepted + rejected,
+            "skipped_existing": skipped,
+            "accepted": accepted,
+            "rejected": rejected,
+            "accepted_output": str(accepted_path),
+            "rejected_output": str(rejected_path),
+            "api_stats": client.stats(),
+        }
+
+    durable_write_json(summary_path, build_summary("running"))
 
     async_tasks = [asyncio.create_task(process_task(task, client, cleaner, config)) for task in tasks]
-    with tqdm(total=len(async_tasks), desc=f"Generating {args.scope} assessor", unit="sample") as pbar:
-        for future in asyncio.as_completed(async_tasks):
-            status, row = await future
-            if status == "accepted":
-                accepted += 1
-                accepted_rows.append(row)
-            else:
-                rejected += 1
-                rejected_rows.append(row)
-            pbar.update(1)
-            pbar.set_postfix(accepted=accepted, rejected=rejected)
+    with open(accepted_path, "a" if args.resume else "w", encoding="utf-8") as accepted_handle, open(
+        rejected_path, "a" if args.resume else "w", encoding="utf-8"
+    ) as rejected_handle:
+        with tqdm(total=len(async_tasks), desc=f"Generating {args.scope} assessor", unit="sample") as pbar:
+            for future in asyncio.as_completed(async_tasks):
+                status, row = await future
+                if status == "accepted":
+                    accepted += 1
+                    durable_write_jsonl(accepted_handle, row)
+                else:
+                    rejected += 1
+                    durable_write_jsonl(rejected_handle, row)
+                durable_write_json(summary_path, build_summary("running"))
+                pbar.update(1)
+                pbar.set_postfix(accepted=accepted, rejected=rejected)
 
-    with open(accepted_path, "w", encoding="utf-8") as handle:
-        for row in accepted_rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    with open(rejected_path, "w", encoding="utf-8") as handle:
-        for row in rejected_rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-    summary = {
-        "scope": args.scope,
-        "pairs_selected": len(pairs),
-        "tasks_total": len(tasks),
-        "accepted": accepted,
-        "rejected": rejected,
-        "accepted_output": str(accepted_path),
-        "rejected_output": str(rejected_path),
-        "api_stats": client.stats(),
-    }
-    with open(summary_path, "w", encoding="utf-8") as handle:
-        json.dump(summary, handle, indent=2)
+    summary = build_summary("completed")
+    durable_write_json(summary_path, summary)
     print(json.dumps(summary, indent=2))
 
 

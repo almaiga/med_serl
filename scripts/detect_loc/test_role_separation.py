@@ -78,7 +78,11 @@ def differing_sentence_ids(note_a: str, note_b: str) -> list[int]:
 def load_pair(assessor_path: Path, injector_path: Path, base_id: Optional[str]):
     assessor = {}
     for row in load_jsonl(assessor_path):
-        assessor[row["sample_id"]] = row
+        sample_id = row.get("sample_id", "")
+        normalized_id = re.sub(r"_[01]$", "", sample_id)
+        existing = assessor.get(normalized_id)
+        if existing is None or (not str(existing.get("label", "")).isdigit() and str(row.get("label", "")).isdigit()):
+            assessor[normalized_id] = row
 
     if base_id:
         inj_key = f"{base_id}_injector_error"
@@ -169,7 +173,7 @@ def print_block(title: str, text: str):
 def main():
     parser = argparse.ArgumentParser(description="Test role separation on one paired SFT sample.")
     parser.add_argument("--model_path", default="Abdine/qwen3-4b-medrect-mixed")
-    parser.add_argument("--assessor-data", default="data_processed/medrect/assessor_sft_recovered_plus_uw.jsonl")
+    parser.add_argument("--assessor-data", default="data_processed/medrect/generated_assessor_all_sft.jsonl")
     parser.add_argument("--injector-data", default="data_processed/medrect/injector_error_chains_20260310_135156.jsonl")
     parser.add_argument("--base-id", default=None, help="Base sample id like ms-train-1349")
     parser.add_argument("--temperature", type=float, default=0.0)
