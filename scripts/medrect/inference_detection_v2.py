@@ -76,6 +76,15 @@ def split_thinking(content: str) -> Tuple[str, str]:
     return "", content
 
 
+def apply_qwen_thinking_mode(content: str, *, use_thinking: bool) -> str:
+    """Control Qwen3 thinking mode using prompt content, per official docs."""
+    suffix = "/think" if use_thinking else "/no_think"
+    stripped = content.rstrip()
+    if stripped.endswith("/think") or stripped.endswith("/no_think"):
+        return stripped
+    return f"{stripped}{suffix}"
+
+
 def parse_output_candidates(*candidates: str) -> Tuple[str, Optional[int]]:
     """Parse final output from the most trusted candidate text available."""
     for text in candidates:
@@ -102,7 +111,6 @@ def build_generation_kwargs(
     *,
     max_new_tokens: int,
     temperature: float,
-    qwen_thinking_mode: bool,
     repetition_penalty: float,
 ) -> Dict:
     kwargs = {
@@ -114,9 +122,6 @@ def build_generation_kwargs(
     if temperature > 0:
         kwargs["temperature"] = temperature
         kwargs["top_p"] = 0.95
-        if qwen_thinking_mode:
-            kwargs["top_k"] = 20
-            kwargs["min_p"] = 0.05
     return kwargs
 
 
@@ -180,12 +185,21 @@ def run_inference(
 
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_template.format(sentences=sentences)},
+                {
+                    "role": "user",
+                    "content": apply_qwen_thinking_mode(
+                        user_template.format(sentences=sentences),
+                        use_thinking=use_thinking,
+                    ) if is_qwen else user_template.format(sentences=sentences),
+                },
             ]
-            prompt_kwargs = {"tokenize": False, "add_generation_prompt": True}
-            if is_qwen:
-                prompt_kwargs["enable_thinking"] = bool(use_thinking)
-            prompts.append(tokenizer.apply_chat_template(messages, **prompt_kwargs))
+            prompts.append(
+                tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            )
 
         inputs = tokenizer(
             prompts,
@@ -205,7 +219,6 @@ def run_inference(
             tokenizer,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
-            qwen_thinking_mode=is_qwen and use_thinking,
             repetition_penalty=1.05,
         )
         with torch.no_grad():
