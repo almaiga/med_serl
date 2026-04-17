@@ -145,13 +145,24 @@ def run_inference(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_template.format(sentences=sentences)},
             ]
-            prompts.append(
-                tokenizer.apply_chat_template(
+            # enable_thinking=False: Qwen3 defaults to thinking mode which
+            # requires sampling (temperature > 0).  This script uses greedy
+            # decoding, so we explicitly disable thinking to get plain output.
+            # Older tokenizers that don't support the kwarg fall back silently.
+            try:
+                prompt_text = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                prompt_text = tokenizer.apply_chat_template(
                     messages,
                     tokenize=False,
                     add_generation_prompt=True,
                 )
-            )
+            prompts.append(prompt_text)
 
         inputs = tokenizer(
             prompts,
