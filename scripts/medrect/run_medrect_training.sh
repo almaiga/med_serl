@@ -20,6 +20,10 @@ set -euo pipefail
 #   LORA_ALPHA    — LoRA alpha (default: 128)
 #   LR            — learning rate (default: 1e-4)
 #   EPOCHS        — training epochs (default: 3)
+#   MERGE_FULL_MODEL — set to 1 to merge adapter into full model after training
+#   UPLOAD_TO_HF    — set to 1 to upload adapter or merged model to Hugging Face
+#   UPLOAD_ARTIFACT — adapter | merged
+#   HF_REPO_ID      — Hugging Face repo id (required when UPLOAD_TO_HF=1)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,6 +45,12 @@ EPOCHS="${EPOCHS:-3}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 GRAD_ACCUM="${GRAD_ACCUM:-16}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-}"
+MERGED_OUTPUT_DIR="${MERGED_OUTPUT_DIR:-${OUTPUT_DIR}-merged}"
+MERGE_FULL_MODEL="${MERGE_FULL_MODEL:-0}"
+UPLOAD_TO_HF="${UPLOAD_TO_HF:-0}"
+UPLOAD_ARTIFACT="${UPLOAD_ARTIFACT:-adapter}"
+HF_REPO_ID="${HF_REPO_ID:-}"
+HF_TOKEN="${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MODEL_SHORT=$(basename "${MODEL_PATH}")
@@ -123,6 +133,9 @@ echo "  Processes: ${NPROC_PER_NODE:-auto}"
 echo "  Target modules: ${LORA_TARGET}"
 echo "  Wandb: ${USE_WANDB}"
 echo "  Skip prep: ${SKIP_PREP}"
+echo "  Merge after train: ${MERGE_FULL_MODEL}"
+echo "  Upload to HF: ${UPLOAD_TO_HF}"
+echo "  Upload artifact: ${UPLOAD_ARTIFACT}"
 echo "============================================================"
 
 if command -v nvidia-smi &> /dev/null; then
@@ -205,12 +218,67 @@ run_pipeline() {
         --bf16 \
         --debug-samples 2 \
         ${WANDB_FLAG}
+
+    if [[ "${MERGE_FULL_MODEL}" == "1" ]]; then
+        echo ""
+        echo "Merging adapter into full model..."
+        python3 scripts/medrect/merge_medrect_lora.py \
+            --adapter-dir "${OUTPUT_DIR}" \
+            --output-dir "${MERGED_OUTPUT_DIR}" \
+            --base-model "${MODEL_PATH}"
+    fi
+
+    if [[ "${UPLOAD_TO_HF}" == "1" ]]; then
+        if [[ -z "${HF_REPO_ID}" ]]; then
+            echo "ERROR: HF_REPO_ID must be set when UPLOAD_TO_HF=1"
+            exit 1
+        fi
+
+        if [[ "${UPLOAD_ARTIFACT}" == "merged" ]]; then
+            UPLOAD_DIR="${MERGED_OUTPUT_DIR}"
+        else
+            UPLOAD_DIR="${OUTPUT_DIR}"
+        fi
+
+        if [[ ! -d "${UPLOAD_DIR}" ]]; then
+            echo "ERROR: upload directory not found: ${UPLOAD_DIR}"
+            exit 1
+        fi
+
+        echo ""
+        echo "Uploading ${UPLOAD_DIR} -> ${HF_REPO_ID}"
+        python3 - "${HF_REPO_ID}" "${UPLOAD_DIR}" <<'PY'
+import os
+import sys
+
+from huggingface_hub import HfApi, create_repo
+
+repo_id = sys.argv[1]
+folder_path = sys.argv[2]
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+
+create_repo(repo_id=repo_id, repo_type="model", exist_ok=True, token=token)
+api = HfApi(token=token)
+api.upload_folder(
+    repo_id=repo_id,
+    repo_type="model",
+    folder_path=folder_path,
+)
+print(f"Uploaded {folder_path} to {repo_id}")
+PY
+    fi
     
     echo ""
     echo "=================================================="
     echo "Training Complete! $(date)"
     echo "=================================================="
     echo "Adapter saved: ${OUTPUT_DIR}"
+    if [[ "${MERGE_FULL_MODEL}" == "1" ]]; then
+        echo "Merged model: ${MERGED_OUTPUT_DIR}"
+    fi
+    if [[ "${UPLOAD_TO_HF}" == "1" ]]; then
+        echo "HF repo: ${HF_REPO_ID}"
+    fi
     echo ""
     echo "Next steps:"
     echo "  1. Test: python -c \"from peft import AutoPeftModelForCausalLM; m = AutoPeftModelForCausalLM.from_pretrained('${OUTPUT_DIR}')\""
@@ -266,8 +334,14 @@ export BATCH_SIZE="${BATCH_SIZE}"
 export GRAD_ACCUM="${GRAD_ACCUM}"
 export NPROC_PER_NODE="${NPROC_PER_NODE}"
 export OUTPUT_DIR="${OUTPUT_DIR}"
+export MERGED_OUTPUT_DIR="${MERGED_OUTPUT_DIR}"
 export SKIP_PREP="${SKIP_PREP}"
 export USE_WANDB="${USE_WANDB}"
+export MERGE_FULL_MODEL="${MERGE_FULL_MODEL}"
+export UPLOAD_TO_HF="${UPLOAD_TO_HF}"
+export UPLOAD_ARTIFACT="${UPLOAD_ARTIFACT}"
+export HF_REPO_ID="${HF_REPO_ID}"
+export HF_TOKEN="${HF_TOKEN}"
 export PROJECT_ROOT="${PROJECT_ROOT}"
 
 $(declare -f run_pipeline)

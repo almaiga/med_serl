@@ -4,13 +4,13 @@ set -euo pipefail
 # =============================================================================
 # MedRECT-Style Mixed SFT Launcher
 # =============================================================================
-# Trains Qwen3-4B on the existing MedRECT-style mixed-role corpus:
+# Trains Qwen3-8B on the existing MedRECT-style mixed-role corpus:
 #   - generated assessor SFT
 #   - injector error DeepSeek chains
 #   - injector benign DeepSeek chains
 #
 # Defaults:
-#   - LoRA fine-tuning on Qwen/Qwen3-4B
+#   - LoRA fine-tuning on Qwen/Qwen3-8B
 #   - saves adapter locally
 #   - can optionally merge to a full model directory
 #   - can optionally upload adapter or merged model to Hugging Face
@@ -37,10 +37,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-4B}"
+MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-8B}"
 TRAIN_FILES="${TRAIN_FILES:-data_processed/medrect/generated_assessor_all_sft.jsonl,data_processed/medrect/injector_error_chains_20260310_135156.jsonl,data_processed/medrect/injector_benign_chains_20260310_135156.jsonl}"
 
-OUTPUT_NAME="${OUTPUT_NAME:-qwen3-4b-medrect-mixed-sft}"
+OUTPUT_NAME="${OUTPUT_NAME:-qwen3-8b-medrect-mixed-sft}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/local_training/${OUTPUT_NAME}}"
 MERGED_OUTPUT_DIR="${MERGED_OUTPUT_DIR:-outputs/local_training/${OUTPUT_NAME}-merged}"
 
@@ -50,7 +50,7 @@ EVAL_SPLIT="${EVAL_SPLIT:-0.05}"
 LEARNING_RATE="${LEARNING_RATE:-1e-4}"
 NUM_EPOCHS="${NUM_EPOCHS:-}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
-GRAD_ACCUM="${GRAD_ACCUM:-8}"
+GRAD_ACCUM="${GRAD_ACCUM:-16}"
 MAX_SEQ_LENGTH="${MAX_SEQ_LENGTH:-4096}"
 LORA_R="${LORA_R:-64}"
 LORA_ALPHA="${LORA_ALPHA:-128}"
@@ -58,7 +58,7 @@ LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
 LORA_TARGET_MODULES="${LORA_TARGET_MODULES:-all-linear}"
 NO_EARLY_STOPPING="${NO_EARLY_STOPPING:-0}"
 WANDB="${WANDB:-0}"
-WANDB_PROJECT="${WANDB_PROJECT:-medrect-sft}"
+WANDB_PROJECT="${WANDB_PROJECT:-medrect-mixed-sft}"
 DEBUG_SAMPLES="${DEBUG_SAMPLES:-2}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-}"
 
