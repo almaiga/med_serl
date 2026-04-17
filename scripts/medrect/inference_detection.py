@@ -47,16 +47,6 @@ DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "detection_locali
 
 # ── Constants ────────────────────────────────────────────────────────────────
 MODEL_TYPE_QWEN = "qwen"
-IM_START_TOKEN = "<|im_start|>"
-IM_END_TOKEN = "₃"
-THINK_TOKEN = "<|think|>"
-THINK_END_TOKEN = "<|end_think|>"
-
-# Qwen3 special token IDs
-IM_START_TOKEN_ID = 151644
-IM_END_TOKEN_ID = 151645
-THINK_TOKEN_ID = 151646
-THINK_END_TOKEN_ID = 151668
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +115,25 @@ def parse_output_candidates(*candidates: str) -> Tuple[str, Optional[int]]:
                 return "CORRECT", None
 
     return "UNKNOWN", None
+
+
+def build_generation_kwargs(
+    tokenizer,
+    *,
+    max_new_tokens: int,
+    temperature: float,
+    repetition_penalty: float,
+) -> Dict:
+    kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": temperature > 0,
+        "repetition_penalty": repetition_penalty,
+        "pad_token_id": tokenizer.pad_token_id,
+    }
+    if temperature > 0:
+        kwargs["temperature"] = temperature
+        kwargs["top_p"] = 0.95
+    return kwargs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,136 +205,26 @@ def run_inference(
         inputs = tokenizer(
             prompts, return_tensors="pt", padding=True, truncation=True, max_length=2048
         ).to(model.device)
-        input_lens = inputs.attention_mask.sum(dim=1).tolist()
-
-        gen_kwargs = dict(
+        gen_kwargs = build_generation_kwargs(
+            tokenizer,
             max_new_tokens=thinking_budget if (is_qwen and use_thinking) else max_new_tokens,
-            temperature=temperature if temperature > 0 else None,
-            do_sample=temperature > 0,
-            top_p=0.95 if temperature > 0 else None,
-            top_k=20 if (is_qwen and use_thinking) else None,
-            min_p=0.05 if (is_qwen and use_thinking) else None,
-            repetition_penalty=1.1 if (is_qwen and use_thinking) else 1.05,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+            temperature=temperature,
+            repetition_penalty=1.05,
         )
         with torch.no_grad():
             outputs = model.generate(**inputs, **gen_kwargs)
 
-        # Save original padded input length for position-based slicing
         orig_padded_len = inputs.input_ids.shape[1]
 
-        # ── Two-stage generation for Qwen thinking mode ──────────────────────
-        needs_stage2 = [False] * len(prompts)
-        stage2_input_len = 0
-        input_ids2 = None
-        batch_final = []
-        if is_qwen and use_thinking:
-            for i in range(len(prompts)):
-                # NOTE: can't use  != pad_token_id filtering here because
-                # pad_token_id == IM_END_TOKEN_ID == 151645, and the prompt
-                # contains  consolidated tokens.  Use position-based slicing.
-                out_ids = outputs[i, orig_padded_len:].tolist()
-                # Right-strip pad/eos tokens
-                while out_ids and out_ids[-1] == tokenizer.pad_token_id:
-                    out_ids.pop()
-
-                if IM_END_TOKEN_ID not in out_ids:
-                    needs_stage2[i] = True
-                    if THINK_END_TOKEN_ID not in out_ids:
-                        early_stop = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
-                        early_ids = tokenizer(early_stop, return_tensors="pt", add_special_tokens=False).input_ids.to(model.device)
-                        new_input = torch.cat([outputs[i:i+1], early_ids], dim=-1)
-                    else:
-                        new_input = outputs[i:i+1]
-                    batch_final.append(new_input)
-                else:
-                    batch_final.append(outputs[i:i+1])
-
-            # Pad and run second-stage generation
-            max_len = max(x.size(-1) for x in batch_final)
-            padded, masks = [], []
-            for x in batch_final:
-                pad_len = max_len - x.size(-1)
-                if pad_len > 0:
-                    pad = torch.full((1, pad_len), tokenizer.pad_token_id, dtype=x.dtype, device=x.device)
-                    padded.append(torch.cat([pad, x], dim=-1))
-                    masks.append(torch.cat([torch.zeros(1, pad_len, dtype=torch.long, device=x.device),
-                                            torch.ones(1, x.size(-1), dtype=torch.long, device=x.device)], dim=-1))
-                else:
-                    padded.append(x)
-                    masks.append(torch.ones_like(x, dtype=torch.long))
-
-            input_ids2 = torch.cat(padded, dim=0)
-            attn_mask2 = torch.cat(masks, dim=0)
-            stage2_input_len = input_ids2.size(1)
-            # Answer stage: only run if at least one sample needs it
-            if any(needs_stage2):
-                with torch.no_grad():
-                    outputs = model.generate(
-                        input_ids=input_ids2,
-                        attention_mask=attn_mask2,
-                        max_new_tokens=16,
-                        temperature=temperature if temperature > 0 else None,
-                        do_sample=temperature > 0,
-                        top_p=0.95 if temperature > 0 else None,
-                        top_k=20 if temperature > 0 else None,
-                        min_p=0.05 if temperature > 0 else None,
-                        repetition_penalty=1.3,
-                        pad_token_id=tokenizer.pad_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                    )
-            else:
-                # All samples completed in stage 1 — reuse batch_final as outputs
-                outputs = input_ids2
-
         for i, m in enumerate(meta):
-            thinking = ""
-            content = ""
-            full_text = ""
+            out_ids = outputs[i, orig_padded_len:].tolist()
+            while out_ids and out_ids[-1] == tokenizer.pad_token_id:
+                out_ids.pop()
 
-            if is_qwen and use_thinking and batch_final:
-                # Decode the complete generated text first, then split on the
-                # textual think tags. This is more robust than relying on a
-                # single token ID boundary, especially for fine-tuned models.
-                bf = batch_final[i].squeeze(0)
-                thinking_all = bf[orig_padded_len:].tolist()
-                while thinking_all and thinking_all[-1] == tokenizer.pad_token_id:
-                    thinking_all.pop()
-
-                if needs_stage2[i]:
-                    answer_ids = outputs[i, stage2_input_len:].tolist()
-                    while answer_ids and answer_ids[-1] == tokenizer.pad_token_id:
-                        answer_ids.pop()
-                    combined_ids = thinking_all + answer_ids
-                else:
-                    combined_ids = thinking_all
-
-                full_text = tokenizer.decode(combined_ids, skip_special_tokens=False).strip()
-                thinking, content = split_thinking(full_text)
-
-                if not content:
-                    visible_text = tokenizer.decode(combined_ids, skip_special_tokens=True).strip()
-                    # If the textual split failed, keep the visible text as the
-                    # parse candidate instead of dropping the answer entirely.
-                    content = visible_text
-
-                # Clean up injected early-stop message from thinking
-                thinking = re.sub(
-                    r'\n*Considering the limited time by the user.*$', '',
-                    thinking, flags=re.DOTALL
-                ).strip()
-
-            else:
-                # Non-Qwen or no-thinking: single-stage generation
-                out_ids = outputs[i, orig_padded_len:].tolist()
-                while out_ids and out_ids[-1] == tokenizer.pad_token_id:
-                    out_ids.pop()
-                raw = tokenizer.decode(out_ids, skip_special_tokens=False).strip()
-                full_text = raw
-                thinking, content = split_thinking(raw)
-                if not thinking:
-                    content = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+            full_text = tokenizer.decode(out_ids, skip_special_tokens=True).strip()
+            thinking, content = split_thinking(full_text)
+            if not content:
+                content = full_text
 
             pred_type, pred_sid = parse_output_candidates(content, full_text, thinking)
             pred_label = "CORRECT" if pred_type == "CORRECT" else (str(pred_sid) if pred_sid is not None else "UNKNOWN")
