@@ -163,19 +163,19 @@ def compute_score(
     
     # Component 1: Detection accuracy (most important)
     if pred_has_error == gt_has_error:
-        reward += 0.4  # Correct detection
+        reward += 0.6  # Symmetric correct detection reward
     else:
-        # Wrong detection is heavily penalized
+        # Wrong detection is symmetrically penalized
         if gt_has_error and not pred_has_error:
-            # False negative - missed an error (dangerous in medical context)
+            # False negative - missed an error
             return -0.7
         else:
             # False positive - hallucinated an error
-            return -0.5
+            return -0.7
     
     # If correctly identified no error, we're done
     if not gt_has_error and not pred_has_error:
-        return 0.6  # Good job identifying correct note
+        return reward  # Exits with the full 0.6 TN reward
     
     # Component 2: Error localization
     if gt_error_sentence and pred_error_sentence:
