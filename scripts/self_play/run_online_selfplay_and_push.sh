@@ -44,6 +44,8 @@ TRAINING_SCRIPT="${TRAINING_SCRIPT:-${SCRIPT_DIR}/run_online_selfplay_training.s
 PUSH_SCRIPT="${PUSH_SCRIPT:-${SCRIPT_DIR}/push_selfplay_actor_to_hf.sh}"
 UPLOAD_FINAL_TO_HF="${UPLOAD_FINAL_TO_HF:-1}"
 LATEST_ACTOR_PATH_FILE="${LATEST_ACTOR_PATH_FILE:-${PROJECT_ROOT}/${OUTPUT_ROOT}/latest_actor_path.txt}"
+ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ:-34}"
+KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
 
 echo "=================================================="
 echo "MedSeRL Online Self-Play + HF Upload"
@@ -54,6 +56,8 @@ echo "Training script   : ${TRAINING_SCRIPT}"
 echo "Push script       : ${PUSH_SCRIPT}"
 echo "Upload final to HF: ${UPLOAD_FINAL_TO_HF}"
 echo "Latest actor file : ${LATEST_ACTOR_PATH_FILE}"
+echo "Round save freq   : ${ROUND_SAVE_FREQ}"
+echo "Keep latest ckpt  : ${KEEP_ONLY_LATEST_CHECKPOINT}"
 echo "HF repo id        : ${HF_REPO_ID:-<unset>}"
 echo "=================================================="
 
@@ -68,7 +72,10 @@ if [ "${UPLOAD_FINAL_TO_HF}" = "1" ]; then
     fi
 fi
 
-AUTO_SCREEN=0 bash "${TRAINING_SCRIPT}" "$@"
+AUTO_SCREEN=0 \
+ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ}" \
+KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT}" \
+bash "${TRAINING_SCRIPT}" "$@"
 
 if [ "${UPLOAD_FINAL_TO_HF}" != "1" ]; then
     echo "UPLOAD_FINAL_TO_HF=0 — skipping Hugging Face upload."
@@ -97,4 +104,3 @@ echo "=================================================="
 ACTOR_DIR="${ACTOR_DIR}" \
 LATEST_ACTOR_PATH_FILE="${LATEST_ACTOR_PATH_FILE}" \
 bash "${PUSH_SCRIPT}"
-
