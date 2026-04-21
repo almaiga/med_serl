@@ -46,6 +46,6 @@
   "sampling_params": {
     "temperature": 0.1,
     "top_p": 0.95,
-    "max_tokens": 256
+    "max_tokens": 384
   }
 }

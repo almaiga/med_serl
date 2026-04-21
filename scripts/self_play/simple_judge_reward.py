@@ -215,6 +215,9 @@ async def _judge_with_llm(
             "judge_score": 0.0,
             "reason": "missing_input",
             "judge_output": "",
+            "original_sentence": original_sentence,
+            "modified_sentence": modified_sentence,
+            "changed_sid": changed_sid,
         }
 
     user_prompt = prompt_cfg["user_template"].format(
@@ -268,6 +271,9 @@ async def _judge_with_llm(
             "judge_score": 0.0,
             "reason": "no_judge_url",
             "judge_output": "",
+            "original_sentence": original_sentence,
+            "modified_sentence": modified_sentence,
+            "changed_sid": changed_sid,
         }
 
     try:
@@ -280,6 +286,9 @@ async def _judge_with_llm(
             "judge_score": 0.0,
             "reason": f"request_failed:{exc}",
             "judge_output": "",
+            "original_sentence": original_sentence,
+            "modified_sentence": modified_sentence,
+            "changed_sid": changed_sid,
         }
     except Exception as exc:  # pragma: no cover - safety net
         logger.warning("Simple judge unexpected failure: %s", exc)
@@ -289,6 +298,9 @@ async def _judge_with_llm(
             "judge_score": 0.0,
             "reason": f"unexpected_error:{exc}",
             "judge_output": "",
+            "original_sentence": original_sentence,
+            "modified_sentence": modified_sentence,
+            "changed_sid": changed_sid,
         }
 
     try:
@@ -300,6 +312,9 @@ async def _judge_with_llm(
             "judge_score": 0.0,
             "reason": "bad_response_shape",
             "judge_output": "",
+            "original_sentence": original_sentence,
+            "modified_sentence": modified_sentence,
+            "changed_sid": changed_sid,
         }
 
     _, stripped = strip_thinking(content)
@@ -311,6 +326,9 @@ async def _judge_with_llm(
             "judge_score": 0.0,
             "reason": "no_json_verdict",
             "judge_output": content[:2000],
+            "original_sentence": original_sentence,
+            "modified_sentence": modified_sentence,
+            "changed_sid": changed_sid,
         }
 
     label = str(verdict.get("verdict", "ABSTAIN")).upper()
