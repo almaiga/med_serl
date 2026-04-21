@@ -41,11 +41,15 @@ fi
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/self_play_online_vllm}"
 TRAINING_SCRIPT="${TRAINING_SCRIPT:-${SCRIPT_DIR}/run_online_selfplay_training.sh}"
-PUSH_SCRIPT="${PUSH_SCRIPT:-${SCRIPT_DIR}/push_selfplay_actor_to_hf.sh}"
+AUTORESTART_SCRIPT="${AUTORESTART_SCRIPT:-${SCRIPT_DIR}/run_online_selfplay_autorestart.sh}"
 UPLOAD_FINAL_TO_HF="${UPLOAD_FINAL_TO_HF:-1}"
 LATEST_ACTOR_PATH_FILE="${LATEST_ACTOR_PATH_FILE:-${PROJECT_ROOT}/${OUTPUT_ROOT}/latest_actor_path.txt}"
 ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ:-34}"
 KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
+RESTART_AFTER_CHECKPOINT="${RESTART_AFTER_CHECKPOINT:-1}"
+CHECKPOINT_RESTART_GRACE_SEC="${CHECKPOINT_RESTART_GRACE_SEC:-20}"
+RESTART_ON_FAILURE="${RESTART_ON_FAILURE:-1}"
+MAX_AUTORESTARTS="${MAX_AUTORESTARTS:-100}"
 
 echo "=================================================="
 echo "MedSeRL Online Self-Play + HF Upload"
@@ -53,11 +57,15 @@ echo "=================================================="
 echo "Project root      : ${PROJECT_ROOT}"
 echo "Output root       : ${OUTPUT_ROOT}"
 echo "Training script   : ${TRAINING_SCRIPT}"
-echo "Push script       : ${PUSH_SCRIPT}"
+echo "Autorestart script: ${AUTORESTART_SCRIPT}"
 echo "Upload final to HF: ${UPLOAD_FINAL_TO_HF}"
 echo "Latest actor file : ${LATEST_ACTOR_PATH_FILE}"
 echo "Round save freq   : ${ROUND_SAVE_FREQ}"
 echo "Keep latest ckpt  : ${KEEP_ONLY_LATEST_CHECKPOINT}"
+echo "Restart on ckpt   : ${RESTART_AFTER_CHECKPOINT}"
+echo "Restart grace sec : ${CHECKPOINT_RESTART_GRACE_SEC}"
+echo "Restart on failure: ${RESTART_ON_FAILURE}"
+echo "Max autorestarts  : ${MAX_AUTORESTARTS}"
 echo "HF repo id        : ${HF_REPO_ID:-<unset>}"
 echo "=================================================="
 
@@ -73,34 +81,13 @@ if [ "${UPLOAD_FINAL_TO_HF}" = "1" ]; then
 fi
 
 AUTO_SCREEN=0 \
+RUNNER_SCRIPT="${TRAINING_SCRIPT}" \
+OUTPUT_ROOT="${OUTPUT_ROOT}" \
 ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ}" \
 KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT}" \
-bash "${TRAINING_SCRIPT}" "$@"
-
-if [ "${UPLOAD_FINAL_TO_HF}" != "1" ]; then
-    echo "UPLOAD_FINAL_TO_HF=0 — skipping Hugging Face upload."
-    exit 0
-fi
-
-if [ ! -f "${LATEST_ACTOR_PATH_FILE}" ]; then
-    echo "ERROR: latest actor path file not found: ${LATEST_ACTOR_PATH_FILE}"
-    exit 1
-fi
-
-ACTOR_DIR="$(cat "${LATEST_ACTOR_PATH_FILE}")"
-if [ -z "${ACTOR_DIR}" ]; then
-    echo "ERROR: latest actor path file is empty: ${LATEST_ACTOR_PATH_FILE}"
-    exit 1
-fi
-
-echo ""
-echo "=================================================="
-echo "Uploading final actor to Hugging Face"
-echo "=================================================="
-echo "Actor dir: ${ACTOR_DIR}"
-echo "Repo id  : ${HF_REPO_ID}"
-echo "=================================================="
-
-ACTOR_DIR="${ACTOR_DIR}" \
-LATEST_ACTOR_PATH_FILE="${LATEST_ACTOR_PATH_FILE}" \
-bash "${PUSH_SCRIPT}"
+RESTART_AFTER_CHECKPOINT="${RESTART_AFTER_CHECKPOINT}" \
+CHECKPOINT_RESTART_GRACE_SEC="${CHECKPOINT_RESTART_GRACE_SEC}" \
+RESTART_ON_FAILURE="${RESTART_ON_FAILURE}" \
+MAX_AUTORESTARTS="${MAX_AUTORESTARTS}" \
+UPLOAD_FINAL_TO_HF="${UPLOAD_FINAL_TO_HF}" \
+bash "${AUTORESTART_SCRIPT}" "$@"
