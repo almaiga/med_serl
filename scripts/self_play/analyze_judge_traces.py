@@ -53,6 +53,7 @@ def main() -> int:
 
     verdicts = Counter()
     mode_verdicts = defaultdict(Counter)
+    reasons = Counter()
     raw_mismatches = 0
     weighted_positive = 0
     weighted_negative = 0
@@ -64,8 +65,10 @@ def main() -> int:
     for rec in records:
         verdict = str(rec.get("judge_verdict", "UNKNOWN"))
         mode = str(rec.get("mode", "unknown"))
+        reason = str(rec.get("judge_reason", ""))
         verdicts[verdict] += 1
         mode_verdicts[mode][verdict] += 1
+        reasons[reason] += 1
 
         if rec.get("ground_truth_raw") != rec.get("ground_truth_resolved"):
             raw_mismatches += 1
@@ -106,6 +109,27 @@ def main() -> int:
             for verdict, count in counts.most_common()
         )
         print(f"  {mode:16s} {mode_total:5d}  {summary}")
+
+    print()
+    print("Top judge reasons:")
+    for reason, count in reasons.most_common(10):
+        label = reason if reason else "<empty>"
+        print(f"  {label[:100]:100s} {count:5d}  {_fmt_pct(count, total)}")
+
+    print()
+    print("Sample ABSTAIN cases:")
+    shown = 0
+    for rec in records:
+        if rec.get("judge_verdict") != "ABSTAIN":
+            continue
+        print(f"  note_id={rec.get('note_id','')}")
+        print(f"    mode={rec.get('mode','')} gt={rec.get('ground_truth_resolved','')}")
+        print(f"    reason={rec.get('judge_reason','')}")
+        output = str(rec.get("judge_output", "")).replace("\n", " ")
+        print(f"    output={output[:180]}")
+        shown += 1
+        if shown >= 5:
+            break
 
     return 0
 
