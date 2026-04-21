@@ -21,6 +21,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Dict, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -28,6 +29,7 @@ from urllib.request import Request, urlopen
 from scripts.self_play.reward_function import (
     compute_score as rule_compute_score,
     interaction_reward_passthrough,
+    _resolve_assessor_ground_truth,
 )
 from scripts.self_play.utils import number_sentences
 
@@ -41,6 +43,7 @@ JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
 JUDGE_WEIGHT = float(os.getenv("SIMPLE_JUDGE_WEIGHT", "0.3"))
 JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "20"))
 JUDGE_DISABLED = os.getenv("DISABLE_SIMPLE_JUDGE", "0") == "1"
+_JUDGE_TRACE_FILE: Optional[Path] = None
 
 
 def _load_prompt_config() -> dict:
@@ -111,6 +114,34 @@ def _resolve_assessor_output(solution_str: str, extra_info: dict) -> str:
     return solution_str or ""
 
 
+def _resolve_ground_truth_for_judge(ground_truth: Any, extra_info: dict) -> tuple[str, str]:
+    raw = str(ground_truth) if ground_truth else ""
+    if _is_assessor_evaluation(extra_info):
+        return raw, _resolve_assessor_ground_truth(raw, extra_info)
+    return raw, raw
+
+
+def _judge_trace_file() -> Path:
+    global _JUDGE_TRACE_FILE
+    if _JUDGE_TRACE_FILE is not None:
+        return _JUDGE_TRACE_FILE
+
+    log_dir = Path(os.environ.get("MEDSERL_GAME_LOG", "")).parent if os.environ.get("MEDSERL_GAME_LOG") else (
+        Path(__file__).resolve().parent.parent.parent / "results" / "self_play" / "interactions"
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+    _JUDGE_TRACE_FILE = log_dir / f"judge_interactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    return _JUDGE_TRACE_FILE
+
+
+def _append_judge_trace(entry: dict) -> None:
+    try:
+        with open(_judge_trace_file(), "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as exc:  # pragma: no cover - logging must never break rewarding
+        logger.warning("Failed to write judge trace: %s", exc)
+
+
 def _base_score(data_source, solution_str, ground_truth, extra_info: dict) -> float:
     if _has_interaction_result(extra_info):
         return interaction_reward_passthrough(
@@ -152,13 +183,19 @@ async def _judge_with_llm(
     ground_truth: str,
     extra_info: dict,
     reward_router_address: Optional[str] = None,
-) -> float:
+) -> dict:
     prompt_cfg = _load_prompt_config()
     numbered_note = _resolve_numbered_note(extra_info)
     assessor_output = _resolve_assessor_output(solution_str, extra_info)
 
     if not numbered_note or not assessor_output or not ground_truth:
-        return 0.0
+        return {
+            "signed_score": 0.0,
+            "verdict": "ABSTAIN",
+            "judge_score": 0.0,
+            "reason": "missing_input",
+            "judge_output": "",
+        }
 
     user_prompt = prompt_cfg["user_template"].format(
         mode=extra_info.get("mode", "unknown"),
@@ -179,25 +216,55 @@ async def _judge_with_llm(
         target_url = JUDGE_URL
         payload.setdefault("model", JUDGE_MODEL)
     else:
-        return 0.0
+        return {
+            "signed_score": 0.0,
+            "verdict": "ABSTAIN",
+            "judge_score": 0.0,
+            "reason": "no_judge_url",
+            "judge_output": "",
+        }
 
     try:
         result = await _post_json(target_url, payload)
     except (URLError, OSError, asyncio.TimeoutError, ValueError) as exc:
         logger.warning("Simple judge request failed: %s", exc)
-        return 0.0
+        return {
+            "signed_score": 0.0,
+            "verdict": "ABSTAIN",
+            "judge_score": 0.0,
+            "reason": f"request_failed:{exc}",
+            "judge_output": "",
+        }
     except Exception as exc:  # pragma: no cover - safety net
         logger.warning("Simple judge unexpected failure: %s", exc)
-        return 0.0
+        return {
+            "signed_score": 0.0,
+            "verdict": "ABSTAIN",
+            "judge_score": 0.0,
+            "reason": f"unexpected_error:{exc}",
+            "judge_output": "",
+        }
 
     try:
         content = result["choices"][0]["message"]["content"].strip()
     except Exception:
-        return 0.0
+        return {
+            "signed_score": 0.0,
+            "verdict": "ABSTAIN",
+            "judge_score": 0.0,
+            "reason": "bad_response_shape",
+            "judge_output": "",
+        }
 
     verdict = _extract_json_object(content)
     if not verdict:
-        return 0.0
+        return {
+            "signed_score": 0.0,
+            "verdict": "ABSTAIN",
+            "judge_score": 0.0,
+            "reason": "no_json_verdict",
+            "judge_output": content[:2000],
+        }
 
     label = str(verdict.get("verdict", "ABSTAIN")).upper()
     try:
@@ -207,10 +274,19 @@ async def _judge_with_llm(
     score = max(0.0, min(1.0, score))
 
     if label == "PASS":
-        return score
-    if label == "FAIL":
-        return -score
-    return 0.0
+        signed_score = score
+    elif label == "FAIL":
+        signed_score = -score
+    else:
+        signed_score = 0.0
+
+    return {
+        "signed_score": signed_score,
+        "verdict": label,
+        "judge_score": score,
+        "reason": str(verdict.get("reason", ""))[:1000],
+        "judge_output": content[:2000],
+    }
 
 
 async def async_compute_score(
@@ -224,7 +300,10 @@ async def async_compute_score(
     del reward_model_tokenizer
 
     extra_info = extra_info or {}
-    base_score = _base_score(data_source, solution_str, ground_truth, extra_info)
+    ground_truth_raw, ground_truth_resolved = _resolve_ground_truth_for_judge(
+        ground_truth, extra_info
+    )
+    base_score = _base_score(data_source, solution_str, ground_truth_resolved, extra_info)
 
     if JUDGE_DISABLED or JUDGE_WEIGHT <= 0 or not _is_assessor_evaluation(extra_info):
         return {"score": base_score}
@@ -232,13 +311,37 @@ async def async_compute_score(
     if not reward_router_address and not JUDGE_URL:
         return {"score": base_score}
 
-    judge_score = await _judge_with_llm(
+    judge_result = await _judge_with_llm(
         solution_str=solution_str or "",
-        ground_truth=str(ground_truth) if ground_truth else "",
+        ground_truth=ground_truth_resolved,
         extra_info=extra_info,
         reward_router_address=reward_router_address,
     )
-    return {"score": base_score + JUDGE_WEIGHT * judge_score}
+    weighted_judge_score = JUDGE_WEIGHT * float(judge_result["signed_score"])
+    final_score = base_score + weighted_judge_score
+
+    _append_judge_trace(
+        {
+            "timestamp": datetime.now().isoformat(),
+            "data_source": str(data_source),
+            "note_id": extra_info.get("note_id", ""),
+            "role": extra_info.get("role", "assessor"),
+            "mode": extra_info.get("mode", "unknown"),
+            "ground_truth_raw": ground_truth_raw,
+            "ground_truth_resolved": ground_truth_resolved,
+            "assessor_output": _resolve_assessor_output(solution_str or "", extra_info)[:2000],
+            "judge_verdict": judge_result["verdict"],
+            "judge_score": float(judge_result["judge_score"]),
+            "judge_signed_score": float(judge_result["signed_score"]),
+            "weighted_judge_score": weighted_judge_score,
+            "base_score": float(base_score),
+            "final_score": float(final_score),
+            "judge_reason": judge_result["reason"],
+            "judge_output": judge_result["judge_output"],
+        }
+    )
+
+    return {"score": final_score}
 
 
 def compute_score(

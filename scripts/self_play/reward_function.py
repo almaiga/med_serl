@@ -424,6 +424,38 @@ def _compute_injector_reward(solution_str: str, extra_info: dict) -> tuple:
         return REWARD_PARTIAL + FORMAT_BONUS, "partial_match", sid, True
 
 
+def _resolve_assessor_ground_truth(raw_ground_truth: str, extra_info: Dict[str, Any]) -> str:
+    """Prefer assessor labels derived from metadata over the passed string.
+
+    Some live PPO batches have shown corrupted `ground_truth` strings such as
+    "3333" while `extra_info["error_sentence_id"]` and the source parquet row
+    remained correct. When assessor metadata is available, use it as the source
+    of truth to keep rewards stable and log both values for debugging.
+    """
+    mode = extra_info.get("mode")
+
+    if mode == "benign":
+        return "CORRECT"
+
+    if mode == "error_injection":
+        expected_sid = extra_info.get("error_sentence_id")
+        if expected_sid is not None:
+            try:
+                return str(int(float(expected_sid)))
+            except (TypeError, ValueError):
+                pass
+
+    reward_model = extra_info.get("reward_model")
+    if isinstance(reward_model, dict):
+        reward_gt = reward_model.get("ground_truth")
+        if reward_gt is not None:
+            reward_gt = str(reward_gt)
+            if reward_gt:
+                return reward_gt
+
+    return raw_ground_truth
+
+
 def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     """Compute reward for medical self-play training.
 
@@ -444,10 +476,15 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
     )
 
     solution_str = solution_str or ""
-    ground_truth = str(ground_truth) if ground_truth else ""
+    ground_truth_raw = str(ground_truth) if ground_truth else ""
     extra_info = make_serializable(extra_info) if extra_info else {}
     role = extra_info.get("role", "assessor")
     mode = extra_info.get("mode", "unknown")
+    ground_truth = (
+        _resolve_assessor_ground_truth(ground_truth_raw, extra_info)
+        if role != "injector"
+        else ground_truth_raw
+    )
 
     truncation_info = detect_truncation(solution_str)
 
@@ -514,6 +551,8 @@ def compute_score(data_source, solution_str, ground_truth, extra_info=None):
         "data_source": str(data_source),
         "role": role,
         "ground_truth": ground_truth,
+        "ground_truth_raw": ground_truth_raw,
+        "ground_truth_resolved": ground_truth,
         "pred_label": label,
         "pred_sid": pred_sid,
         "outcome": outcome,
@@ -560,7 +599,8 @@ def interaction_reward_passthrough(
     tail of solution_str for the assessor's answer.
     """
     extra_info = extra_info or {}
-    ground_truth = str(ground_truth) if ground_truth else ""
+    ground_truth_raw = str(ground_truth) if ground_truth else ""
+    ground_truth = _resolve_assessor_ground_truth(ground_truth_raw, extra_info)
 
     # Primary path: interaction stored its verdict in extra_fields
     if extra_info.get("phase") == "game_complete":
