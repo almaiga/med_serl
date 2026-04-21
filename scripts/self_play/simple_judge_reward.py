@@ -31,7 +31,12 @@ from scripts.self_play.reward_function import (
     interaction_reward_passthrough,
     _resolve_assessor_ground_truth,
 )
-from scripts.self_play.utils import number_sentences
+from scripts.self_play.utils import (
+    number_sentences,
+    parse_injector_compact,
+    parse_numbered_sentences,
+    strip_thinking,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +97,10 @@ def _is_assessor_evaluation(extra_info: dict) -> bool:
     return extra_info.get("role", "assessor") == "assessor"
 
 
+def _is_injector_evaluation(extra_info: dict) -> bool:
+    return extra_info.get("role") == "injector" and not _has_interaction_result(extra_info)
+
+
 def _resolve_numbered_note(extra_info: dict) -> str:
     note = extra_info.get("modified_sentences") or extra_info.get("sentences")
     if note:
@@ -112,6 +121,16 @@ def _resolve_assessor_output(solution_str: str, extra_info: dict) -> str:
     if label == "ERROR" and pred_sid is not None:
         return str(pred_sid)
     return solution_str or ""
+
+
+def _resolve_injector_sentence_pair(solution_str: str, extra_info: dict) -> tuple[Optional[int], str, str]:
+    sid, modified_sentence = parse_injector_compact(solution_str or "")
+    if sid is None or modified_sentence is None:
+        return None, "", ""
+
+    original_sentences = parse_numbered_sentences(str(extra_info.get("sentences", "")))
+    original_sentence = original_sentences.get(sid, "")
+    return sid, original_sentence, modified_sentence
 
 
 def _resolve_ground_truth_for_judge(ground_truth: Any, extra_info: dict) -> tuple[str, str]:
@@ -180,15 +199,16 @@ async def _post_json(url: str, payload: dict) -> dict:
 
 async def _judge_with_llm(
     solution_str: str,
-    ground_truth: str,
     extra_info: dict,
+    expected_relation: str,
     reward_router_address: Optional[str] = None,
 ) -> dict:
     prompt_cfg = _load_prompt_config()
-    numbered_note = _resolve_numbered_note(extra_info)
-    assessor_output = _resolve_assessor_output(solution_str, extra_info)
+    changed_sid, original_sentence, modified_sentence = _resolve_injector_sentence_pair(
+        solution_str, extra_info
+    )
 
-    if not numbered_note or not assessor_output or not ground_truth:
+    if not original_sentence or not modified_sentence:
         return {
             "signed_score": 0.0,
             "verdict": "ABSTAIN",
@@ -198,18 +218,44 @@ async def _judge_with_llm(
         }
 
     user_prompt = prompt_cfg["user_template"].format(
-        mode=extra_info.get("mode", "unknown"),
         note_id=extra_info.get("note_id", ""),
-        numbered_note=numbered_note[:6000],
-        ground_truth=str(ground_truth),
-        assessor_output=assessor_output[:1500],
+        error_type=extra_info.get("error_type", ""),
+        changed_sid=changed_sid,
+        original_sentence=original_sentence[:2000],
+        modified_sentence=modified_sentence[:2000],
     )
-    messages = [
-        {"role": "system", "content": prompt_cfg["system_prompt"]},
-        {"role": "user", "content": user_prompt},
-    ]
+    messages = [{"role": "system", "content": prompt_cfg["system_prompt"]}]
+    for ex in prompt_cfg.get("few_shot_examples", []):
+        messages.append(
+            {
+                "role": "user",
+                "content": prompt_cfg["user_template"].format(
+                    note_id=ex.get("note_id", "example"),
+                    error_type=ex.get("error_type", ""),
+                    changed_sid=ex.get("changed_sid", "?"),
+                    original_sentence=ex["original_sentence"],
+                    modified_sentence=ex["modified_sentence"],
+                ),
+            }
+        )
+        messages.append(
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "verdict": ex["verdict"],
+                        "score": ex["score"],
+                        "reason": ex["reason"],
+                    }
+                ),
+            }
+        )
+    messages.append({"role": "user", "content": user_prompt})
 
-    payload = {"messages": messages, **prompt_cfg.get("sampling_params", {})}
+    payload = {
+        "messages": messages,
+        **prompt_cfg.get("sampling_params", {}),
+    }
     if reward_router_address:
         target_url = reward_router_address
     elif JUDGE_URL:
@@ -256,7 +302,8 @@ async def _judge_with_llm(
             "judge_output": "",
         }
 
-    verdict = _extract_json_object(content)
+    _, stripped = strip_thinking(content)
+    verdict = _extract_json_object(stripped) or _extract_json_object(content)
     if not verdict:
         return {
             "signed_score": 0.0,
@@ -273,9 +320,9 @@ async def _judge_with_llm(
         score = 0.0
     score = max(0.0, min(1.0, score))
 
-    if label == "PASS":
+    if label == expected_relation:
         signed_score = score
-    elif label == "FAIL":
+    elif label in {"SAME", "CHANGED"}:
         signed_score = -score
     else:
         signed_score = 0.0
@@ -286,6 +333,9 @@ async def _judge_with_llm(
         "judge_score": score,
         "reason": str(verdict.get("reason", ""))[:1000],
         "judge_output": content[:2000],
+        "original_sentence": original_sentence,
+        "modified_sentence": modified_sentence,
+        "changed_sid": changed_sid,
     }
 
 
@@ -305,16 +355,18 @@ async def async_compute_score(
     )
     base_score = _base_score(data_source, solution_str, ground_truth_resolved, extra_info)
 
-    if JUDGE_DISABLED or JUDGE_WEIGHT <= 0 or not _is_assessor_evaluation(extra_info):
+    if JUDGE_DISABLED or JUDGE_WEIGHT <= 0 or not _is_injector_evaluation(extra_info):
         return {"score": base_score}
 
     if not reward_router_address and not JUDGE_URL:
         return {"score": base_score}
 
+    expected_relation = "SAME" if extra_info.get("mode") == "benign" else "CHANGED"
+
     judge_result = await _judge_with_llm(
         solution_str=solution_str or "",
-        ground_truth=ground_truth_resolved,
         extra_info=extra_info,
+        expected_relation=expected_relation,
         reward_router_address=reward_router_address,
     )
     weighted_judge_score = JUDGE_WEIGHT * float(judge_result["signed_score"])
@@ -329,7 +381,7 @@ async def async_compute_score(
             "mode": extra_info.get("mode", "unknown"),
             "ground_truth_raw": ground_truth_raw,
             "ground_truth_resolved": ground_truth_resolved,
-            "assessor_output": _resolve_assessor_output(solution_str or "", extra_info)[:2000],
+            "expected_relation": expected_relation,
             "judge_verdict": judge_result["verdict"],
             "judge_score": float(judge_result["judge_score"]),
             "judge_signed_score": float(judge_result["signed_score"]),
@@ -338,6 +390,9 @@ async def async_compute_score(
             "final_score": float(final_score),
             "judge_reason": judge_result["reason"],
             "judge_output": judge_result["judge_output"],
+            "changed_sid": judge_result.get("changed_sid"),
+            "original_sentence": judge_result.get("original_sentence", ""),
+            "modified_sentence": judge_result.get("modified_sentence", ""),
         }
     )
 

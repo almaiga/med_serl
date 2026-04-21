@@ -123,10 +123,16 @@ def main() -> int:
         if rec.get("judge_verdict") != "ABSTAIN":
             continue
         print(f"  note_id={rec.get('note_id','')}")
-        print(f"    mode={rec.get('mode','')} gt={rec.get('ground_truth_resolved','')}")
+        print(
+            f"    mode={rec.get('mode','')} expected={rec.get('expected_relation', rec.get('ground_truth_resolved',''))}"
+        )
         print(f"    reason={rec.get('judge_reason','')}")
         output = str(rec.get("judge_output", "")).replace("\n", " ")
         print(f"    output={output[:180]}")
+        if rec.get("original_sentence"):
+            print(f"    original={str(rec.get('original_sentence',''))[:140]}")
+        if rec.get("modified_sentence"):
+            print(f"    modified={str(rec.get('modified_sentence',''))[:140]}")
         shown += 1
         if shown >= 5:
             break

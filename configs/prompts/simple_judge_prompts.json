@@ -1,9 +1,51 @@
 {
-  "system_prompt": "You are a strict clinical RL judge. Your task is to evaluate whether the assessor's final answer about a clinical note is correct.\n\nThe note contains either no medical error or exactly one medical error.\n- If the ground truth is CORRECT, the assessor is correct only if it clearly says CORRECT.\n- If the ground truth is a sentence number, the assessor is correct only if it identifies the medical error and localizes it to the correct sentence.\n- You may use FAIL when the assessor misses the error, flags an error in a benign note, or gives the wrong sentence number.\n- Use ABSTAIN only if the assessor output is too malformed to evaluate.\n\nReturn ONLY a JSON object with keys: verdict, score, reason.\nverdict must be PASS, FAIL, or ABSTAIN.\nscore must be a float between 0.0 and 1.0.",
-  "user_template": "Mode: {mode}\nNote ID: {note_id}\n\nClinical note:\n{numbered_note}\n\nGround truth:\n{ground_truth}\n\nAssessor output:\n{assessor_output}\n\nEvaluate whether the assessor answer is correct.",
+  "system_prompt": "You are a strict clinical sentence-pair judge. Compare the ORIGINAL clinical sentence and the MODIFIED clinical sentence.\n\nYour job is only to determine whether the MODIFIED sentence preserves the same clinical meaning as the ORIGINAL sentence.\n\nVerdict rules:\n- SAME: the clinical meaning is preserved. Surface wording, synonyms, harmless temporal rephrasings, or stylistic edits are acceptable.\n- CHANGED: the clinical meaning is not preserved. Any change to diagnosis, treatment, medication, dosage, timing, causation, test interpretation, severity, or management counts as CHANGED.\n- ABSTAIN: use only if the modified sentence is too malformed to evaluate.\n\nYou may think briefly before answering, but the final output must be ONLY a JSON object with keys: verdict, score, reason.\n- verdict must be SAME, CHANGED, or ABSTAIN\n- score must be a float between 0.0 and 1.0\n- reason must be one short sentence",
+  "user_template": "Note ID: {note_id}\nChanged sentence id: {changed_sid}\nError type hint: {error_type}\n\nORIGINAL sentence:\n{original_sentence}\n\nMODIFIED sentence:\n{modified_sentence}\n\nDoes the modified sentence preserve the same clinical meaning as the original sentence?",
+  "few_shot_examples": [
+    {
+      "note_id": "example-benign-temporal",
+      "changed_sid": 2,
+      "error_type": "temporal_rephrasing",
+      "original_sentence": "The patient reports worsening dyspnea for 1 month.",
+      "modified_sentence": "The patient reports worsening dyspnea for 4 weeks.",
+      "verdict": "SAME",
+      "score": 0.96,
+      "reason": "The duration is expressed differently but represents the same clinical timeframe."
+    },
+    {
+      "note_id": "example-benign-synonym",
+      "changed_sid": 5,
+      "error_type": "pseudo_factual",
+      "original_sentence": "The patient has hypertension treated with hydrochlorothiazide.",
+      "modified_sentence": "The patient has high blood pressure treated with hydrochlorothiazide.",
+      "verdict": "SAME",
+      "score": 0.94,
+      "reason": "The modified sentence uses a synonym and preserves the diagnosis and treatment."
+    },
+    {
+      "note_id": "example-error-management",
+      "changed_sid": 8,
+      "error_type": "management",
+      "original_sentence": "Penicillin is prescribed.",
+      "modified_sentence": "Azithromycin and ceftriaxone are prescribed.",
+      "verdict": "CHANGED",
+      "score": 0.99,
+      "reason": "The treatment plan changes to different medications and therefore does not preserve clinical meaning."
+    },
+    {
+      "note_id": "example-error-diagnosis",
+      "changed_sid": 7,
+      "error_type": "diagnosis",
+      "original_sentence": "Mammography shows a smooth polylobulated mass and the patient is diagnosed with a Phyllodes tumor.",
+      "modified_sentence": "Mammography shows a smooth polylobulated mass and the patient is diagnosed with fibroadenoma.",
+      "verdict": "CHANGED",
+      "score": 0.99,
+      "reason": "The diagnosis changes to a different clinical entity and does not preserve meaning."
+    }
+  ],
   "sampling_params": {
     "temperature": 0.1,
     "top_p": 0.95,
-    "max_tokens": 192
+    "max_tokens": 256
   }
 }
