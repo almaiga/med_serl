@@ -83,6 +83,17 @@ def parse_args() -> argparse.Namespace:
         help="Total examples to test. Rounded down to an even number.",
     )
     parser.add_argument(
+        "--sample-id",
+        default=None,
+        help="Evaluate one specific sample_id instead of a random benchmark batch.",
+    )
+    parser.add_argument(
+        "--sample-mode",
+        choices=["benign", "error_injection"],
+        default=None,
+        help="Required with --sample-id so the script knows which source file to search.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=0,
@@ -110,6 +121,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Sample and build payloads without calling the judge.",
+    )
+    parser.add_argument(
+        "--print-prompt",
+        action="store_true",
+        help="Print the exact prompt payload used for the selected case.",
     )
     return parser.parse_args()
 
@@ -291,6 +307,20 @@ def sample_cases(
     return mixed
 
 
+def find_case_by_sample_id(
+    benign_rows: list[dict[str, Any]],
+    error_rows: list[dict[str, Any]],
+    prompt_cfg: dict[str, Any],
+    sample_id: str,
+    sample_mode: str,
+) -> dict[str, Any]:
+    rows = benign_rows if sample_mode == "benign" else error_rows
+    for row in rows:
+        if str(row.get("sample_id", "")) == sample_id:
+            return build_case(row, sample_mode, prompt_cfg)
+    raise ValueError(f"sample_id not found in {sample_mode} file: {sample_id}")
+
+
 def sync_post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
     req = Request(
         url,
@@ -442,13 +472,27 @@ async def async_main(args: argparse.Namespace) -> int:
     prompt_cfg = load_prompt_config()
     benign_rows = load_jsonl(benign_path)
     error_rows = load_jsonl(error_path)
-    cases = sample_cases(
-        benign_rows=benign_rows,
-        error_rows=error_rows,
-        prompt_cfg=prompt_cfg,
-        samples=args.samples,
-        seed=args.seed,
-    )
+
+    if args.sample_id:
+        if not args.sample_mode:
+            raise ValueError("--sample-mode is required when using --sample-id")
+        cases = [
+            find_case_by_sample_id(
+                benign_rows=benign_rows,
+                error_rows=error_rows,
+                prompt_cfg=prompt_cfg,
+                sample_id=args.sample_id,
+                sample_mode=args.sample_mode,
+            )
+        ]
+    else:
+        cases = sample_cases(
+            benign_rows=benign_rows,
+            error_rows=error_rows,
+            prompt_cfg=prompt_cfg,
+            samples=args.samples,
+            seed=args.seed,
+        )
 
     print("=== Simple Judge Isolation Setup ===")
     print(f"Prompt config  : {PROMPT_PATH}")
@@ -457,6 +501,9 @@ async def async_main(args: argparse.Namespace) -> int:
     print(f"Benign file    : {benign_path}")
     print(f"Error file     : {error_path}")
     print(f"Samples        : {len(cases)}")
+    if args.sample_id:
+        print(f"Sample id      : {args.sample_id}")
+        print(f"Sample mode    : {args.sample_mode}")
     print(f"Concurrency    : {args.concurrency}")
     print(f"Dry run        : {args.dry_run}")
 
@@ -470,6 +517,11 @@ async def async_main(args: argparse.Namespace) -> int:
         print("Payload preview:")
         print(json.dumps(preview_payload, indent=2, ensure_ascii=False)[:3000])
         return 0
+
+    if args.print_prompt:
+        print("")
+        print("Prompt payload:")
+        print(json.dumps(cases[0]["payload"], indent=2, ensure_ascii=False)[:12000])
 
     semaphore = asyncio.Semaphore(args.concurrency)
     started = time.perf_counter()
@@ -486,6 +538,33 @@ async def async_main(args: argparse.Namespace) -> int:
         )
     )
     wall_time_s = time.perf_counter() - started
+
+    if args.sample_id:
+        row = results[0]
+        print("")
+        print("=== Simple Judge Single Case ===")
+        print(f"Sample id        : {row['note_id']}")
+        print(f"Mode             : {row['mode']}")
+        print(f"Expected         : {row['expected_relation']}")
+        print(f"Judge verdict    : {row['judge_verdict']}")
+        print(f"Judge score      : {row['judge_score']:.2f}")
+        print(f"Matched expected : {row['matched_expected']}")
+        print(f"Latency          : {row['latency_ms']:.1f} ms")
+        print(f"Reason           : {row['judge_reason']}")
+        print("")
+        print("Original sentence:")
+        print(row["original_sentence"])
+        print("")
+        print("Modified sentence:")
+        print(row["modified_sentence"])
+        print("")
+        print("Raw judge output:")
+        print(row["judge_output"])
+        if args.output is not None:
+            output_path = (PROJECT_ROOT / args.output).resolve()
+            write_jsonl(output_path, results)
+            print(f"Saved detailed results to {output_path}")
+        return 0
 
     print_summary(
         results=results,
