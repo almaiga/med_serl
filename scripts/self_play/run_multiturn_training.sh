@@ -179,7 +179,7 @@ elif [ -f "$PROJECT_ROOT/med_serl/bin/activate" ]; then
     echo "✓ Virtual environment activated"
 fi
 
-export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 export RAY_DISABLE_DOCKER_CPU_WARNING=1
 export RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
