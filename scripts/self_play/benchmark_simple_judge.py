@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Benchmark the simple judge on a balanced benign/error sample.
+"""Benchmark the simple judge in isolation on the judge server itself.
 
-This script uses the exact remote judge path from
-scripts/self_play/simple_judge_reward.py. It samples 50/50 benign and error
-injector outputs from data_processed, sends the same prompt payload used in
-training, and reports latency plus verdict accuracy.
+This script does not import the training reward path. It loads the same
+`configs/prompts/simple_judge_prompts.json` prompt config used by training and
+posts directly to the OpenAI-compatible vLLM judge endpoint.
 """
 
 from __future__ import annotations
 
 import argparse
-import atexit
 import asyncio
 import json
+import os
 import random
 import re
 import statistics
@@ -20,21 +19,13 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.self_play.simple_judge_reward import (  # noqa: E402
-    JUDGE_MODEL,
-    JUDGE_TIMEOUT,
-    JUDGE_URL,
-    _judge_with_llm,
-)
-from scripts.self_play import reward_function as reward_function_module  # noqa: E402
-from scripts.self_play.utils import parse_numbered_sentences  # noqa: E402
-
-atexit.unregister(reward_function_module.print_summary)
+from scripts.self_play.utils import parse_numbered_sentences, strip_thinking  # noqa: E402
 
 
 DEFAULT_BENIGN = Path(
@@ -43,11 +34,35 @@ DEFAULT_BENIGN = Path(
 DEFAULT_ERROR = Path(
     "data_processed/medrect/injector_error_chains_20260310_135156.jsonl"
 )
+PROMPT_PATH = PROJECT_ROOT / "configs" / "prompts" / "simple_judge_prompts.json"
+DEFAULT_JUDGE_PORT = os.getenv("JUDGE_PORT", "8002")
+DEFAULT_JUDGE_URL = os.getenv(
+    "JUDGE_VLLM_URL",
+    f"http://127.0.0.1:{DEFAULT_JUDGE_PORT}/v1/chat/completions",
+)
+DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
+DEFAULT_JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "20"))
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark the simple judge with a 50/50 benign-error mix."
+        description="Benchmark the simple judge directly against the vLLM server."
+    )
+    parser.add_argument(
+        "--judge-url",
+        default=DEFAULT_JUDGE_URL,
+        help="Judge endpoint. Defaults to local judge server on this machine.",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=DEFAULT_JUDGE_MODEL,
+        help="Model name to send in the OpenAI-compatible payload.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_JUDGE_TIMEOUT,
+        help="Per-request timeout in seconds.",
     )
     parser.add_argument(
         "--benign-file",
@@ -65,36 +80,36 @@ def parse_args() -> argparse.Namespace:
         "--samples",
         type=int,
         default=100,
-        help="Total number of examples to test. Rounded down to an even number.",
+        help="Total examples to test. Rounded down to an even number.",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=0,
-        help="Random seed for sampling.",
+        help="Random seed for reproducible sampling.",
     )
     parser.add_argument(
         "--concurrency",
         type=int,
         default=1,
-        help="Number of judge requests to run concurrently.",
+        help="Concurrent requests to the judge.",
     )
     parser.add_argument(
         "--show",
         type=int,
         default=5,
-        help="How many mismatches to print.",
+        help="Number of mismatches to print.",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=None,
-        help="Optional JSONL path for full per-example results.",
+        help="Optional JSONL path for detailed results.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Build and validate the sampled examples without calling the judge.",
+        help="Sample and build payloads without calling the judge.",
     )
     return parser.parse_args()
 
@@ -107,6 +122,11 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
             if line:
                 rows.append(json.loads(line))
     return rows
+
+
+def load_prompt_config() -> dict[str, Any]:
+    with open(PROMPT_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def extract_numbered_note(user_prompt: str) -> str:
@@ -123,34 +143,123 @@ def extract_numbered_note(user_prompt: str) -> str:
     return "\n".join(note_lines).strip()
 
 
-def build_case(record: dict[str, Any], mode: str) -> dict[str, Any]:
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for idx in range(start, len(text)):
+        if text[idx] == "{":
+            depth += 1
+        elif text[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(text[start : idx + 1])
+                    return parsed if isinstance(parsed, dict) else None
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    return None
+    return None
+
+
+def build_messages(
+    prompt_cfg: dict[str, Any],
+    note_id: str,
+    error_type: str,
+    changed_sid: int,
+    original_sentence: str,
+    modified_sentence: str,
+) -> list[dict[str, str]]:
+    messages = [{"role": "system", "content": prompt_cfg["system_prompt"]}]
+    for ex in prompt_cfg.get("few_shot_examples", []):
+        messages.append(
+            {
+                "role": "user",
+                "content": prompt_cfg["user_template"].format(
+                    note_id=ex.get("note_id", "example"),
+                    error_type=ex.get("error_type", ""),
+                    changed_sid=ex.get("changed_sid", "?"),
+                    original_sentence=ex["original_sentence"],
+                    modified_sentence=ex["modified_sentence"],
+                ),
+            }
+        )
+        messages.append(
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "verdict": ex["verdict"],
+                        "score": ex["score"],
+                        "reason": ex["reason"],
+                    }
+                ),
+            }
+        )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": prompt_cfg["user_template"].format(
+                note_id=note_id,
+                error_type=error_type,
+                changed_sid=changed_sid,
+                original_sentence=original_sentence[:2000],
+                modified_sentence=modified_sentence[:2000],
+            ),
+        }
+    )
+    return messages
+
+
+def build_case(record: dict[str, Any], mode: str, prompt_cfg: dict[str, Any]) -> dict[str, Any]:
     numbered_note = extract_numbered_note(str(record.get("user_prompt", "")))
     changed_sid = int(record.get("changed_sid") or record.get("error_sentence_id"))
     original_sentence = parse_numbered_sentences(numbered_note).get(changed_sid, "")
     modified_sentence = str(record.get("modified_text", ""))
     note_id = str(record.get("sample_id", ""))
+    error_type = str(record.get("error_type") or record.get("change_type") or "")
+    expected_relation = "SAME" if mode == "benign" else "CHANGED"
+
+    payload = {
+        "model": DEFAULT_JUDGE_MODEL,
+        "messages": build_messages(
+            prompt_cfg=prompt_cfg,
+            note_id=note_id,
+            error_type=error_type,
+            changed_sid=changed_sid,
+            original_sentence=original_sentence,
+            modified_sentence=modified_sentence,
+        ),
+        **prompt_cfg.get("sampling_params", {}),
+    }
 
     return {
         "note_id": note_id,
         "mode": mode,
-        "expected_relation": "SAME" if mode == "benign" else "CHANGED",
-        "solution_str": str(record.get("label") or f"{changed_sid}. {modified_sentence}"),
+        "expected_relation": expected_relation,
+        "changed_sid": changed_sid,
+        "error_type": error_type,
         "original_note": numbered_note,
         "original_sentence": original_sentence,
         "modified_sentence": modified_sentence,
-        "extra_info": {
-            "role": "injector",
-            "note_id": note_id,
-            "mode": "benign" if mode == "benign" else "error_injection",
-            "sentences": numbered_note,
-            "error_type": str(record.get("error_type") or ""),
-        },
+        "payload": payload,
     }
 
 
 def sample_cases(
     benign_rows: list[dict[str, Any]],
     error_rows: list[dict[str, Any]],
+    prompt_cfg: dict[str, Any],
     samples: int,
     seed: int,
 ) -> list[dict[str, Any]]:
@@ -172,32 +281,81 @@ def sample_cases(
         )
 
     rng = random.Random(seed)
-    benign_cases = [build_case(row, "benign") for row in rng.sample(benign_rows, per_class)]
-    error_cases = [build_case(row, "error_injection") for row in rng.sample(error_rows, per_class)]
+    benign_cases = [build_case(row, "benign", prompt_cfg) for row in rng.sample(benign_rows, per_class)]
+    error_cases = [
+        build_case(row, "error_injection", prompt_cfg)
+        for row in rng.sample(error_rows, per_class)
+    ]
     mixed = benign_cases + error_cases
     rng.shuffle(mixed)
     return mixed
 
 
-async def run_case(case: dict[str, Any], semaphore: asyncio.Semaphore) -> dict[str, Any]:
+def sync_post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    req = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8")
+    return json.loads(body)
+
+
+async def post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    try:
+        import aiohttp  # type: ignore
+    except ImportError:
+        return await asyncio.to_thread(sync_post_json, url, payload, timeout)
+
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        async with session.post(url, json=payload) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+
+async def run_case(
+    case: dict[str, Any],
+    judge_url: str,
+    judge_model: str,
+    timeout: float,
+    semaphore: asyncio.Semaphore,
+) -> dict[str, Any]:
+    payload = dict(case["payload"])
+    payload["model"] = judge_model
+
     started = time.perf_counter()
     async with semaphore:
-        judge_result = await _judge_with_llm(
-            solution_str=case["solution_str"],
-            extra_info=case["extra_info"],
-            expected_relation=case["expected_relation"],
-        )
+        response = await post_json(judge_url, payload, timeout)
     latency_ms = (time.perf_counter() - started) * 1000.0
 
+    content = ""
+    try:
+        content = response["choices"][0]["message"]["content"].strip()
+    except Exception:
+        pass
+
+    _, stripped = strip_thinking(content)
+    verdict_obj = extract_json_object(stripped) or extract_json_object(content) or {}
+    verdict = str(verdict_obj.get("verdict", "ABSTAIN")).upper()
+    try:
+        score = float(verdict_obj.get("score", 0.0))
+    except (TypeError, ValueError):
+        score = 0.0
+    score = max(0.0, min(1.0, score))
+
+    matched_expected = verdict == case["expected_relation"]
+
     return {
-        **case,
+        **{k: v for k, v in case.items() if k != "payload"},
         "latency_ms": latency_ms,
-        "judge_verdict": judge_result["verdict"],
-        "judge_score": float(judge_result["judge_score"]),
-        "judge_signed_score": float(judge_result["signed_score"]),
-        "judge_reason": judge_result["reason"],
-        "judge_output": judge_result["judge_output"],
-        "matched_expected": judge_result["verdict"] == case["expected_relation"],
+        "judge_verdict": verdict,
+        "judge_score": score,
+        "judge_reason": str(verdict_obj.get("reason", ""))[:1000],
+        "judge_output": content[:2000],
+        "matched_expected": matched_expected,
     }
 
 
@@ -213,11 +371,24 @@ def percentile(values: list[float], pct: float) -> float:
     return values[lo] * (1 - frac) + values[hi] * frac
 
 
-def print_summary(results: list[dict[str, Any]], wall_time_s: float, show: int) -> None:
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def print_summary(
+    results: list[dict[str, Any]],
+    wall_time_s: float,
+    show: int,
+    judge_url: str,
+    judge_model: str,
+    timeout: float,
+) -> None:
     latencies = sorted(r["latency_ms"] for r in results)
     matched = sum(1 for r in results if r["matched_expected"])
     abstains = sum(1 for r in results if r["judge_verdict"] == "ABSTAIN")
-
     benign = [r for r in results if r["mode"] == "benign"]
     error = [r for r in results if r["mode"] == "error_injection"]
 
@@ -225,10 +396,10 @@ def print_summary(results: list[dict[str, Any]], wall_time_s: float, show: int) 
         return sum(1 for r in rows if r["matched_expected"]) / len(rows) if rows else 0.0
 
     print("")
-    print("=== Simple Judge Benchmark Summary ===")
-    print(f"Judge URL      : {JUDGE_URL}")
-    print(f"Judge model    : {JUDGE_MODEL}")
-    print(f"Judge timeout  : {JUDGE_TIMEOUT}s")
+    print("=== Simple Judge Isolation Benchmark ===")
+    print(f"Judge URL      : {judge_url}")
+    print(f"Judge model    : {judge_model}")
+    print(f"Judge timeout  : {timeout}s")
     print(f"Total samples  : {len(results)}")
     print(f"Benign / Error : {len(benign)} / {len(error)}")
     print(f"Accuracy       : {matched}/{len(results)} = {matched / len(results):.1%}")
@@ -260,56 +431,70 @@ def print_summary(results: list[dict[str, Any]], wall_time_s: float, show: int) 
         print("")
 
 
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
 async def async_main(args: argparse.Namespace) -> int:
     benign_path = (PROJECT_ROOT / args.benign_file).resolve()
     error_path = (PROJECT_ROOT / args.error_file).resolve()
-
     if not benign_path.exists():
         raise FileNotFoundError(f"Benign file not found: {benign_path}")
     if not error_path.exists():
         raise FileNotFoundError(f"Error file not found: {error_path}")
 
+    prompt_cfg = load_prompt_config()
     benign_rows = load_jsonl(benign_path)
     error_rows = load_jsonl(error_path)
-    cases = sample_cases(benign_rows, error_rows, args.samples, args.seed)
+    cases = sample_cases(
+        benign_rows=benign_rows,
+        error_rows=error_rows,
+        prompt_cfg=prompt_cfg,
+        samples=args.samples,
+        seed=args.seed,
+    )
 
-    print("=== Simple Judge Benchmark Setup ===")
-    print(f"Benign file   : {benign_path}")
-    print(f"Error file    : {error_path}")
-    print(f"Judge URL     : {JUDGE_URL or '<unset>'}")
-    print(f"Judge model   : {JUDGE_MODEL}")
-    print(f"Samples       : {len(cases)}")
-    print(f"Concurrency   : {args.concurrency}")
-    print(f"Dry run       : {args.dry_run}")
+    print("=== Simple Judge Isolation Setup ===")
+    print(f"Prompt config  : {PROMPT_PATH}")
+    print(f"Judge URL      : {args.judge_url}")
+    print(f"Judge model    : {args.judge_model}")
+    print(f"Benign file    : {benign_path}")
+    print(f"Error file     : {error_path}")
+    print(f"Samples        : {len(cases)}")
+    print(f"Concurrency    : {args.concurrency}")
+    print(f"Dry run        : {args.dry_run}")
 
     if args.dry_run:
+        preview = dict(cases[0])
+        preview_payload = preview.pop("payload")
         print("")
-        print("Dry run complete. First sampled case:")
-        preview = {k: v for k, v in cases[0].items() if k != "extra_info"}
+        print("Dry run preview:")
         print(json.dumps(preview, indent=2, ensure_ascii=False)[:3000])
+        print("")
+        print("Payload preview:")
+        print(json.dumps(preview_payload, indent=2, ensure_ascii=False)[:3000])
         return 0
-
-    if not JUDGE_URL:
-        print("ERROR: JUDGE_VLLM_URL is not set.", file=sys.stderr)
-        print(
-            "Start the server with: bash scripts/self_play/start_judge_server.sh",
-            file=sys.stderr,
-        )
-        return 1
 
     semaphore = asyncio.Semaphore(args.concurrency)
     started = time.perf_counter()
-    results = await asyncio.gather(*(run_case(case, semaphore) for case in cases))
+    results = await asyncio.gather(
+        *(
+            run_case(
+                case=case,
+                judge_url=args.judge_url,
+                judge_model=args.judge_model,
+                timeout=args.timeout,
+                semaphore=semaphore,
+            )
+            for case in cases
+        )
+    )
     wall_time_s = time.perf_counter() - started
 
-    print_summary(results, wall_time_s, args.show)
+    print_summary(
+        results=results,
+        wall_time_s=wall_time_s,
+        show=args.show,
+        judge_url=args.judge_url,
+        judge_model=args.judge_model,
+        timeout=args.timeout,
+    )
 
     if args.output is not None:
         output_path = (PROJECT_ROOT / args.output).resolve()
