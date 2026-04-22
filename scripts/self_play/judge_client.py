@@ -15,7 +15,7 @@ from scripts.self_play.utils import strip_thinking
 
 logger = logging.getLogger(__name__)
 
-PROMPT_PATH = Path(__file__).resolve().parent.parent / "configs" / "prompts" / "simple_judge_prompts.json"
+PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "simple_judge_prompts.json"
 JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
 JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "20"))
