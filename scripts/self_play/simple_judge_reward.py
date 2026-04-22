@@ -259,6 +259,7 @@ async def _judge_with_llm(
         "messages": messages,
         **prompt_cfg.get("sampling_params", {}),
     }
+    payload["chat_template_kwargs"] = {"enable_thinking": False}
     if reward_router_address:
         target_url = reward_router_address
     elif JUDGE_URL:

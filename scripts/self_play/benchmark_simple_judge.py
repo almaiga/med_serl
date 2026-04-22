@@ -283,6 +283,7 @@ def build_case(record: dict[str, Any], mode: str, prompt_cfg: dict[str, Any]) ->
             modified_sentence=modified_sentence,
         ),
         **prompt_cfg.get("sampling_params", {}),
+        "chat_template_kwargs": {"enable_thinking": False},
     }
 
     return {
@@ -395,6 +396,7 @@ async def run_case(
     verdict_obj: dict[str, Any] = {}
     verdict = "ABSTAIN"
     score = 0.0
+    judge_reason = ""
     signed_judge_score = 0.0
     weighted_judge_score = 0.0
     final_score = base_rule_score
@@ -418,17 +420,24 @@ async def run_case(
 
         _, stripped = strip_thinking(content)
         verdict_obj = extract_json_object(stripped) or extract_json_object(content) or {}
-        verdict = str(verdict_obj.get("verdict", "ABSTAIN")).upper()
-        try:
-            score = float(verdict_obj.get("score", 0.0))
-        except (TypeError, ValueError):
+        if verdict_obj:
+            verdict = str(verdict_obj.get("verdict", "ABSTAIN")).upper()
+            try:
+                score = float(verdict_obj.get("score", 0.0))
+            except (TypeError, ValueError):
+                score = 0.0
+            score = max(0.0, min(1.0, score))
+            judge_reason = str(verdict_obj.get("reason", ""))[:1000]
+            signed_judge_score = compute_signed_judge_score(verdict, score, case["expected_relation"])
+            weighted_judge_score = judge_weight * signed_judge_score
+            final_score = base_rule_score + weighted_judge_score
+        else:
+            verdict = "ABSTAIN"
             score = 0.0
-        score = max(0.0, min(1.0, score))
-        signed_judge_score = compute_signed_judge_score(verdict, score, case["expected_relation"])
-        weighted_judge_score = judge_weight * signed_judge_score
-        final_score = base_rule_score + weighted_judge_score
+            judge_reason = "empty_output" if not content.strip() else "no_json_verdict"
     except Exception as exc:
         error = str(exc)
+        judge_reason = "request_failed"
 
     latency_ms = (time.perf_counter() - started) * 1000.0
     matched_expected = verdict == case["expected_relation"]
@@ -445,7 +454,7 @@ async def run_case(
         "judge_signed_score": signed_judge_score,
         "weighted_judge_score": weighted_judge_score,
         "final_score": final_score,
-        "judge_reason": str(verdict_obj.get("reason", ""))[:1000],
+        "judge_reason": judge_reason,
         "judge_output": content[:2000],
         "matched_expected": matched_expected,
         "error": error,
@@ -522,7 +531,7 @@ class LocalTransformersJudge:
             messages,
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=True,
+            enable_thinking=False,
         )
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         prompt_len = inputs["input_ids"].shape[1]
