@@ -208,7 +208,7 @@ async def _judge_with_llm(
         solution_str, extra_info
     )
 
-    if not original_sentence or not modified_sentence:
+    if not original_sentence and not modified_sentence:
         return {
             "signed_score": 0.0,
             "verdict": "ABSTAIN",
