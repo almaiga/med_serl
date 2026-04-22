@@ -105,6 +105,7 @@ def _append_game_log(entry: dict[str, Any]) -> None:
 class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     """Two-phase injector -> judge -> assessor agent loop for vLLM async rollout."""
 
+    _class_initialized = False
     detection_prompts: dict[str, Any]
     injector_max_new_tokens: int
     assessor_max_new_tokens: int
@@ -149,7 +150,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         **kwargs,
     ):
         del tokenizer, processor, kwargs
-        if cls._class_initialized:
+        if getattr(cls, "_class_initialized", False):
             return
         with open(detection_prompts_path, "r", encoding="utf-8") as f:
             cls.detection_prompts = json.load(f)
