@@ -11,6 +11,7 @@ Patches applied:
 import os
 import pathlib
 import glob
+import importlib.util
 
 
 def _first_existing(*paths: str) -> pathlib.Path | None:
@@ -20,8 +21,28 @@ def _first_existing(*paths: str) -> pathlib.Path | None:
             return p
     return None
 
+
+def _verl_repo_root() -> pathlib.Path | None:
+    try:
+        spec = importlib.util.find_spec("verl")
+    except Exception:
+        spec = None
+    if spec is None or not spec.origin:
+        return None
+    p = pathlib.Path(spec.origin).resolve()
+    for parent in [p.parent] + list(p.parents):
+        if (parent / "trainer").exists() and (parent / "experimental").exists():
+            return parent
+    return None
+
+
+_VERL_ROOT = _verl_repo_root()
+_VERL_ROOT_STR = str(_VERL_ROOT) if _VERL_ROOT is not None else ""
+
 # ── Patch 1: main_ppo.py ─────────────────────────────────────────────────────
 fpath = _first_existing(
+    os.path.join(_VERL_ROOT_STR, "trainer", "main_ppo.py") if _VERL_ROOT_STR else "",
+    "/home/dpsk_a2a/verl/verl/trainer/main_ppo.py",
     "/sgl-workspace/sglang/verl/verl/trainer/main_ppo.py",
     "/workspace/verl/verl/trainer/main_ppo.py",
 )
@@ -78,6 +99,8 @@ else:
 # This means interaction_reward_passthrough never sees phase/assessor_label.
 # Fix: update agent_data.extra_fields with the info dict after each interaction turn.
 tpath = _first_existing(
+    os.path.join(_VERL_ROOT_STR, "experimental", "agent_loop", "tool_agent_loop.py") if _VERL_ROOT_STR else "",
+    "/home/dpsk_a2a/verl/verl/experimental/agent_loop/tool_agent_loop.py",
     "/sgl-workspace/sglang/verl/verl/experimental/agent_loop/tool_agent_loop.py",
     "/workspace/verl/verl/experimental/agent_loop/tool_agent_loop.py",
 )
@@ -111,6 +134,8 @@ if tpath and tpath.exists():
 
 # ── Patch 3: agent_loop.py ───────────────────────────────────────────────────
 apath = _first_existing(
+    os.path.join(_VERL_ROOT_STR, "experimental", "agent_loop", "agent_loop.py") if _VERL_ROOT_STR else "",
+    "/home/dpsk_a2a/verl/verl/experimental/agent_loop/agent_loop.py",
     "/sgl-workspace/sglang/verl/verl/experimental/agent_loop/agent_loop.py",
     "/workspace/verl/verl/experimental/agent_loop/agent_loop.py",
 )

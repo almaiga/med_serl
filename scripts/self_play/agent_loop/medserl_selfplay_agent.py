@@ -200,7 +200,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         sampling_params: dict[str, Any],
     ):
         return await self.server_manager.generate(
-            request_id,
+            request_id=request_id,
             prompt_ids=prompt_ids,
             sampling_params=sampling_params,
         )

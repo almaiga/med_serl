@@ -417,8 +417,6 @@ python3 -m verl.trainer.main_ppo \
     algorithm.lam=0.95 \
     algorithm.use_kl_in_reward=False \
     reward_model.enable=False \
-    custom_reward_function.path="$PROJECT_ROOT/scripts/self_play/simple_judge_reward.py" \
-    custom_reward_function.name=async_compute_score \
     trainer.logger="$TRAINER_LOGGER" \
     trainer.project_name="$WANDB_PROJECT" \
     trainer.experiment_name="$EXPERIMENT_NAME" \
