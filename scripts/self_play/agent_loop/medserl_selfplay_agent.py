@@ -271,7 +271,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         if injector_ids:
             token_level_scores[-1] = float(injector_reward)
         extra_fields = dict(extra_fields)
-        extra_fields["token_level_scores"] = token_level_scores
+        extra_fields["generated_token_scores"] = token_level_scores
         extra_fields["turn_reward_spans"] = [
             {
                 "role": "injector",
@@ -455,7 +455,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "assessor_pred_sid": assessor_reward.pred_sid,
             "assessor_reward": float(assessor_reward.reward),
             "assessor_outcome": assessor_reward.outcome,
-            "token_level_scores": token_level_scores,
+            "generated_token_scores": token_level_scores,
             "turn_reward_spans": [
                 {
                     "role": "injector",

@@ -147,8 +147,8 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
                 module.judge_sentence_pair = original_judge
 
             self.assertEqual(len(output.response_ids), len(output.response_mask))
-            self.assertIn("token_level_scores", output.extra_fields)
-            scores = output.extra_fields["token_level_scores"]
+            self.assertIn("generated_token_scores", output.extra_fields)
+            scores = output.extra_fields["generated_token_scores"]
             self.assertEqual(len(scores), len(output.response_ids))
             self.assertGreater(output.extra_fields["injector_reward"], 0)
             self.assertGreater(output.extra_fields["assessor_reward"], 0)

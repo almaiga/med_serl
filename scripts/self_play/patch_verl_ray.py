@@ -157,7 +157,7 @@ if apath and apath.exists():
             rm_scores[torch.arange(response_mask.size(0)), response_length] = torch.tensor(scores, dtype=torch.float32)
             batch["rm_scores"] = rm_scores
 """
-    new_block = """        token_level_scores = [input.extra_fields.get("token_level_scores") for input in inputs]
+    new_block = """        token_level_scores = [input.extra_fields.get("generated_token_scores") for input in inputs]
         if any(score is not None for score in token_level_scores):
             rm_scores = torch.zeros_like(response_mask, dtype=torch.float32)
             for idx, score_list in enumerate(token_level_scores):
@@ -180,11 +180,15 @@ if apath and apath.exists():
                 rm_scores[torch.arange(response_mask.size(0)), response_length] = torch.tensor(scores, dtype=torch.float32)
                 batch["rm_scores"] = rm_scores
 """
-    if 'token_level_scores = [input.extra_fields.get("token_level_scores") for input in inputs]' in acode:
+    if 'token_level_scores = [input.extra_fields.get("generated_token_scores") for input in inputs]' in acode:
         print("agent_loop.py already patched")
     elif old_block in acode:
         acode = acode.replace(old_block, new_block)
         apath.write_text(acode)
         print(f"PATCHED: {apath} — enable token-level rm_scores from agent loop extra_fields")
+    elif 'token_level_scores = [input.extra_fields.get("token_level_scores") for input in inputs]' in acode:
+        acode = acode.replace('token_level_scores = [input.extra_fields.get("token_level_scores") for input in inputs]', '        token_level_scores = [input.extra_fields.get("generated_token_scores") for input in inputs]')
+        apath.write_text(acode)
+        print(f"PATCHED: {apath} — updated token-level rm_scores to use generated_token_scores")
     else:
         print(f"WARNING: agent_loop.py — could not find rm_scores block (manual check needed)")
