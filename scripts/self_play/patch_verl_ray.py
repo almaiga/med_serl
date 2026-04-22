@@ -16,8 +16,10 @@ import importlib.util
 
 def _first_existing(*paths: str) -> pathlib.Path | None:
     for raw in paths:
+        if not raw:
+            continue
         p = pathlib.Path(raw)
-        if p.exists():
+        if p.is_file():
             return p
     return None
 
@@ -187,7 +189,10 @@ if apath and apath.exists():
         apath.write_text(acode)
         print(f"PATCHED: {apath} — enable token-level rm_scores from agent loop extra_fields")
     elif 'token_level_scores = [input.extra_fields.get("token_level_scores") for input in inputs]' in acode:
-        acode = acode.replace('token_level_scores = [input.extra_fields.get("token_level_scores") for input in inputs]', '        token_level_scores = [input.extra_fields.get("generated_token_scores") for input in inputs]')
+        acode = acode.replace(
+            '        token_level_scores = [input.extra_fields.get("token_level_scores") for input in inputs]',
+            '        token_level_scores = [input.extra_fields.get("generated_token_scores") for input in inputs]'
+        )
         apath.write_text(acode)
         print(f"PATCHED: {apath} — updated token-level rm_scores to use generated_token_scores")
     else:
