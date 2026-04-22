@@ -561,6 +561,24 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def make_progress(total: int, enabled: bool = True):
+    if not enabled:
+        return _NullProgress()
+    try:
+        from tqdm import tqdm  # type: ignore
+        return tqdm(total=total, desc="Benchmarking judge", unit="sample")
+    except ImportError:
+        return _NullProgress()
+
+
+class _NullProgress:
+    def update(self, n: int = 1) -> None:
+        del n
+
+    def close(self) -> None:
+        pass
+
+
 def print_summary(
     results: list[dict[str, Any]],
     wall_time_s: float,
@@ -688,8 +706,8 @@ async def async_main(args: argparse.Namespace) -> int:
         print("Loading local judge model...")
         local_judge = LocalTransformersJudge(args.judge_model, device=args.device)
     started = time.perf_counter()
-    results = await asyncio.gather(
-        *(
+    tasks = [
+        asyncio.create_task(
             run_case(
                 case=case,
                 backend=args.backend,
@@ -700,9 +718,18 @@ async def async_main(args: argparse.Namespace) -> int:
                 semaphore=semaphore,
                 local_judge=local_judge,
             )
-            for case in cases
         )
-    )
+        for case in cases
+    ]
+
+    results: list[dict[str, Any]] = []
+    progress = make_progress(len(tasks), enabled=not args.dry_run)
+    try:
+        for task in asyncio.as_completed(tasks):
+            results.append(await task)
+            progress.update(1)
+    finally:
+        progress.close()
     wall_time_s = time.perf_counter() - started
 
     if args.sample_id:
