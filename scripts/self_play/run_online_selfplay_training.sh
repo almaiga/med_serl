@@ -1,11 +1,7 @@
 #!/bin/bash
-# MedSeRL online batched self-play loop using the vLLM chained datagen path.
-#
-# This wraps run_multiturn_training.sh in an outer loop:
-#   round N model -> regenerate chained parquet -> short VERL train ->
-#   save actor checkpoint -> use that checkpoint for round N+1 datagen.
+# MedSeRL online self-play loop on top of the vLLM async agent-loop runtime.
 
-set -e
+set -euo pipefail
 
 SCREEN_SESSION="${SCREEN_SESSION:-medserl_online_selfplay}"
 AUTO_SCREEN="${AUTO_SCREEN:-1}"
@@ -46,15 +42,13 @@ fi
 PROJECT_ROOT="${PROJECT_ROOT:-$REPO_ROOT}"
 ONLINE_ROUNDS="${ONLINE_ROUNDS:-6}"
 TRAIN_EPOCHS_PER_ROUND="${TRAIN_EPOCHS_PER_ROUND:-1}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/self_play_online_vllm}"
-EXPERIMENT_NAME_BASE="${EXPERIMENT_NAME_BASE:-medserl_selfplay_online_vllm}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/self_play_online_vllm_agent_loop}"
+EXPERIMENT_NAME_BASE="${EXPERIMENT_NAME_BASE:-medserl_selfplay_online_vllm_agent_loop}"
 INITIAL_MODEL_PATH="${INITIAL_MODEL_PATH:-${ACTOR_MODEL:-Abdine/qwen3-4b-medrect-mixed}}"
 REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
 KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
 ROUND_SAVE_FREQ="${ROUND_SAVE_FREQ:-34}"
 RESUME_INCOMPLETE_ROUND="${RESUME_INCOMPLETE_ROUND:-1}"
-WANDB="${WANDB:-1}"
-WANDB_PROJECT="${WANDB_PROJECT:-medserl-selfplay}"
 
 find_latest_actor_checkpoint() {
     local round_dir="$1"
@@ -81,7 +75,7 @@ fi
 mkdir -p "$PROJECT_ROOT/$OUTPUT_ROOT"
 
 echo "=================================================="
-echo "MedSeRL Online Batched Self-Play (vLLM + VERL)"
+echo "MedSeRL Online Self-Play (vLLM agent loop)"
 echo "=================================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Output root : $OUTPUT_ROOT"
@@ -90,9 +84,7 @@ echo "Train/round : $TRAIN_EPOCHS_PER_ROUND"
 echo "Initial mdl : $INITIAL_MODEL_PATH"
 echo "Save freq   : $ROUND_SAVE_FREQ"
 echo "Judge req   : $REQUIRE_JUDGE"
-echo "Reward mode : remote judge + rule reward"
 echo "Resume inc. : $RESUME_INCOMPLETE_ROUND"
-echo "W&B         : $WANDB ($WANDB_PROJECT)"
 echo "=================================================="
 
 CURRENT_MODEL_PATH="$INITIAL_MODEL_PATH"
@@ -100,7 +92,6 @@ CURRENT_MODEL_PATH="$INITIAL_MODEL_PATH"
 for ROUND in $(seq 1 "$ONLINE_ROUNDS"); do
     ROUND_DIR="$PROJECT_ROOT/$OUTPUT_ROOT/round_${ROUND}"
     ROUND_NAME="${EXPERIMENT_NAME_BASE}_round_${ROUND}"
-    ROUND_DATA_DIR="$ROUND_DIR/data"
     ROUND_COMPLETE_MARKER="$ROUND_DIR/round_complete.txt"
 
     echo ""
@@ -118,37 +109,33 @@ for ROUND in $(seq 1 "$ONLINE_ROUNDS"); do
         continue
     fi
 
-    ROUND_SKIP_DATAGEN=0
     ROUND_RESUME_MODE="disable"
     if [ "$RESUME_INCOMPLETE_ROUND" = "1" ] && [ -d "$ROUND_DIR" ]; then
         LATEST_STEP_DIR="$(find_latest_actor_checkpoint "$ROUND_DIR")"
-        if [ -n "$LATEST_STEP_DIR" ] && [ -f "$ROUND_DATA_DIR/train_chained.parquet" ]; then
-            ROUND_SKIP_DATAGEN=1
+        if [ -n "$LATEST_STEP_DIR" ]; then
             ROUND_RESUME_MODE="auto"
             echo "Resuming incomplete round $ROUND from $LATEST_STEP_DIR"
         fi
     fi
 
-    echo "Injector model: $CURRENT_MODEL_PATH"
-    echo "Skip datagen : $ROUND_SKIP_DATAGEN"
-    echo "Resume mode  : $ROUND_RESUME_MODE"
+    echo "Actor model : $CURRENT_MODEL_PATH"
+    echo "Resume mode : $ROUND_RESUME_MODE"
 
     AUTO_SCREEN=0 \
     ACTOR_MODEL="$CURRENT_MODEL_PATH" \
     OUTPUT_DIR="$ROUND_DIR" \
-    DATA_DIR="$ROUND_DATA_DIR" \
+    DATA_DIR="$ROUND_DIR/data" \
     EXPERIMENT_NAME="$ROUND_NAME" \
     TOTAL_EPOCHS="$TRAIN_EPOCHS_PER_ROUND" \
     SAVE_FREQ="$ROUND_SAVE_FREQ" \
     REQUIRE_JUDGE="$REQUIRE_JUDGE" \
     RESUME_MODE="$ROUND_RESUME_MODE" \
-    SKIP_DATAGEN="$ROUND_SKIP_DATAGEN" \
+    SELFPLAY_RUNTIME=vllm_agent_loop \
     bash "$PROJECT_ROOT/scripts/self_play/run_multiturn_training.sh"
 
     LATEST_STEP_DIR="$(find_latest_actor_checkpoint "$ROUND_DIR")"
     if [ -z "$LATEST_STEP_DIR" ] || [ ! -d "$LATEST_STEP_DIR/actor" ]; then
         echo "ERROR: No actor checkpoint found after round $ROUND."
-        echo "Expected a directory like: $ROUND_DIR/global_step_*/actor"
         exit 1
     fi
 
@@ -162,9 +149,9 @@ for ROUND in $(seq 1 "$ONLINE_ROUNDS"); do
     CURRENT_MODEL_PATH="$(resolve_actor_model_path "$LATEST_STEP_DIR")"
     if [ -z "$CURRENT_MODEL_PATH" ]; then
         echo "ERROR: No loadable Hugging Face actor export found after round $ROUND."
-        echo "Expected config.json under $LATEST_STEP_DIR/actor/huggingface or $LATEST_STEP_DIR/actor"
         exit 1
     fi
+
     printf '%s\n' "$CURRENT_MODEL_PATH" > "$ROUND_COMPLETE_MARKER"
     printf '%s\n' "$CURRENT_MODEL_PATH" > "$PROJECT_ROOT/$OUTPUT_ROOT/latest_actor_path.txt"
     echo "Next round actor checkpoint: $CURRENT_MODEL_PATH"

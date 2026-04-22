@@ -23,9 +23,8 @@ import os
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, Optional
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
+from scripts.self_play.judge_client import judge_sentence_pair
 from scripts.self_play.reward_function import (
     compute_score as rule_compute_score,
     interaction_reward_passthrough,
@@ -40,51 +39,12 @@ from scripts.self_play.utils import (
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "simple_judge_prompts.json"
-_PROMPT_CACHE: Optional[dict] = None
-
 JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
 JUDGE_WEIGHT = float(os.getenv("SIMPLE_JUDGE_WEIGHT", "0.3"))
 JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "20"))
 JUDGE_DISABLED = os.getenv("DISABLE_SIMPLE_JUDGE", "0") == "1"
 _JUDGE_TRACE_FILE: Optional[Path] = None
-
-
-def _load_prompt_config() -> dict:
-    global _PROMPT_CACHE
-    if _PROMPT_CACHE is None:
-        with open(_PROMPT_PATH, "r") as f:
-            _PROMPT_CACHE = json.load(f)
-    return _PROMPT_CACHE
-
-
-def _extract_json_object(text: str) -> Optional[dict]:
-    text = text.strip()
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else None
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
-
-    start = text.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    parsed = json.loads(text[start:i + 1])
-                    return parsed if isinstance(parsed, dict) else None
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    return None
-    return None
 
 
 def _has_interaction_result(extra_info: dict) -> bool:
@@ -172,38 +132,12 @@ def _base_score(data_source, solution_str, ground_truth, extra_info: dict) -> fl
     return rule_compute_score(data_source, solution_str, ground_truth, extra_info)
 
 
-def _sync_post_json(url: str, payload: dict) -> dict:
-    req = Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urlopen(req, timeout=JUDGE_TIMEOUT) as resp:
-        body = resp.read().decode("utf-8")
-    return json.loads(body)
-
-
-async def _post_json(url: str, payload: dict) -> dict:
-    try:
-        import aiohttp  # type: ignore
-    except ImportError:
-        return await asyncio.to_thread(_sync_post_json, url, payload)
-
-    timeout = aiohttp.ClientTimeout(total=JUDGE_TIMEOUT)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, json=payload) as resp:
-            resp.raise_for_status()
-            return await resp.json()
-
-
 async def _judge_with_llm(
     solution_str: str,
     extra_info: dict,
     expected_relation: str,
     reward_router_address: Optional[str] = None,
 ) -> dict:
-    prompt_cfg = _load_prompt_config()
     changed_sid, original_sentence, modified_sentence = _resolve_injector_sentence_pair(
         solution_str, extra_info
     )
@@ -220,124 +154,18 @@ async def _judge_with_llm(
             "changed_sid": changed_sid,
         }
 
-    user_prompt = prompt_cfg["user_template"].format(
+    judge_result = await judge_sentence_pair(
         note_id=extra_info.get("note_id", ""),
         error_type=extra_info.get("error_type", ""),
         changed_sid=changed_sid,
-        original_sentence=original_sentence[:2000],
-        modified_sentence=modified_sentence[:2000],
+        original_sentence=original_sentence,
+        modified_sentence=modified_sentence,
+        judge_url=JUDGE_URL,
+        judge_model=JUDGE_MODEL,
+        reward_router_address=reward_router_address,
     )
-    messages = [{"role": "system", "content": prompt_cfg["system_prompt"]}]
-    for ex in prompt_cfg.get("few_shot_examples", []):
-        messages.append(
-            {
-                "role": "user",
-                "content": prompt_cfg["user_template"].format(
-                    note_id=ex.get("note_id", "example"),
-                    error_type=ex.get("error_type", ""),
-                    changed_sid=ex.get("changed_sid", "?"),
-                    original_sentence=ex["original_sentence"],
-                    modified_sentence=ex["modified_sentence"],
-                ),
-            }
-        )
-        messages.append(
-            {
-                "role": "assistant",
-                "content": json.dumps(
-                    {
-                        "verdict": ex["verdict"],
-                        "score": ex["score"],
-                        "reason": ex["reason"],
-                    }
-                ),
-            }
-        )
-    messages.append({"role": "user", "content": user_prompt})
-
-    payload = {
-        "messages": messages,
-        **prompt_cfg.get("sampling_params", {}),
-    }
-    payload["chat_template_kwargs"] = {"enable_thinking": False}
-    if reward_router_address:
-        target_url = reward_router_address
-    elif JUDGE_URL:
-        target_url = JUDGE_URL
-        payload.setdefault("model", JUDGE_MODEL)
-    else:
-        return {
-            "signed_score": 0.0,
-            "verdict": "ABSTAIN",
-            "judge_score": 0.0,
-            "reason": "no_judge_url",
-            "judge_output": "",
-            "original_sentence": original_sentence,
-            "modified_sentence": modified_sentence,
-            "changed_sid": changed_sid,
-        }
-
-    try:
-        result = await _post_json(target_url, payload)
-    except (URLError, OSError, asyncio.TimeoutError, ValueError) as exc:
-        logger.warning("Simple judge request failed: %s", exc)
-        return {
-            "signed_score": 0.0,
-            "verdict": "ABSTAIN",
-            "judge_score": 0.0,
-            "reason": f"request_failed:{exc}",
-            "judge_output": "",
-            "original_sentence": original_sentence,
-            "modified_sentence": modified_sentence,
-            "changed_sid": changed_sid,
-        }
-    except Exception as exc:  # pragma: no cover - safety net
-        logger.warning("Simple judge unexpected failure: %s", exc)
-        return {
-            "signed_score": 0.0,
-            "verdict": "ABSTAIN",
-            "judge_score": 0.0,
-            "reason": f"unexpected_error:{exc}",
-            "judge_output": "",
-            "original_sentence": original_sentence,
-            "modified_sentence": modified_sentence,
-            "changed_sid": changed_sid,
-        }
-
-    try:
-        content = result["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return {
-            "signed_score": 0.0,
-            "verdict": "ABSTAIN",
-            "judge_score": 0.0,
-            "reason": "bad_response_shape",
-            "judge_output": "",
-            "original_sentence": original_sentence,
-            "modified_sentence": modified_sentence,
-            "changed_sid": changed_sid,
-        }
-
-    _, stripped = strip_thinking(content)
-    verdict = _extract_json_object(stripped) or _extract_json_object(content)
-    if not verdict:
-        return {
-            "signed_score": 0.0,
-            "verdict": "ABSTAIN",
-            "judge_score": 0.0,
-            "reason": "no_json_verdict",
-            "judge_output": content[:2000],
-            "original_sentence": original_sentence,
-            "modified_sentence": modified_sentence,
-            "changed_sid": changed_sid,
-        }
-
-    label = str(verdict.get("verdict", "ABSTAIN")).upper()
-    try:
-        score = float(verdict.get("score", 0.0))
-    except (TypeError, ValueError):
-        score = 0.0
-    score = max(0.0, min(1.0, score))
+    label = str(judge_result.get("verdict", "ABSTAIN")).upper()
+    score = float(judge_result.get("judge_score", 0.0))
 
     if label == expected_relation:
         signed_score = score
@@ -350,8 +178,8 @@ async def _judge_with_llm(
         "signed_score": signed_score,
         "verdict": label,
         "judge_score": score,
-        "reason": str(verdict.get("reason", ""))[:1000],
-        "judge_output": content[:2000],
+        "reason": str(judge_result.get("reason", ""))[:1000],
+        "judge_output": str(judge_result.get("judge_output", ""))[:2000],
         "original_sentence": original_sentence,
         "modified_sentence": modified_sentence,
         "changed_sid": changed_sid,

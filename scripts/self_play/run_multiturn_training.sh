@@ -1,13 +1,11 @@
 #!/bin/bash
 # MedSeRL self-play training launcher.
 #
-# Active path: batched chained injector -> assessor self-play using offline vLLM
-# data generation plus standard single-turn VERL training.
-#
-# This aligns with the simpler official VERL rollout setup for vLLM and avoids
-# the SGLang interaction-system runtime for this experiment.
+# Default path: vLLM async agent loop with batched two-phase self-play.
+# Compatibility path: set SELFPLAY_RUNTIME=chained to fall back to the older
+# offline chained parquet generation flow.
 
-set -e
+set -euo pipefail
 
 SCREEN_SESSION="${SCREEN_SESSION:-medserl_selfplay_train}"
 AUTO_SCREEN="${AUTO_SCREEN:-1}"
@@ -45,20 +43,19 @@ if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
     exit 0
 fi
 
+SELFPLAY_RUNTIME="${SELFPLAY_RUNTIME:-vllm_agent_loop}"
 SMOKE="${SMOKE:-0}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_chained_vllm}"
-EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_chained_vllm}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/self_play_vllm_agent_loop}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-medserl_selfplay_vllm_agent_loop}"
 MODEL_PATH="${ACTOR_MODEL:-Abdine/qwen3-4b-medrect-mixed}"
 N_GPUS="${N_GPUS:-2}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
 ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
 ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-6}"
-DATAGEN_GPU_MEMORY_UTILIZATION="${DATAGEN_GPU_MEMORY_UTILIZATION:-0.45}"
-DATAGEN_MAX_TOKENS="${DATAGEN_MAX_TOKENS:-1024}"
+ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-2048}"
+ROLLOUT_PROMPT_LENGTH="${ROLLOUT_PROMPT_LENGTH:-1024}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
 RAY_CLEAN_START="${RAY_CLEAN_START:-1}"
-ZERO_SUM="${ZERO_SUM:-1}"
-SKIP_DATAGEN="${SKIP_DATAGEN:-0}"
 REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
 RESUME_MODE="${RESUME_MODE:-disable}"
 RESUME_FROM_PATH="${RESUME_FROM_PATH:-}"
@@ -71,6 +68,12 @@ KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
 LIVE_CHECKPOINT_RETENTION="${LIVE_CHECKPOINT_RETENTION:-1}"
 CHECKPOINT_PRUNE_INTERVAL_SEC="${CHECKPOINT_PRUNE_INTERVAL_SEC:-120}"
 ACTOR_LR="${ACTOR_LR:-5e-7}"
+AGENT_LOOP_WORKERS="${AGENT_LOOP_WORKERS:-8}"
+INJECTOR_MAX_NEW_TOKENS="${INJECTOR_MAX_NEW_TOKENS:-512}"
+ASSESSOR_MAX_NEW_TOKENS="${ASSESSOR_MAX_NEW_TOKENS:-256}"
+SEED_AGENT_NAME="${SEED_AGENT_NAME:-medserl_selfplay_agent}"
+TRAIN_INPUT_JSONL="${TRAIN_INPUT_JSONL:-}"
+VAL_INPUT_JSONL="${VAL_INPUT_JSONL:-}"
 
 export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
@@ -83,8 +86,6 @@ if [ "$SMOKE" = "1" ]; then
     TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-4}"
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
-    MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
     SAVE_FREQ="${SAVE_FREQ:-auto}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
@@ -97,8 +98,6 @@ else
     TOTAL_EPOCHS="${TOTAL_EPOCHS:-1}"
     PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-8}"
     PPO_EPOCHS="${PPO_EPOCHS:-1}"
-    MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
-    MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-1024}"
     SAVE_FREQ="${SAVE_FREQ:--1}"
     TEST_FREQ="${TEST_FREQ:--1}"
     VAL_BEFORE_TRAIN="${VAL_BEFORE_TRAIN:-false}"
@@ -114,9 +113,18 @@ else
     CONDA_BASE="${HOME}/miniconda3"
 fi
 
-DATA_DIR="${DATA_DIR:-$PROJECT_ROOT/data_processed/self_play}"
-TRAIN_PARQUET="$DATA_DIR/train_chained.parquet"
-VAL_PARQUET="$DATA_DIR/val_chained.parquet"
+if [ -z "$TRAIN_INPUT_JSONL" ]; then
+    TRAIN_INPUT_JSONL="$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl"
+fi
+if [ -z "$VAL_INPUT_JSONL" ]; then
+    VAL_INPUT_JSONL="$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl"
+fi
+
+DATA_DIR="${DATA_DIR:-$PROJECT_ROOT/data_processed/self_play_vllm_agent_loop}"
+TRAIN_PARQUET="$DATA_DIR/train_injector_seed.parquet"
+VAL_PARQUET="$DATA_DIR/val_injector_seed.parquet"
+AGENT_LOOP_CONFIG_PATH="$PROJECT_ROOT/scripts/self_play/configs/agent_loop_config.yaml"
+CONFIG_PATH="$PROJECT_ROOT/scripts/self_play/configs"
 
 TRAINER_LOGGER="console"
 if [ "$WANDB" = "1" ]; then
@@ -124,19 +132,26 @@ if [ "$WANDB" = "1" ]; then
 fi
 
 echo "=================================================="
-echo "MedSeRL Self-Play Training (Chained vLLM)"
+echo "MedSeRL Self-Play Training"
 echo "=================================================="
+echo "Runtime: $SELFPLAY_RUNTIME"
 echo "Project root: $PROJECT_ROOT"
 echo "Model: $MODEL_PATH"
 echo "Output: $OUTPUT_DIR"
+echo "Train JSONL: $TRAIN_INPUT_JSONL"
+echo "Val JSONL: $VAL_INPUT_JSONL"
+echo "Seed parquet: $TRAIN_PARQUET"
 echo "Smoke mode: $SMOKE"
 echo "GPUs: $N_GPUS"
 echo "Rollout TP: $ROLLOUT_TP"
 echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
 echo "Rollout max num seqs: $ROLLOUT_MAX_NUM_SEQS"
-echo "Datagen GPU mem util: $DATAGEN_GPU_MEMORY_UTILIZATION"
-echo "Datagen max tokens: $DATAGEN_MAX_TOKENS"
-if [ -n "$MAX_PAIRS" ]; then
+echo "Rollout prompt length: $ROLLOUT_PROMPT_LENGTH"
+echo "Rollout response length: $ROLLOUT_RESPONSE_LENGTH"
+echo "Injector max new tokens: $INJECTOR_MAX_NEW_TOKENS"
+echo "Assessor max new tokens: $ASSESSOR_MAX_NEW_TOKENS"
+echo "Agent loop workers: $AGENT_LOOP_WORKERS"
+if [ -n "$MAX_PAIRS" ] && [ "$MAX_PAIRS" != "0" ]; then
     echo "Max pairs: $MAX_PAIRS"
 else
     echo "Max pairs: ALL"
@@ -144,18 +159,15 @@ fi
 echo "Train batch size: $TRAIN_BATCH_SIZE"
 echo "Actor LR: $ACTOR_LR"
 echo "Total epochs: $TOTAL_EPOCHS"
-echo "Max response length: $MAX_RESPONSE_LENGTH"
 echo "Ray CPUs: $RAY_NUM_CPUS"
 echo "Save freq: $SAVE_FREQ"
 echo "Test freq: $TEST_FREQ"
 echo "Val before train: $VAL_BEFORE_TRAIN"
-echo "Zero-sum pass: $ZERO_SUM"
 echo "Resume mode: $RESUME_MODE"
 echo "W&B: $WANDB"
 echo "Logger: $TRAINER_LOGGER"
-echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled - rule reward only>}"
+echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled>}"
 echo "Require judge: $REQUIRE_JUDGE"
-echo "Keep latest ckpt only: $KEEP_ONLY_LATEST_CHECKPOINT"
 echo "=================================================="
 
 if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
@@ -179,6 +191,7 @@ export PYTHONFAULTHANDLER=1
 export HYDRA_FULL_ERROR=1
 export WANDB_PROJECT
 export WANDB_MODE
+export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="$ASSESSOR_MAX_NEW_TOKENS"
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_API_KEY
 fi
@@ -197,9 +210,11 @@ if [ "$REQUIRE_JUDGE" = "1" ] && [ -z "${JUDGE_VLLM_URL:-}" ]; then
     exit 1
 fi
 
+cd "$PROJECT_ROOT"
+mkdir -p "$OUTPUT_DIR" "$DATA_DIR"
+
 python3 - <<'PY'
 import ray, torch
-
 print(f"Version check: ray={ray.__version__}")
 print(f"Version check: torch={torch.__version__}")
 try:
@@ -209,116 +224,56 @@ except Exception as exc:
     print(f"Version check: vllm import failed: {exc}")
 PY
 
-cd "$PROJECT_ROOT"
-mkdir -p "$OUTPUT_DIR"
-mkdir -p "$DATA_DIR"
-
-RUN_CONFIG_PATH="$OUTPUT_DIR/launcher_config.json"
-python3 - <<PY
-import json
-from pathlib import Path
-
-config = {
-    "model_path": "$MODEL_PATH",
-    "output_dir": "$OUTPUT_DIR",
-    "data_dir": "$DATA_DIR",
-    "smoke": "$SMOKE",
-    "n_gpus": "$N_GPUS",
-    "rollout_tp": "$ROLLOUT_TP",
-    "rollout_gpu_memory_utilization": "$ROLLOUT_GPU_MEMORY_UTILIZATION",
-    "rollout_max_num_seqs": "$ROLLOUT_MAX_NUM_SEQS",
-    "datagen_gpu_memory_utilization": "$DATAGEN_GPU_MEMORY_UTILIZATION",
-    "datagen_max_tokens": "$DATAGEN_MAX_TOKENS",
-    "max_pairs": "$MAX_PAIRS",
-    "train_batch_size": "$TRAIN_BATCH_SIZE",
-    "val_batch_size": "$VAL_BATCH_SIZE",
-    "ppo_mini_batch_size": "$PPO_MINI_BATCH_SIZE",
-    "ppo_epochs": "$PPO_EPOCHS",
-    "actor_lr": "$ACTOR_LR",
-    "total_epochs": "$TOTAL_EPOCHS",
-    "max_prompt_length": "$MAX_PROMPT_LENGTH",
-    "max_response_length": "$MAX_RESPONSE_LENGTH",
-    "save_freq": "$SAVE_FREQ",
-    "test_freq": "$TEST_FREQ",
-    "val_before_train": "$VAL_BEFORE_TRAIN",
-    "zero_sum": "$ZERO_SUM",
-    "skip_datagen": "$SKIP_DATAGEN",
-    "require_judge": "$REQUIRE_JUDGE",
-    "resume_mode": "$RESUME_MODE",
-    "resume_from_path": "$RESUME_FROM_PATH",
-    "wandb": "$WANDB",
-    "wandb_project": "$WANDB_PROJECT",
-    "wandb_entity": "$WANDB_ENTITY",
-    "wandb_base_url": "$WANDB_BASE_URL",
-    "wandb_mode": "$WANDB_MODE",
-    "experiment_name": "$EXPERIMENT_NAME",
-    "trainer_logger": "$TRAINER_LOGGER",
-}
-Path("$RUN_CONFIG_PATH").write_text(json.dumps(config, indent=2) + "\\n", encoding="utf-8")
-print(f"Saved launcher config to $RUN_CONFIG_PATH")
-PY
+if [ "$SELFPLAY_RUNTIME" = "chained" ]; then
+    echo "SELFPLAY_RUNTIME=chained selected; delegating to legacy launcher is no longer supported here."
+    echo "Use the git history or restore the previous script if you need the old path."
+    exit 1
+fi
 
 echo ""
-echo "=== Phase A: Chained Data Generation ==="
-DATAGEN_MAX_PAIRS_ARGS=()
+echo "=== Patching veRL Runtime ==="
+python3 "$PROJECT_ROOT/scripts/self_play/patch_verl_ray.py"
+
+echo ""
+echo "=== Phase A: Build Injector Seed Parquet ==="
+MAX_PAIRS_ARGS=()
 if [ -n "$MAX_PAIRS" ] && [ "$MAX_PAIRS" != "0" ]; then
-    DATAGEN_MAX_PAIRS_ARGS=(--max-pairs "$MAX_PAIRS")
+    MAX_PAIRS_ARGS=(--max-pairs "$MAX_PAIRS")
 fi
 
-if [ "$SKIP_DATAGEN" = "1" ] && [ -f "$TRAIN_PARQUET" ]; then
-    echo "SKIP_DATAGEN=1 — reusing existing $TRAIN_PARQUET"
-else
-    ZERO_SUM_FLAG=""
-    if [ "$ZERO_SUM" = "1" ]; then
-        ZERO_SUM_FLAG="--zero-sum"
-    fi
+python3 "$PROJECT_ROOT/scripts/self_play/preprocess_medec.py" \
+    --input "$TRAIN_INPUT_JSONL" \
+    --output "$TRAIN_PARQUET" \
+    --roles injector \
+    --agent-name "$SEED_AGENT_NAME" \
+    "${MAX_PAIRS_ARGS[@]}"
 
-    python3 scripts/self_play/generate_chained_data.py \
-        --model "$MODEL_PATH" \
-        --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_train.jsonl" \
-        --output "$TRAIN_PARQUET" \
-        --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
-        --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
-        --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
-        --max-tokens "$DATAGEN_MAX_TOKENS" \
-        "${DATAGEN_MAX_PAIRS_ARGS[@]}" \
-        $ZERO_SUM_FLAG
-fi
-
-if [ -f "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl" ] && [ "$SKIP_DATAGEN" != "1" ]; then
-    ZERO_SUM_FLAG=""
-    if [ "$ZERO_SUM" = "1" ]; then
-        ZERO_SUM_FLAG="--zero-sum"
-    fi
-    python3 scripts/self_play/generate_chained_data.py \
-        --model "$MODEL_PATH" \
-        --input "$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl" \
+if [ -f "$VAL_INPUT_JSONL" ]; then
+    python3 "$PROJECT_ROOT/scripts/self_play/preprocess_medec.py" \
+        --input "$VAL_INPUT_JSONL" \
         --output "$VAL_PARQUET" \
-        --injection-prompts "$PROJECT_ROOT/configs/prompts/error_injection_prompts_v4.json" \
-        --detection-prompts "$PROJECT_ROOT/configs/prompts/detection_localization_prompts.json" \
-        --gpu-memory-utilization "$DATAGEN_GPU_MEMORY_UTILIZATION" \
-        --max-tokens "$DATAGEN_MAX_TOKENS" \
-        "${DATAGEN_MAX_PAIRS_ARGS[@]}" \
-        $ZERO_SUM_FLAG
+        --roles injector \
+        --agent-name "$SEED_AGENT_NAME" \
+        "${MAX_PAIRS_ARGS[@]}"
 elif [ ! -f "$VAL_PARQUET" ]; then
-    echo "Warning: No separate validation parquet, copying training parquet"
     cp "$TRAIN_PARQUET" "$VAL_PARQUET"
 fi
 
 echo ""
-echo "=== Verifying Chained Data Format ==="
+echo "=== Verifying Seed Data Format ==="
 TRAIN_EXAMPLE_COUNT="$(python3 - <<PY
 import pyarrow.parquet as pq
 table = pq.read_table("$TRAIN_PARQUET")
 df = table.to_pandas()
 print(f"Total examples: {len(df)}")
+print("Agent names:", df["agent_name"].value_counts().to_dict())
 print("Roles:", df["extra_info"].apply(lambda x: x.get("role", "?")).value_counts().to_dict())
-print("Chained assessor rows:", int(df["extra_info"].apply(lambda x: bool(x.get("chained"))).sum()))
+print("Modes:", df["extra_info"].apply(lambda x: x.get("mode", "?")).value_counts().to_dict())
 print("Prompt type:", type(df.iloc[0]["prompt"]))
-print("✓ Chained data ready")
+print("✓ Injector seed data ready")
 print(len(df))
 PY
-) "
+)"
 printf '%s\n' "$TRAIN_EXAMPLE_COUNT" | sed '$d'
 TRAIN_EXAMPLE_COUNT="$(printf '%s\n' "$TRAIN_EXAMPLE_COUNT" | tail -n 1)"
 
@@ -371,10 +326,7 @@ cleanup_checkpoint_pruner() {
 trap cleanup_checkpoint_pruner EXIT
 
 echo ""
-echo "=== Phase B: vLLM REINFORCE++ Training ==="
-echo "Stage 1: offline injector batch via vLLM"
-echo "Stage 2: offline assessor batch via vLLM"
-echo "Stage 3: standard single-turn VERL training on chained parquet"
+echo "=== Phase B: vLLM Async Agent-Loop Training ==="
 
 if [ "$RAY_CLEAN_START" = "1" ]; then
     if command -v ray >/dev/null 2>&1; then
@@ -411,15 +363,16 @@ if [ "$KEEP_ONLY_LATEST_CHECKPOINT" = "1" ]; then
 fi
 
 python3 -m verl.trainer.main_ppo \
-    --config-name="ppo_trainer" \
+    --config-path="$CONFIG_PATH" \
+    --config-name="ppo_vllm_agent_loop" \
     algorithm.adv_estimator=reinforce_plus_plus \
     data.train_files="$TRAIN_PARQUET" \
     data.val_files="$VAL_PARQUET" \
     data.return_raw_chat=True \
     data.train_batch_size="$TRAIN_BATCH_SIZE" \
     data.val_batch_size="$VAL_BATCH_SIZE" \
-    data.max_prompt_length="$MAX_PROMPT_LENGTH" \
-    data.max_response_length="$MAX_RESPONSE_LENGTH" \
+    data.max_prompt_length="$ROLLOUT_PROMPT_LENGTH" \
+    data.max_response_length="$ROLLOUT_RESPONSE_LENGTH" \
     data.filter_overlong_prompts=True \
     data.truncation=error \
     data.shuffle=True \
@@ -441,16 +394,21 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
     actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
     actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.temperature=0.7 \
-    actor_rollout_ref.rollout.top_p=0.9 \
+    actor_rollout_ref.rollout.mode=async \
+    actor_rollout_ref.rollout.temperature=0.6 \
+    actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.top_k=-1 \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
     actor_rollout_ref.rollout.gpu_memory_utilization="$ROLLOUT_GPU_MEMORY_UTILIZATION" \
     actor_rollout_ref.rollout.max_num_seqs="$ROLLOUT_MAX_NUM_SEQS" \
-    actor_rollout_ref.rollout.free_cache_engine=False \
+    actor_rollout_ref.rollout.prompt_length="$ROLLOUT_PROMPT_LENGTH" \
+    actor_rollout_ref.rollout.response_length="$ROLLOUT_RESPONSE_LENGTH" \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.agent.num_workers="$AGENT_LOOP_WORKERS" \
+    actor_rollout_ref.rollout.agent.default_agent_loop="$SEED_AGENT_NAME" \
+    actor_rollout_ref.rollout.agent.agent_loop_config_path="$AGENT_LOOP_CONFIG_PATH" \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
@@ -483,6 +441,9 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.RAY_DEDUP_LOGS=0" \
     "++ray_kwargs.runtime_env.env_vars.HYDRA_FULL_ERROR=1" \
     "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
+    "++ray_kwargs.runtime_env.env_vars.JUDGE_VLLM_URL=${JUDGE_VLLM_URL:-}" \
+    "++ray_kwargs.runtime_env.env_vars.JUDGE_MODEL=$JUDGE_MODEL" \
+    "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_MAX_NEW_TOKENS=$ASSESSOR_MAX_NEW_TOKENS" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_PROJECT=$WANDB_PROJECT" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_MODE=$WANDB_MODE" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_API_KEY=${WANDB_API_KEY:-}" \

@@ -56,6 +56,7 @@ def create_benign_example(
     injection_prompts: dict,
     idx: int,
     data_source: str = "medec_selfplay",
+    agent_name: str = "medserl_selfplay_agent",
 ) -> dict:
     """Create a benign modification example (ground_truth = CORRECT).
     
@@ -83,7 +84,7 @@ def create_benign_example(
     
     return {
         "data_source": data_source,
-        "agent_name": "tool_agent",
+        "agent_name": agent_name,
         "prompt": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -121,6 +122,7 @@ def create_error_example(
     injection_prompts: dict,
     idx: int,
     data_source: str = "medec_selfplay",
+    agent_name: str = "medserl_selfplay_agent",
 ) -> dict:
     """Create an error injection example (ground_truth = sentence number).
     
@@ -154,7 +156,7 @@ def create_error_example(
     
     return {
         "data_source": data_source,
-        "agent_name": "tool_agent",
+        "agent_name": agent_name,
         "prompt": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -194,6 +196,7 @@ def create_assessor_example(
     idx: int,
     mode: str,
     data_source: str = "medec_selfplay",
+    agent_name: str = "tool_agent",
 ) -> dict:
     """Create an assessor-role example using ground-truth MEDEC notes.
 
@@ -223,7 +226,7 @@ def create_assessor_example(
 
     return {
         "data_source": data_source,
-        "agent_name": "tool_agent",
+        "agent_name": agent_name,
         "prompt": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -257,6 +260,7 @@ def convert_to_parquet(
     data_source: str = "medec_selfplay",
     max_pairs: int = None,
     roles: str = "mixed",
+    agent_name: str = "medserl_selfplay_agent",
 ) -> None:
     """Convert JSONL to Parquet format for verl.
 
@@ -294,17 +298,17 @@ def convert_to_parquet(
             continue
 
         if roles in ("injector", "mixed"):
-            benign_ex = create_benign_example(pair, injection_prompts, idx, data_source)
+            benign_ex = create_benign_example(pair, injection_prompts, idx, data_source, agent_name)
             verl_examples.append(benign_ex)
-            error_ex = create_error_example(pair, injection_prompts, idx, data_source)
+            error_ex = create_error_example(pair, injection_prompts, idx, data_source, agent_name)
             verl_examples.append(error_ex)
             if error_ex["extra_info"]["error_sentence_id"] is None:
                 missing_sid_count += 1
 
         if roles in ("assessor", "mixed"):
-            assessor_benign = create_assessor_example(pair, detection_prompts, idx, "benign", data_source)
+            assessor_benign = create_assessor_example(pair, detection_prompts, idx, "benign", data_source, agent_name)
             verl_examples.append(assessor_benign)
-            assessor_error = create_assessor_example(pair, detection_prompts, idx, "error", data_source)
+            assessor_error = create_assessor_example(pair, detection_prompts, idx, "error", data_source, agent_name)
             verl_examples.append(assessor_error)
             if assessor_error["extra_info"]["error_sentence_id"] is None:
                 missing_sid_count += 1
@@ -408,6 +412,12 @@ def main():
         choices=["injector", "assessor", "mixed"],
         help="Which role examples to generate: injector (2/pair), assessor (2/pair), mixed (4/pair)",
     )
+    parser.add_argument(
+        "--agent-name",
+        type=str,
+        default="medserl_selfplay_agent",
+        help="Agent loop name written into the parquet rows",
+    )
 
     args = parser.parse_args()
     convert_to_parquet(
@@ -418,6 +428,7 @@ def main():
         args.data_source,
         args.max_pairs,
         args.roles,
+        args.agent_name,
     )
 
 

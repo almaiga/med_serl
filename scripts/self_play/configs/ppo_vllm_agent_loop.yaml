@@ -1,0 +1,47 @@
+# MedSeRL vLLM async agent-loop configuration.
+#
+# This uses veRL's generic agent loop runtime on top of vLLM rather than the
+# SGLang-only interaction system.
+
+hydra:
+  searchpath:
+    - pkg://verl.trainer.config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  max_prompt_length: 1024
+  max_response_length: 2048
+  train_batch_size: 16
+  return_raw_chat: True
+  trust_remote_code: True
+
+actor_rollout_ref:
+  hybrid_engine: True
+  model:
+    trust_remote_code: True
+    enable_gradient_checkpointing: True
+  rollout:
+    name: vllm
+    mode: async
+    enable_sleep_mode: True
+    free_cache_engine: True
+    load_format: dummy
+    temperature: 0.6
+    top_p: 0.95
+    top_k: -1
+    gpu_memory_utilization: 0.5
+    tensor_model_parallel_size: 1
+    n: 1
+    agent:
+      num_workers: 8
+      default_agent_loop: medserl_selfplay_agent
+      agent_loop_config_path: null
+
+algorithm:
+  adv_estimator: reinforce_plus_plus
+
+critic:
+  enable: false
