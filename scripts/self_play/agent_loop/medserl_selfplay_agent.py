@@ -247,7 +247,6 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         repetition_penalty: Optional[float] = None,
     ) -> dict[str, Any]:
         updated = dict(sampling_params)
-        updated["max_new_tokens"] = int(max_new_tokens)
         updated["max_tokens"] = int(max_new_tokens)
         if temperature is not None:
             updated["temperature"] = float(temperature)
