@@ -25,7 +25,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.self_play.utils import parse_numbered_sentences, strip_thinking  # noqa: E402
+from scripts.self_play.utils import (  # noqa: E402
+    parse_injector_compact,
+    parse_numbered_sentences,
+    strip_thinking,
+)
 
 
 DEFAULT_BENIGN = Path(
@@ -42,6 +46,11 @@ DEFAULT_JUDGE_URL = os.getenv(
 )
 DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
 DEFAULT_JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "20"))
+DEFAULT_JUDGE_WEIGHT = float(os.getenv("SIMPLE_JUDGE_WEIGHT", "0.3"))
+REWARD_EXACT = 1.0
+REWARD_PARTIAL = 0.3
+FORMAT_BONUS = 0.2
+REWARD_MISS = -1.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,6 +72,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_JUDGE_TIMEOUT,
         help="Per-request timeout in seconds.",
+    )
+    parser.add_argument(
+        "--judge-weight",
+        type=float,
+        default=DEFAULT_JUDGE_WEIGHT,
+        help="Weight used in final_score = base_rule_score + judge_weight * signed_judge_score.",
     )
     parser.add_argument(
         "--benign-file",
@@ -264,6 +279,8 @@ def build_case(record: dict[str, Any], mode: str, prompt_cfg: dict[str, Any]) ->
         "mode": mode,
         "expected_relation": expected_relation,
         "changed_sid": changed_sid,
+        "solution_str": str(record.get("label") or f"{changed_sid}. {modified_sentence}"),
+        "expected_sid": record.get("error_sentence_id"),
         "error_type": error_type,
         "original_note": numbered_note,
         "original_sentence": original_sentence,
@@ -351,42 +368,90 @@ async def run_case(
     judge_url: str,
     judge_model: str,
     timeout: float,
+    judge_weight: float,
     semaphore: asyncio.Semaphore,
 ) -> dict[str, Any]:
     payload = dict(case["payload"])
     payload["model"] = judge_model
 
+    base_rule_score, rule_outcome, has_valid_format, pred_sid = compute_base_injector_reward(case)
+
     started = time.perf_counter()
-    async with semaphore:
-        response = await post_json(judge_url, payload, timeout)
-    latency_ms = (time.perf_counter() - started) * 1000.0
-
     content = ""
-    try:
-        content = response["choices"][0]["message"]["content"].strip()
-    except Exception:
-        pass
+    error = ""
+    verdict_obj: dict[str, Any] = {}
+    verdict = "ABSTAIN"
+    score = 0.0
+    signed_judge_score = 0.0
+    weighted_judge_score = 0.0
+    final_score = base_rule_score
 
-    _, stripped = strip_thinking(content)
-    verdict_obj = extract_json_object(stripped) or extract_json_object(content) or {}
-    verdict = str(verdict_obj.get("verdict", "ABSTAIN")).upper()
     try:
-        score = float(verdict_obj.get("score", 0.0))
-    except (TypeError, ValueError):
-        score = 0.0
-    score = max(0.0, min(1.0, score))
+        async with semaphore:
+            response = await post_json(judge_url, payload, timeout)
+        try:
+            content = response["choices"][0]["message"]["content"].strip()
+        except Exception:
+            content = ""
 
+        _, stripped = strip_thinking(content)
+        verdict_obj = extract_json_object(stripped) or extract_json_object(content) or {}
+        verdict = str(verdict_obj.get("verdict", "ABSTAIN")).upper()
+        try:
+            score = float(verdict_obj.get("score", 0.0))
+        except (TypeError, ValueError):
+            score = 0.0
+        score = max(0.0, min(1.0, score))
+        signed_judge_score = compute_signed_judge_score(verdict, score, case["expected_relation"])
+        weighted_judge_score = judge_weight * signed_judge_score
+        final_score = base_rule_score + weighted_judge_score
+    except Exception as exc:
+        error = str(exc)
+
+    latency_ms = (time.perf_counter() - started) * 1000.0
     matched_expected = verdict == case["expected_relation"]
 
     return {
         **{k: v for k, v in case.items() if k != "payload"},
         "latency_ms": latency_ms,
+        "base_rule_score": base_rule_score,
+        "rule_outcome": rule_outcome,
+        "has_valid_format": has_valid_format,
+        "pred_sid": pred_sid,
         "judge_verdict": verdict,
         "judge_score": score,
+        "judge_signed_score": signed_judge_score,
+        "weighted_judge_score": weighted_judge_score,
+        "final_score": final_score,
         "judge_reason": str(verdict_obj.get("reason", ""))[:1000],
         "judge_output": content[:2000],
         "matched_expected": matched_expected,
+        "error": error,
     }
+
+
+def compute_base_injector_reward(case: dict[str, Any]) -> tuple[float, str, bool, int | None]:
+    sid, modified_text = parse_injector_compact(case["solution_str"])
+    if sid is None or modified_text is None:
+        return REWARD_MISS, "invalid_format", False, None
+
+    if case["mode"] == "benign":
+        return REWARD_EXACT + FORMAT_BONUS, "exact_match", True, sid
+
+    expected_sid = case.get("expected_sid")
+    if expected_sid is not None and sid == int(expected_sid):
+        return REWARD_EXACT + FORMAT_BONUS, "exact_match", True, sid
+    if expected_sid is not None:
+        return REWARD_PARTIAL + FORMAT_BONUS, "partial_match", True, sid
+    return REWARD_PARTIAL + FORMAT_BONUS, "partial_match", True, sid
+
+
+def compute_signed_judge_score(verdict: str, score: float, expected_relation: str) -> float:
+    if verdict == expected_relation:
+        return score
+    if verdict in {"SAME", "CHANGED"}:
+        return -score
+    return 0.0
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -419,6 +484,7 @@ def print_summary(
     latencies = sorted(r["latency_ms"] for r in results)
     matched = sum(1 for r in results if r["matched_expected"])
     abstains = sum(1 for r in results if r["judge_verdict"] == "ABSTAIN")
+    failures = sum(1 for r in results if r.get("error"))
     benign = [r for r in results if r["mode"] == "benign"]
     error = [r for r in results if r["mode"] == "error_injection"]
 
@@ -436,6 +502,7 @@ def print_summary(
     print(f"Benign acc     : {acc(benign):.1%}")
     print(f"Error acc      : {acc(error):.1%}")
     print(f"Abstains       : {abstains}")
+    print(f"Failures       : {failures}")
     print(f"Wall time      : {wall_time_s:.2f}s")
     print(f"Throughput     : {len(results) / wall_time_s:.2f} req/s")
     print(f"Latency mean   : {statistics.mean(latencies):.1f} ms")
@@ -498,6 +565,7 @@ async def async_main(args: argparse.Namespace) -> int:
     print(f"Prompt config  : {PROMPT_PATH}")
     print(f"Judge URL      : {args.judge_url}")
     print(f"Judge model    : {args.judge_model}")
+    print(f"Judge weight   : {args.judge_weight}")
     print(f"Benign file    : {benign_path}")
     print(f"Error file     : {error_path}")
     print(f"Samples        : {len(cases)}")
@@ -532,6 +600,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 judge_url=args.judge_url,
                 judge_model=args.judge_model,
                 timeout=args.timeout,
+                judge_weight=args.judge_weight,
                 semaphore=semaphore,
             )
             for case in cases
@@ -546,11 +615,19 @@ async def async_main(args: argparse.Namespace) -> int:
         print(f"Sample id        : {row['note_id']}")
         print(f"Mode             : {row['mode']}")
         print(f"Expected         : {row['expected_relation']}")
+        print(f"Base rule score  : {row['base_rule_score']:.2f}")
+        print(f"Rule outcome     : {row['rule_outcome']}")
         print(f"Judge verdict    : {row['judge_verdict']}")
         print(f"Judge score      : {row['judge_score']:.2f}")
+        print(f"Judge signed     : {row['judge_signed_score']:.2f}")
+        print(f"Judge weighted   : {row['weighted_judge_score']:.2f}")
+        print(f"Final score      : {row['final_score']:.2f}")
         print(f"Matched expected : {row['matched_expected']}")
         print(f"Latency          : {row['latency_ms']:.1f} ms")
         print(f"Reason           : {row['judge_reason']}")
+        if row.get("error"):
+            print(f"Judge error      : {row['error']}")
+            print("Judge server is not reachable at the configured URL.")
         print("")
         print("Original sentence:")
         print(row["original_sentence"])
