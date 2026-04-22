@@ -176,8 +176,16 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             tokenize=True,
             add_generation_prompt=add_generation_prompt,
         )
+        if isinstance(token_ids, dict):
+            token_ids = token_ids.get("input_ids", token_ids)
+        elif hasattr(token_ids, "data") and isinstance(getattr(token_ids, "data"), dict):
+            token_ids = token_ids.data.get("input_ids", token_ids)
         if hasattr(token_ids, "tolist"):
             token_ids = token_ids.tolist()
+        if isinstance(token_ids, list) and token_ids and isinstance(token_ids[0], list):
+            token_ids = token_ids[0]
+        if not isinstance(token_ids, list):
+            raise TypeError(f"Expected token ids as list[int], got {type(token_ids)!r}")
         return list(token_ids)
 
     def _token_delta(

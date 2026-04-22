@@ -41,6 +41,18 @@ class FakeTokenizer:
         return "".join(chr(tok) for tok in token_ids)
 
 
+class DictTokenizer(FakeTokenizer):
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
+        text = super().apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=add_generation_prompt,
+        )
+        if tokenize:
+            return {"input_ids": [ord(ch) for ch in text]}
+        return text
+
+
 class FakeServerManager:
     def __init__(self, outputs: list[FakeTokenOutput]):
         self.outputs = outputs
@@ -58,6 +70,21 @@ class FakeServerManager:
 
 
 class MedSerlSelfPlayAgentTest(unittest.TestCase):
+    def test_tokenizer_dict_output_is_normalized(self):
+        loop = MedSerlSelfPlayAgentLoop(
+            trainer_config=SimpleNamespace(config=SimpleNamespace()),
+            server_manager=FakeServerManager([]),
+            tokenizer=DictTokenizer(),
+            processor=None,
+        )
+        token_ids = loop._tokenize_messages(
+            [{"role": "user", "content": "hello"}],
+            add_generation_prompt=True,
+        )
+        self.assertIsInstance(token_ids, list)
+        self.assertTrue(token_ids)
+        self.assertTrue(all(isinstance(tok, int) for tok in token_ids))
+
     def test_two_phase_game_emits_sparse_token_scores(self):
         async def run_test():
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
