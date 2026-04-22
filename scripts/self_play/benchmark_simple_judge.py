@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         description="Benchmark the simple judge directly against the vLLM server."
     )
     parser.add_argument(
+        "--backend",
+        choices=["http", "transformers"],
+        default="http",
+        help="Judge execution backend. Use 'transformers' for single-process local inference.",
+    )
+    parser.add_argument(
         "--judge-url",
         default=DEFAULT_JUDGE_URL,
         help="Judge endpoint. Defaults to local judge server on this machine.",
@@ -65,7 +71,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--judge-model",
         default=DEFAULT_JUDGE_MODEL,
-        help="Model name to send in the OpenAI-compatible payload.",
+        help="Model name or local model path for the judge.",
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="Device for local transformers backend: auto, cpu, cuda, cuda:0, mps, etc.",
     )
     parser.add_argument(
         "--timeout",
@@ -365,11 +376,13 @@ async def post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[s
 
 async def run_case(
     case: dict[str, Any],
+    backend: str,
     judge_url: str,
     judge_model: str,
     timeout: float,
     judge_weight: float,
     semaphore: asyncio.Semaphore,
+    local_judge: Any = None,
 ) -> dict[str, Any]:
     payload = dict(case["payload"])
     payload["model"] = judge_model
@@ -388,11 +401,20 @@ async def run_case(
 
     try:
         async with semaphore:
-            response = await post_json(judge_url, payload, timeout)
-        try:
-            content = response["choices"][0]["message"]["content"].strip()
-        except Exception:
-            content = ""
+            if backend == "http":
+                response = await post_json(judge_url, payload, timeout)
+                try:
+                    content = response["choices"][0]["message"]["content"].strip()
+                except Exception:
+                    content = ""
+            else:
+                content = await asyncio.to_thread(
+                    local_judge.generate,
+                    payload["messages"],
+                    float(payload.get("temperature", 0.0)),
+                    float(payload.get("top_p", 0.95)),
+                    int(payload.get("max_tokens", 384)),
+                )
 
         _, stripped = strip_thinking(content)
         verdict_obj = extract_json_object(stripped) or extract_json_object(content) or {}
@@ -452,6 +474,72 @@ def compute_signed_judge_score(verdict: str, score: float, expected_relation: st
     if verdict in {"SAME", "CHANGED"}:
         return -score
     return 0.0
+
+
+class LocalTransformersJudge:
+    def __init__(self, model_path: str, device: str = "auto"):
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                "Local transformers backend requires 'torch' and 'transformers' to be installed."
+            ) from exc
+
+        self.torch = torch
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+        if device == "auto":
+            if torch.cuda.is_available():
+                device_map = "auto"
+                dtype = "auto"
+            elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                device_map = "mps"
+                dtype = torch.float32
+            else:
+                device_map = "cpu"
+                dtype = torch.float32
+        else:
+            device_map = device
+            dtype = "auto" if device != "cpu" else torch.float32
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            device_map=device_map,
+            dtype=dtype,
+            trust_remote_code=True,
+        )
+        self.model.eval()
+
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float,
+        top_p: float,
+        max_new_tokens: int,
+    ) -> str:
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=True,
+        )
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        prompt_len = inputs["input_ids"].shape[1]
+
+        kwargs: dict[str, Any] = {
+            "max_new_tokens": max_new_tokens,
+            "do_sample": temperature > 0,
+            "pad_token_id": self.tokenizer.pad_token_id,
+        }
+        if temperature > 0:
+            kwargs["temperature"] = temperature
+            kwargs["top_p"] = top_p
+
+        with self.torch.no_grad():
+            out = self.model.generate(**inputs, **kwargs)
+        new_ids = out[0, prompt_len:]
+        return self.tokenizer.decode(new_ids, skip_special_tokens=True)
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -563,9 +651,11 @@ async def async_main(args: argparse.Namespace) -> int:
 
     print("=== Simple Judge Isolation Setup ===")
     print(f"Prompt config  : {PROMPT_PATH}")
+    print(f"Backend        : {args.backend}")
     print(f"Judge URL      : {args.judge_url}")
     print(f"Judge model    : {args.judge_model}")
     print(f"Judge weight   : {args.judge_weight}")
+    print(f"Device         : {args.device}")
     print(f"Benign file    : {benign_path}")
     print(f"Error file     : {error_path}")
     print(f"Samples        : {len(cases)}")
@@ -592,16 +682,23 @@ async def async_main(args: argparse.Namespace) -> int:
         print(json.dumps(cases[0]["payload"], indent=2, ensure_ascii=False)[:12000])
 
     semaphore = asyncio.Semaphore(args.concurrency)
+    local_judge = None
+    if args.backend == "transformers":
+        print("")
+        print("Loading local judge model...")
+        local_judge = LocalTransformersJudge(args.judge_model, device=args.device)
     started = time.perf_counter()
     results = await asyncio.gather(
         *(
             run_case(
                 case=case,
+                backend=args.backend,
                 judge_url=args.judge_url,
                 judge_model=args.judge_model,
                 timeout=args.timeout,
                 judge_weight=args.judge_weight,
                 semaphore=semaphore,
+                local_judge=local_judge,
             )
             for case in cases
         )
