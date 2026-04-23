@@ -406,6 +406,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             modified_note = str(extra_info.get("sentences", ""))
             judge_result = {
                 "verdict": "ABSTAIN",
+                "status": "parse_failure",
                 "judge_score": 0.0,
                 "reason": "parse_failure",
                 "judge_output": "",
@@ -415,8 +416,16 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             mode,
             judge_result["verdict"],
             parse_success=parse_success,
+            judge_status=judge_result.get("status"),
         )
-        assessor_ground_truth_override = "CORRECT" if not parse_success else None
+        if not parse_success:
+            assessor_ground_truth_override = "CORRECT"
+        elif judge_result.get("status") in {"request_failed", "unexpected_error", "bad_response_shape", "no_json_verdict", "no_judge_url"}:
+            assessor_ground_truth_override = None
+        elif judge_result.get("status") == "semantic_abstain":
+            assessor_ground_truth_override = None
+        else:
+            assessor_ground_truth_override = None
 
         base_metadata = {
             "phase": "game_complete",
@@ -431,6 +440,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "injector_output": injector_text[:4000],
             "judge_truth": judge_result["verdict"],
             "judge_verdict": judge_result["verdict"],
+            "judge_status": judge_result.get("status", ""),
             "judge_score": float(judge_result["judge_score"]),
             "judge_reason": judge_result["reason"],
             "judge_output": judge_result["judge_output"],

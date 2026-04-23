@@ -146,6 +146,7 @@ async def judge_sentence_pair(
     if not original_sentence and not modified_sentence:
         return {
             "verdict": "ABSTAIN",
+            "status": "missing_input",
             "judge_score": 0.0,
             "reason": "missing_input",
             "judge_output": "",
@@ -168,6 +169,7 @@ async def judge_sentence_pair(
     if not target_url:
         return {
             "verdict": "ABSTAIN",
+            "status": "no_judge_url",
             "judge_score": 0.0,
             "reason": "no_judge_url",
             "judge_output": "",
@@ -179,17 +181,25 @@ async def judge_sentence_pair(
     try:
         result = await post_json(target_url, payload)
     except (URLError, OSError, asyncio.TimeoutError, ValueError) as exc:
-        logger.warning("Simple judge request failed: %s", exc)
+        logger.warning(
+            "Simple judge request failed [%s] url=%s timeout=%ss: %s",
+            type(exc).__name__,
+            target_url,
+            JUDGE_TIMEOUT,
+            exc,
+        )
         return {
             "verdict": "ABSTAIN",
+            "status": "request_failed",
             "judge_score": 0.0,
             "reason": f"request_failed:{exc}",
             "judge_output": "",
         }
     except Exception as exc:  # pragma: no cover
-        logger.warning("Simple judge unexpected failure: %s", exc)
+        logger.warning("Simple judge unexpected failure [%s] url=%s: %s", type(exc).__name__, target_url, exc)
         return {
             "verdict": "ABSTAIN",
+            "status": "unexpected_error",
             "judge_score": 0.0,
             "reason": f"unexpected_error:{exc}",
             "judge_output": "",
@@ -200,6 +210,7 @@ async def judge_sentence_pair(
     except Exception:
         return {
             "verdict": "ABSTAIN",
+            "status": "bad_response_shape",
             "judge_score": 0.0,
             "reason": "bad_response_shape",
             "judge_output": "",
@@ -210,6 +221,7 @@ async def judge_sentence_pair(
     if not verdict:
         return {
             "verdict": "ABSTAIN",
+            "status": "no_json_verdict",
             "judge_score": 0.0,
             "reason": "no_json_verdict",
             "judge_output": content[:2000],
@@ -221,8 +233,10 @@ async def judge_sentence_pair(
     except (TypeError, ValueError):
         score = 0.0
     score = max(0.0, min(1.0, score))
+    status = "ok" if label in {"SAME", "CHANGED"} else "semantic_abstain"
     return {
         "verdict": label,
+        "status": status,
         "judge_score": score,
         "reason": str(verdict.get("reason", ""))[:1000],
         "judge_output": content[:2000],

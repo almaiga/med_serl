@@ -54,6 +54,7 @@ def compute_injector_game_reward(
     judge_verdict: str,
     *,
     parse_success: bool,
+    judge_status: Optional[str] = None,
 ) -> tuple[float, str, bool]:
     """Reward injector for achieving the requested edit type.
 
@@ -61,6 +62,12 @@ def compute_injector_game_reward(
     """
     if not parse_success:
         return REWARD_MISS, "parse_failure", False
+
+    if judge_status in {"request_failed", "unexpected_error", "bad_response_shape", "no_json_verdict", "no_judge_url"}:
+        return 0.0, "judge_unavailable", False
+
+    if judge_status == "semantic_abstain":
+        return REWARD_MISS + FORMAT_BONUS, "judge_semantic_abstain", False
 
     verdict = str(judge_verdict or "").upper()
     if verdict not in VALID_JUDGE_VERDICTS:

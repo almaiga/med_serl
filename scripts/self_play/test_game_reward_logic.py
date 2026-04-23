@@ -43,6 +43,28 @@ class GameRewardLogicTest(unittest.TestCase):
         self.assertEqual(outcome, "parse_failure")
         self.assertFalse(valid)
 
+    def test_injector_reward_judge_unavailable_is_neutral(self):
+        reward, outcome, valid = compute_injector_game_reward(
+            "benign",
+            "ABSTAIN",
+            parse_success=True,
+            judge_status="request_failed",
+        )
+        self.assertEqual(reward, 0.0)
+        self.assertEqual(outcome, "judge_unavailable")
+        self.assertFalse(valid)
+
+    def test_injector_reward_semantic_abstain_penalizes_injector(self):
+        reward, outcome, valid = compute_injector_game_reward(
+            "benign",
+            "ABSTAIN",
+            parse_success=True,
+            judge_status="semantic_abstain",
+        )
+        self.assertEqual(reward, REWARD_MISS + FORMAT_BONUS)
+        self.assertEqual(outcome, "judge_semantic_abstain")
+        self.assertFalse(valid)
+
     def test_assessor_same_correct(self):
         result = compute_assessor_game_reward("CORRECT", judge_verdict="SAME", changed_sid=5)
         self.assertEqual(result.reward, REWARD_EXACT + FORMAT_BONUS)
@@ -79,6 +101,15 @@ class GameRewardLogicTest(unittest.TestCase):
         self.assertEqual(result.reward, REWARD_EXACT + FORMAT_BONUS)
         self.assertEqual(result.outcome, "exact_match")
         self.assertEqual(result.ground_truth, "CORRECT")
+
+    def test_assessor_neutral_when_ground_truth_unknown(self):
+        result = compute_assessor_game_reward(
+            "CORRECT",
+            judge_verdict="ABSTAIN",
+            changed_sid=None,
+        )
+        self.assertEqual(result.reward, 0.0)
+        self.assertEqual(result.outcome, "game_invalid")
 
 
 if __name__ == "__main__":

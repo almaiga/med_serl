@@ -238,6 +238,71 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
 
         asyncio.run(run_test())
 
+    def test_judge_unavailable_keeps_assessor_neutral(self):
+        async def run_test():
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                f.write(
+                    '{"system_prompt":"You are an assessor.",'
+                    '"user_template":"Review this note:\\n{sentences}"}'
+                )
+                detection_path = f.name
+
+            trainer_config = self._trainer_config()
+            tokenizer = FakeTokenizer()
+            server_manager = FakeServerManager(
+                outputs=[
+                    FakeTokenOutput("2. The patient takes metformin.", [ord(c) for c in "2. The patient takes metformin."]),
+                    FakeTokenOutput("CORRECT", [ord(c) for c in "CORRECT"]),
+                ]
+            )
+
+            loop = MedSerlSelfPlayAgentLoop(
+                trainer_config=trainer_config,
+                server_manager=server_manager,
+                tokenizer=tokenizer,
+                processor=None,
+                detection_prompts_path=detection_path,
+                judge_url="http://unused",
+                judge_model="unused",
+            )
+
+            async def fake_judge_sentence_pair(**kwargs):
+                del kwargs
+                return {
+                    "verdict": "ABSTAIN",
+                    "status": "request_failed",
+                    "judge_score": 0.0,
+                    "reason": "request_failed:timeout",
+                    "judge_output": "",
+                }
+
+            import scripts.self_play.agent_loop.medserl_selfplay_agent as module
+            original_judge = module.judge_sentence_pair
+            module.judge_sentence_pair = fake_judge_sentence_pair
+            try:
+                output = await loop.run(
+                    {"temperature": 0.6, "top_p": 0.95},
+                    prompt=[
+                        {"role": "system", "content": "Inject."},
+                        {"role": "user", "content": "1. Foo.\n2. The patient takes dimethylbiguanide."},
+                    ],
+                    extra_info={
+                        "note_id": "note-3",
+                        "mode": "benign",
+                        "sentences": "1. Foo.\n2. The patient takes dimethylbiguanide.",
+                        "error_type": "management",
+                    },
+                )
+            finally:
+                module.judge_sentence_pair = original_judge
+
+            self.assertEqual(output.extra_fields["judge_status"], "request_failed")
+            self.assertEqual(output.extra_fields["injector_outcome"], "judge_unavailable")
+            self.assertEqual(output.extra_fields["injector_reward"], 0.0)
+            self.assertEqual(output.extra_fields["assessor_reward"], 0.0)
+
+        asyncio.run(run_test())
+
 
 if __name__ == "__main__":
     unittest.main()
