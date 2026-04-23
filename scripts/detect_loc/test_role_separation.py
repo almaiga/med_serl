@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import LogitsProcessor, LogitsProcessorList
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +27,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.self_play.utils import strip_thinking
+from scripts.inference_error_detection import detect_model_type, load_model_and_tokenizer
+
+
+class _SanitizeLogits(LogitsProcessor):
+    """Upcast logits and scrub NaN/inf before sampling."""
+
+    def __call__(self, _input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        scores = scores.to(torch.float32)
+        scores = torch.nan_to_num(scores, nan=-1e4, posinf=1e4, neginf=-1e4)
+        return scores
 
 
 def load_jsonl(path: Path):
@@ -116,27 +126,9 @@ def load_pair(assessor_path: Path, injector_path: Path, base_id: Optional[str]):
 
 class ChatModel:
     def __init__(self, model_path: str, device: str = "auto"):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        if device == "auto":
-            if torch.cuda.is_available():
-                device_map = "auto"
-                dtype = "auto"
-            elif torch.backends.mps.is_available():
-                device_map = "mps"
-                dtype = torch.float32
-            else:
-                device_map = "cpu"
-                dtype = torch.float32
-        else:
-            device_map = device
-            dtype = "auto" if device != "cpu" else torch.float32
-
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            device_map=device_map,
-            dtype=dtype,
-            trust_remote_code=True,
-        )
+        del device
+        model_type = detect_model_type(model_path)
+        self.model, self.tokenizer = load_model_and_tokenizer(model_path, model_type)
         self.model.eval()
 
     def generate(self, messages, *, temperature: float, max_new_tokens: int, enable_thinking: bool):
@@ -155,7 +147,9 @@ class ChatModel:
         }
         if temperature > 0:
             kwargs["temperature"] = temperature
-            kwargs["top_p"] = 0.95
+            kwargs["top_p"] = 0.8
+            kwargs["top_k"] = 20
+            kwargs["logits_processor"] = LogitsProcessorList([_SanitizeLogits()])
         with torch.no_grad():
             out = self.model.generate(**inputs, **kwargs)
         new_ids = out[0, prompt_len:]
