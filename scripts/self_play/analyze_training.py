@@ -93,18 +93,21 @@ def compute_statistics(interactions: list) -> dict:
     }
     
     for ix in interactions:
-        outcome = ix.get("outcome", "unknown")
+        # Fallbacks for both single-turn and our new multi-turn selfplay logging
+        outcome = ix.get("assessor_outcome", ix.get("outcome", "unknown"))
         mode = ix.get("mode", "unknown")
-        reward = ix.get("reward", 0.0)
-        has_format = ix.get("has_valid_format", False)
+        reward = float(ix.get("assessor_reward", ix.get("reward", 0.0)))
+        
+        # Format compliance fallback
+        has_format = ix.get("has_valid_format", outcome != "invalid_format" and outcome != "parse_failure")
         error_type = ix.get("error_type", "") or "none"
         
         # Token metrics (if available)
         resp_chars = ix.get("response_chars", 0)
         if not resp_chars:
             # Multi-turn logs store per-phase responses instead of a single field.
-            inj = ix.get("injector_response", "") or ""
-            asm = ix.get("assessor_response", "") or ""
+            inj = ix.get("injector_output", ix.get("injector_response", "")) or ""
+            asm = ix.get("assessor_output", ix.get("assessor_response", "")) or ""
             resp_chars = len(inj) + len(asm)
         if resp_chars:
             stats["token_metrics"]["total_chars"] += resp_chars
@@ -121,13 +124,14 @@ def compute_statistics(interactions: list) -> dict:
 
         has_think = ix.get("has_think_tag", False)
         if not has_think:
-            joined = f"{ix.get('injector_response', '')}\n{ix.get('assessor_response', '')}"
+            joined = f"{ix.get('injector_output', ix.get('injector_response', ''))}\n{ix.get('assessor_output', ix.get('assessor_response', ''))}"
             has_think = "<think>" in joined.lower()
         if has_think:
             stats["token_metrics"]["with_think_tags"] += 1
+            
         missing_closing = ix.get("missing_closing_think", False)
         if not missing_closing:
-            joined = f"{ix.get('injector_response', '')}\n{ix.get('assessor_response', '')}".lower()
+            joined = f"{ix.get('injector_output', ix.get('injector_response', ''))}\n{ix.get('assessor_output', ix.get('assessor_response', ''))}".lower()
             missing_closing = ("<think>" in joined) and ("</think>" not in joined)
         if missing_closing:
             stats["token_metrics"]["missing_closing_think"] += 1
