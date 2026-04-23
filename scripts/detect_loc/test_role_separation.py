@@ -27,8 +27,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.self_play.utils import strip_thinking
-
 
 def load_jsonl(path: Path):
     with path.open() as f:
@@ -36,6 +34,16 @@ def load_jsonl(path: Path):
             line = line.strip()
             if line:
                 yield json.loads(line)
+
+
+def find_subsequence(haystack: list[int], needle: list[int]) -> int:
+    if not needle or len(needle) > len(haystack):
+        return -1
+    last_start = len(haystack) - len(needle)
+    for start in range(last_start + 1):
+        if haystack[start : start + len(needle)] == needle:
+            return start
+    return -1
 
 
 def parse_injector_sid(label: str) -> Optional[int]:
@@ -173,8 +181,29 @@ class ChatModel:
                 **inputs,
                 generation_config=generation_config,
             )
-        new_ids = out[0, prompt_len:]
-        return self.tokenizer.decode(new_ids, skip_special_tokens=True)
+        new_ids = out[0, prompt_len:].tolist()
+        think_end_ids = self.tokenizer.encode("</think>", add_special_tokens=False)
+        think_end_pos = find_subsequence(new_ids, think_end_ids)
+
+        if enable_thinking and think_end_pos != -1:
+            thinking_ids = new_ids[:think_end_pos]
+            answer_ids = new_ids[think_end_pos + len(think_end_ids) :]
+            thinking = self.tokenizer.decode(thinking_ids, skip_special_tokens=True).strip()
+            answer = self.tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
+            raw = self.tokenizer.decode(new_ids, skip_special_tokens=False).strip()
+            return {
+                "thinking": thinking,
+                "answer": answer,
+                "raw": raw,
+            }
+
+        answer = self.tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+        raw = self.tokenizer.decode(new_ids, skip_special_tokens=False).strip()
+        return {
+            "thinking": "",
+            "answer": answer,
+            "raw": raw,
+        }
 
 
 def print_block(title: str, text: str):
@@ -238,18 +267,15 @@ def main():
         enable_thinking=enable_thinking,
     )
 
-    ass_thinking, ass_answer = strip_thinking(ass_output)
-    inj_thinking, inj_answer = strip_thinking(inj_output)
-
     print_block("ASSESSOR PROMPT", ass_row["user_prompt"])
     print_block("ASSESSOR TRAIN TARGET", ass_row["label"])
-    print_block("ASSESSOR MODEL THINKING", ass_thinking or "<empty>")
-    print_block("ASSESSOR MODEL ANSWER", ass_answer or ass_output)
+    print_block("ASSESSOR MODEL THINKING", ass_output["thinking"] or "<empty>")
+    print_block("ASSESSOR MODEL ANSWER", ass_output["answer"] or ass_output["raw"] or "<empty>")
 
     print_block("INJECTOR PROMPT", inj_row["user_prompt"])
     print_block("INJECTOR TRAIN TARGET", inj_row["label"])
-    print_block("INJECTOR MODEL THINKING", inj_thinking or "<empty>")
-    print_block("INJECTOR MODEL ANSWER", inj_answer or inj_output)
+    print_block("INJECTOR MODEL THINKING", inj_output["thinking"] or "<empty>")
+    print_block("INJECTOR MODEL ANSWER", inj_output["answer"] or inj_output["raw"] or "<empty>")
 
 
 if __name__ == "__main__":

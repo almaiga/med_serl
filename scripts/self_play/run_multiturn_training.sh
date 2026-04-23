@@ -397,7 +397,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
-    actor_rollout_ref.rollout.top_k=-1 \
+    actor_rollout_ref.rollout.top_k=20 \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \

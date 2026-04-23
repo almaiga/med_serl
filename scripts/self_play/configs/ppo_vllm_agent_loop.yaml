@@ -31,7 +31,7 @@ actor_rollout_ref:
     load_format: dummy
     temperature: 0.6
     top_p: 0.95
-    top_k: -1
+    top_k: 20
     gpu_memory_utilization: 0.5
     tensor_model_parallel_size: 1
     n: 1

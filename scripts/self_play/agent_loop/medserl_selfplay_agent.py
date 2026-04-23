@@ -150,6 +150,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     assessor_max_new_tokens: int
     assessor_temperature: float
     assessor_top_p: float
+    assessor_top_k: int
     assessor_repetition_penalty: float
     judge_url: str
     judge_model: str
@@ -202,9 +203,10 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         detection_prompts_path: str = "configs/prompts/detection_localization_prompts.json",
         injector_max_new_tokens: int = 512,
         assessor_max_new_tokens: int = 256,
-        assessor_temperature: float = 0.3,
+        assessor_temperature: float = 0.6,
         assessor_top_p: float = 0.95,
-        assessor_repetition_penalty: float = 1.1,
+        assessor_top_k: int = 20,
+        assessor_repetition_penalty: float = 1.0,
         judge_url: str = "",
         judge_model: str = "",
         **kwargs,
@@ -220,6 +222,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         )
         cls.assessor_temperature = float(assessor_temperature)
         cls.assessor_top_p = float(assessor_top_p)
+        cls.assessor_top_k = int(assessor_top_k)
         cls.assessor_repetition_penalty = float(assessor_repetition_penalty)
         cls.judge_url = judge_url or os.environ.get("JUDGE_VLLM_URL", "")
         cls.judge_model = judge_model or os.environ.get("JUDGE_MODEL", "Qwen/Qwen3-8B")
@@ -276,21 +279,37 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     def _decode(self, token_ids: list[int]) -> str:
         return self.tokenizer.decode(token_ids, skip_special_tokens=True)
 
+    def _force_think_mode(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        updated = [dict(item) for item in messages]
+        for item in updated:
+            content = str(item.get("content", ""))
+            if "/no_think" in content:
+                item["content"] = content.replace("/no_think", "/think")
+
+        for item in reversed(updated):
+            if item.get("role") == "user":
+                content = str(item.get("content", "")).strip()
+                if "/think" not in content:
+                    item["content"] = f"{content}\n/think"
+                break
+        return updated
+
     def _construct_assessor_prompt(self, modified_sentences: str) -> str:
         system_prompt = self.detection_prompts.get("system_prompt", "")
         user_template = self.detection_prompts.get("user_template", "{sentences}")
         user_content = user_template.format(sentences=modified_sentences)
 
         override = (
-            "/no_think\n"
+            "/think\n"
             "IGNORE ALL PREVIOUS TASK INSTRUCTIONS.\n"
             "The injector step is finished.\n"
             "You are now the ASSESSOR.\n"
             "Do not edit or rewrite the note.\n"
-            "Return exactly one token of output:\n"
+            "Use the thinking block for reasoning if needed.\n"
+            "After reasoning, return exactly one final output token:\n"
             "- CORRECT\n"
             "- or the sentence number containing the single medical error\n"
-            "Do not provide analysis, explanations, or any extra text."
+            "Do not provide any extra final text beyond that answer."
         )
 
         if system_prompt:
@@ -304,6 +323,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         max_new_tokens: int,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
         repetition_penalty: Optional[float] = None,
     ) -> dict[str, Any]:
         updated = dict(sampling_params)
@@ -312,6 +332,8 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             updated["temperature"] = float(temperature)
         if top_p is not None:
             updated["top_p"] = float(top_p)
+        if top_k is not None:
+            updated["top_k"] = int(top_k)
         if repetition_penalty is not None:
             updated["repetition_penalty"] = float(repetition_penalty)
         return updated
@@ -364,7 +386,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         del reward_model, kwargs
         t0 = time.perf_counter()
 
-        prompt_messages = self._coerce_messages(prompt)
+        prompt_messages = self._force_think_mode(self._coerce_messages(prompt))
         extra_info = dict(extra_info or {})
         interaction_kwargs = dict(interaction_kwargs or extra_info.get("interaction_kwargs") or {})
 
@@ -462,6 +484,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             max_new_tokens=self.assessor_max_new_tokens,
             temperature=self.assessor_temperature,
             top_p=self.assessor_top_p,
+            top_k=self.assessor_top_k,
             repetition_penalty=self.assessor_repetition_penalty,
         )
         assessor_output = await self._generate(request_id, turn2_prompt_ids, assessor_sampling)
