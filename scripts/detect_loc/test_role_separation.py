@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from transformers import LogitsProcessor, LogitsProcessorList
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,15 +27,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.self_play.utils import strip_thinking
 from scripts.inference_error_detection import detect_model_type, load_model_and_tokenizer
-
-
-class _SanitizeLogits(LogitsProcessor):
-    """Upcast logits and scrub NaN/inf before sampling."""
-
-    def __call__(self, _input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        scores = scores.to(torch.float32)
-        scores = torch.nan_to_num(scores, nan=-1e4, posinf=1e4, neginf=-1e4)
-        return scores
 
 
 def load_jsonl(path: Path):
@@ -132,24 +122,23 @@ class ChatModel:
         self.model.eval()
 
     def generate(self, messages, *, temperature: float, max_new_tokens: int, enable_thinking: bool):
-        prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=enable_thinking,
-        )
+        template_kwargs = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if enable_thinking:
+            template_kwargs["enable_thinking"] = True
+        prompt = self.tokenizer.apply_chat_template(messages, **template_kwargs)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         prompt_len = inputs["input_ids"].shape[1]
         kwargs = {
             "max_new_tokens": max_new_tokens,
             "do_sample": temperature > 0,
             "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
         }
         if temperature > 0:
             kwargs["temperature"] = temperature
-            kwargs["top_p"] = 0.8
-            kwargs["top_k"] = 20
-            kwargs["logits_processor"] = LogitsProcessorList([_SanitizeLogits()])
         with torch.no_grad():
             out = self.model.generate(**inputs, **kwargs)
         new_ids = out[0, prompt_len:]
