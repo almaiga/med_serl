@@ -116,13 +116,26 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     judge_model: str
 
     def __init__(self, trainer_config=None, server_manager=None, tokenizer=None, processor=None, **kwargs):
-        super().__init__(
-            trainer_config=trainer_config,
-            server_manager=server_manager,
-            tokenizer=tokenizer,
-            processor=processor,
-            **kwargs,
-        )
+        try:
+            super().__init__(
+                trainer_config=trainer_config,
+                server_manager=server_manager,
+                tokenizer=tokenizer,
+                processor=processor,
+                **kwargs,
+            )
+        except TypeError as exc:
+            if "dataset_cls" not in str(exc) and "data_config" not in str(exc):
+                raise
+            super().__init__(
+                trainer_config=trainer_config,
+                server_manager=server_manager,
+                tokenizer=tokenizer,
+                processor=processor,
+                dataset_cls=kwargs.pop("dataset_cls", None),
+                data_config=kwargs.pop("data_config", None),
+                **kwargs,
+            )
         cls = type(self)
         if not getattr(cls, "_class_initialized", False):
             cls.init_class(
