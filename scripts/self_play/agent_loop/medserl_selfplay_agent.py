@@ -117,6 +117,13 @@ class _AttrDict(dict):
             raise AttributeError(name) from exc
 
 
+class _DummyDataConfig:
+    """Fallback data_config for direct unit-test instantiation."""
+
+    def __init__(self):
+        self.config = {}
+
+
 def _to_agent_loop_config(value: Any) -> Any:
     if hasattr(value, "get") and hasattr(value, "actor_rollout_ref"):
         return value
@@ -163,13 +170,17 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         except TypeError as exc:
             if "dataset_cls" not in str(exc) and "data_config" not in str(exc):
                 raise
+            dataset_cls = kwargs.pop("dataset_cls", None)
+            data_config = kwargs.pop("data_config", None)
+            if data_config is None:
+                data_config = _DummyDataConfig()
             super().__init__(
                 trainer_config=normalized_trainer_config,
                 server_manager=server_manager,
                 tokenizer=tokenizer,
                 processor=processor,
-                dataset_cls=kwargs.pop("dataset_cls", None),
-                data_config=kwargs.pop("data_config", None),
+                dataset_cls=dataset_cls,
+                data_config=data_config,
                 **kwargs,
             )
         cls = type(self)
