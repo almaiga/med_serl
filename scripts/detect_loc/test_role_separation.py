@@ -182,27 +182,26 @@ class ChatModel:
                 generation_config=generation_config,
             )
         new_ids = out[0, prompt_len:].tolist()
-        think_end_ids = self.tokenizer.encode("</think>", add_special_tokens=False)
-        think_end_pos = find_subsequence(new_ids, think_end_ids)
+        raw = self.tokenizer.decode(new_ids, skip_special_tokens=False)
+        answer = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+        thinking = ""
 
-        if enable_thinking and think_end_pos != -1:
-            thinking_ids = new_ids[:think_end_pos]
-            answer_ids = new_ids[think_end_pos + len(think_end_ids) :]
-            thinking = self.tokenizer.decode(thinking_ids, skip_special_tokens=True).strip()
-            answer = self.tokenizer.decode(answer_ids, skip_special_tokens=True).strip()
-            raw = self.tokenizer.decode(new_ids, skip_special_tokens=False).strip()
-            return {
-                "thinking": thinking,
-                "answer": answer,
-                "raw": raw,
-            }
+        if enable_thinking:
+            import re
+            # Match <think>...</think> taking into account newlines
+            m = re.search(r"<think>(.*?)</think>\s*", raw, flags=re.DOTALL)
+            if m:
+                thinking = m.group(1).strip()
+                # Remove the think block from the decoded answer
+                # Notice we need to be careful with answer, as it has special tokens stripped
+                raw_ans = raw[m.end():]
+                # Re-decode just the remaining ids to be safe or use raw_ans
+                answer = re.sub(r"<\|.*?\|>", "", raw_ans).strip()
 
-        answer = self.tokenizer.decode(new_ids, skip_special_tokens=True).strip()
-        raw = self.tokenizer.decode(new_ids, skip_special_tokens=False).strip()
         return {
-            "thinking": "",
-            "answer": answer,
-            "raw": raw,
+            "thinking": thinking,
+            "answer": answer.strip(),
+            "raw": raw.strip(),
         }
 
 
