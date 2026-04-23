@@ -9,11 +9,34 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+try:
+    from omegaconf import OmegaConf
+except ImportError:  # pragma: no cover - local fallback
+    OmegaConf = None  # type: ignore
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.self_play.agent_loop.medserl_selfplay_agent import MedSerlSelfPlayAgentLoop
+
+
+class _AttrDict(dict):
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:  # pragma: no cover
+            raise AttributeError(name) from exc
+
+
+def _cfg(data):
+    if OmegaConf is not None:
+        return OmegaConf.create(data)
+    if isinstance(data, dict):
+        return _AttrDict({k: _cfg(v) for k, v in data.items()})
+    if isinstance(data, list):
+        return [_cfg(v) for v in data]
+    return data
 
 
 class FakeTokenOutput:
@@ -72,14 +95,17 @@ class FakeServerManager:
 class MedSerlSelfPlayAgentTest(unittest.TestCase):
     def _trainer_config(self):
         return SimpleNamespace(
-            config={
-                "actor_rollout_ref": {
-                    "rollout": {
-                        "response_length": 512,
-                        "prompt_length": 256,
+            config=_cfg(
+                {
+                    "actor_rollout_ref": {
+                        "rollout": {
+                            "response_length": 512,
+                            "prompt_length": 256,
+                        },
+                        "model": {},
                     }
                 }
-            }
+            )
         )
 
     def test_tokenizer_dict_output_is_normalized(self):

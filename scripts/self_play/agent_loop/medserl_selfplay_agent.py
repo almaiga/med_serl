@@ -8,9 +8,13 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import uuid4
+
+try:
+    from omegaconf import OmegaConf
+except ImportError:  # pragma: no cover - local fallback
+    OmegaConf = None  # type: ignore
 
 try:
     from verl.experimental.agent_loop.agent_loop import (
@@ -103,13 +107,30 @@ def _append_game_log(entry: dict[str, Any]) -> None:
         pass
 
 
-def _namespace_to_dict(value: Any) -> Any:
-    if isinstance(value, SimpleNamespace):
-        return {k: _namespace_to_dict(v) for k, v in vars(value).items()}
+class _AttrDict(dict):
+    """Fallback config object supporting both .get() and attribute access."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:  # pragma: no cover
+            raise AttributeError(name) from exc
+
+
+def _to_agent_loop_config(value: Any) -> Any:
+    if hasattr(value, "get") and hasattr(value, "actor_rollout_ref"):
+        return value
+    if OmegaConf is not None:
+        try:
+            return OmegaConf.create(value)
+        except Exception:
+            pass
+    if hasattr(value, "__dict__"):
+        value = vars(value)
     if isinstance(value, dict):
-        return {k: _namespace_to_dict(v) for k, v in value.items()}
+        return _AttrDict({k: _to_agent_loop_config(v) for k, v in value.items()})
     if isinstance(value, (list, tuple)):
-        return type(value)(_namespace_to_dict(v) for v in value)
+        return type(value)(_to_agent_loop_config(v) for v in value)
     return value
 
 
@@ -127,11 +148,10 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     judge_model: str
 
     def __init__(self, trainer_config=None, server_manager=None, tokenizer=None, processor=None, **kwargs):
-        normalized_config = getattr(trainer_config, "config", trainer_config)
-        normalized_config = _namespace_to_dict(normalized_config)
+        normalized_config = _to_agent_loop_config(getattr(trainer_config, "config", trainer_config))
         normalized_trainer_config = trainer_config
         if trainer_config is not None and hasattr(trainer_config, "config"):
-            normalized_trainer_config = SimpleNamespace(config=normalized_config)
+            trainer_config.config = normalized_config
         try:
             super().__init__(
                 trainer_config=normalized_trainer_config,
