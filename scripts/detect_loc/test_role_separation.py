@@ -168,9 +168,10 @@ class ChatModel:
         generation_config.eos_token_id = self.tokenizer.eos_token_id
         generation_config.max_new_tokens = max_new_tokens
         generation_config.do_sample = temperature > 0
+
+        # Avoid NaN/Inf issues during sampling
         if temperature > 0:
             generation_config.temperature = temperature
-            generation_config.renormalize_logits = True
         else:
             generation_config.temperature = None
             generation_config.top_p = None
