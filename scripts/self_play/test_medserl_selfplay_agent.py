@@ -70,9 +70,21 @@ class FakeServerManager:
 
 
 class MedSerlSelfPlayAgentTest(unittest.TestCase):
+    def _trainer_config(self):
+        return SimpleNamespace(
+            config={
+                "actor_rollout_ref": {
+                    "rollout": {
+                        "response_length": 512,
+                        "prompt_length": 256,
+                    }
+                }
+            }
+        )
+
     def test_tokenizer_dict_output_is_normalized(self):
         loop = MedSerlSelfPlayAgentLoop(
-            trainer_config=SimpleNamespace(config=SimpleNamespace()),
+            trainer_config=self._trainer_config(),
             server_manager=FakeServerManager([]),
             tokenizer=DictTokenizer(),
             processor=None,
@@ -94,16 +106,7 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
                 )
                 detection_path = f.name
 
-            trainer_config = SimpleNamespace(
-                config=SimpleNamespace(
-                    actor_rollout_ref=SimpleNamespace(
-                        rollout=SimpleNamespace(
-                            response_length=512,
-                            prompt_length=256,
-                        )
-                    )
-                )
-            )
+            trainer_config = self._trainer_config()
             tokenizer = FakeTokenizer()
             server_manager = FakeServerManager(
                 outputs=[
@@ -165,7 +168,7 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
                 )
                 detection_path = f.name
 
-            trainer_config = SimpleNamespace(config=SimpleNamespace())
+            trainer_config = self._trainer_config()
             tokenizer = FakeTokenizer()
             server_manager = FakeServerManager(
                 outputs=[

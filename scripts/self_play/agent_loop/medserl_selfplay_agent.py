@@ -8,6 +8,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -102,6 +103,16 @@ def _append_game_log(entry: dict[str, Any]) -> None:
         pass
 
 
+def _namespace_to_dict(value: Any) -> Any:
+    if isinstance(value, SimpleNamespace):
+        return {k: _namespace_to_dict(v) for k, v in vars(value).items()}
+    if isinstance(value, dict):
+        return {k: _namespace_to_dict(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_namespace_to_dict(v) for v in value)
+    return value
+
+
 class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     """Two-phase injector -> judge -> assessor agent loop for vLLM async rollout."""
 
@@ -116,9 +127,14 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     judge_model: str
 
     def __init__(self, trainer_config=None, server_manager=None, tokenizer=None, processor=None, **kwargs):
+        normalized_config = getattr(trainer_config, "config", trainer_config)
+        normalized_config = _namespace_to_dict(normalized_config)
+        normalized_trainer_config = trainer_config
+        if trainer_config is not None and hasattr(trainer_config, "config"):
+            normalized_trainer_config = SimpleNamespace(config=normalized_config)
         try:
             super().__init__(
-                trainer_config=trainer_config,
+                trainer_config=normalized_trainer_config,
                 server_manager=server_manager,
                 tokenizer=tokenizer,
                 processor=processor,
@@ -128,7 +144,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             if "dataset_cls" not in str(exc) and "data_config" not in str(exc):
                 raise
             super().__init__(
-                trainer_config=trainer_config,
+                trainer_config=normalized_trainer_config,
                 server_manager=server_manager,
                 tokenizer=tokenizer,
                 processor=processor,
@@ -139,7 +155,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         cls = type(self)
         if not getattr(cls, "_class_initialized", False):
             cls.init_class(
-                getattr(trainer_config, "config", trainer_config),
+                normalized_config,
                 tokenizer,
                 processor,
                 **kwargs,
