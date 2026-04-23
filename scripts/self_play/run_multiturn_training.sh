@@ -378,7 +378,8 @@ python3 -m verl.trainer.main_ppo \
     data.shuffle=True \
     actor_rollout_ref.model.path="$MODEL_PATH" \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
-    actor_rollout_ref.model.use_remove_padding=False \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.actor.use_dynamic_bsz=True \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.strategy=fsdp2 \
@@ -387,8 +388,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.ppo_epochs="$PPO_EPOCHS" \
     actor_rollout_ref.actor.use_kl_loss=False \
+    actor_rollout_ref.actor.kl_loss_coef=1e-3 \
     actor_rollout_ref.actor.grad_clip=1.0 \
-    actor_rollout_ref.actor.entropy_coeff=0.01 \
+    actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.checkpoint.save_contents="$ACTOR_CKPT_SAVE_CONTENTS" \
@@ -405,12 +407,13 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_seqs="$ROLLOUT_MAX_NUM_SEQS" \
     actor_rollout_ref.rollout.prompt_length="$ROLLOUT_PROMPT_LENGTH" \
     actor_rollout_ref.rollout.response_length="$ROLLOUT_RESPONSE_LENGTH" \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=49152 \
     actor_rollout_ref.rollout.agent.num_workers="$AGENT_LOOP_WORKERS" \
     actor_rollout_ref.rollout.agent.default_agent_loop="$SEED_AGENT_NAME" \
     actor_rollout_ref.rollout.agent.agent_loop_config_path="$AGENT_LOOP_CONFIG_PATH" \
     actor_rollout_ref.ref.strategy=fsdp2 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     critic.enable=false \
     algorithm.gamma=1.0 \
