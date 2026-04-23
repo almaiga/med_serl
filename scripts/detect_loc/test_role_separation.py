@@ -129,26 +129,11 @@ class ChatModel:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        if device == "auto":
-            if torch.cuda.is_available():
-                device_map = "auto"
-                # Float16 might cause less NaN probability issues on older CUDA,
-                # but bfloat16 is mathematically more robust for outliers.
-                # Since we still saw NaNs, let's explicitly push it back to float16 or keep float32 but avoid typical NaN patterns.
-                dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-            elif torch.backends.mps.is_available():
-                device_map = "mps"
-                dtype = torch.float32
-            else:
-                device_map = "cpu"
-                dtype = torch.float32
-        else:
-            device_map = device
-            dtype = torch.float32
+        device_map = "auto" if device == "auto" else device
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            dtype=dtype,
+            torch_dtype="auto",
             device_map=device_map,
             trust_remote_code=True,
         )
@@ -165,28 +150,22 @@ class ChatModel:
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         prompt_len = inputs["input_ids"].shape[1]
 
-        generation_config = copy.deepcopy(self.model.generation_config)
-        generation_config.pad_token_id = self.tokenizer.pad_token_id
-        generation_config.eos_token_id = self.tokenizer.eos_token_id
-        generation_config.max_new_tokens = max_new_tokens
-        generation_config.do_sample = temperature > 0
-
-        # Avoid NaN/Inf issues during sampling
+        gen_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
+            "do_sample": temperature > 0,
+        }
+        
         if temperature > 0:
-            generation_config.temperature = temperature
-            # Hugging Face top_p sampling handles zero probability better than just thresholding
-            # Adding top_p=1.0 or keeping top_k fallback can bypass pure multinomial sample bugs.
-            generation_config.top_p = 1.0
-            generation_config.top_k = 50
-        else:
-            generation_config.temperature = None
-            generation_config.top_p = None
-            generation_config.top_k = None
+            gen_kwargs["temperature"] = temperature
+            # Standard safe sampling properties that prevent the multinomial from failing
+            gen_kwargs["top_p"] = 0.95 
 
         with torch.no_grad():
             out = self.model.generate(
                 **inputs,
-                generation_config=generation_config,
+                **gen_kwargs
             )
         new_ids = out[0, prompt_len:].tolist()
         raw = self.tokenizer.decode(new_ids, skip_special_tokens=False)
