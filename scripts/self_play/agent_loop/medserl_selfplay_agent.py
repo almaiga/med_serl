@@ -439,9 +439,16 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
                 + list(assessor_log_probs or [0.0] * len(assessor_ids))
             )
 
+        # Zero-Sum Reward Cancellation for single-model self-play
+        # We want Injector Return = Injector Realism - Assessor Accuracy
+        # Because GAE adds future rewards (gamma * Assessor Accuracy) to the Injector's return,
+        # we must subtract (1 + gamma) * Assessor_Reward to achieve the desired zero-sum outcome.
+        gamma = 1.0  # approximate PPO discount factor
+        cancelled_injector_reward = float(injector_reward) - (1.0 + gamma) * float(assessor_reward.reward)
+
         token_level_scores = [0.0] * len(response_ids)
         if injector_ids:
-            token_level_scores[len(injector_ids) - 1] = float(injector_reward)
+            token_level_scores[len(injector_ids) - 1] = cancelled_injector_reward
         if assessor_ids:
             token_level_scores[len(response_ids) - 1] = float(assessor_reward.reward)
 
@@ -461,7 +468,8 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
                     "role": "injector",
                     "start": 0,
                     "end": max(len(injector_ids) - 1, 0),
-                    "reward": float(injector_reward),
+                    "reward": cancelled_injector_reward,
+                    "raw_reward": float(injector_reward),
                 },
                 {
                     "role": "assessor",
