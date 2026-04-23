@@ -156,6 +156,59 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
 
         asyncio.run(run_test())
 
+    def test_parse_failure_still_runs_assessor_and_rewards_it(self):
+        async def run_test():
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                f.write(
+                    '{"system_prompt":"You are an assessor.",'
+                    '"user_template":"Review this note:\\n{sentences}"}'
+                )
+                detection_path = f.name
+
+            trainer_config = SimpleNamespace(config=SimpleNamespace())
+            tokenizer = FakeTokenizer()
+            server_manager = FakeServerManager(
+                outputs=[
+                    FakeTokenOutput("<think>reasoning only</think>", [ord(c) for c in "<think>reasoning only</think>"]),
+                    FakeTokenOutput("CORRECT", [ord(c) for c in "CORRECT"]),
+                ]
+            )
+
+            loop = MedSerlSelfPlayAgentLoop(
+                trainer_config=trainer_config,
+                server_manager=server_manager,
+                tokenizer=tokenizer,
+                processor=None,
+                detection_prompts_path=detection_path,
+                judge_url="http://unused",
+                judge_model="unused",
+            )
+
+            output = await loop.run(
+                {"temperature": 0.6, "top_p": 0.95},
+                prompt=[
+                    {"role": "system", "content": "Inject."},
+                    {"role": "user", "content": "1. Foo.\n2. The patient takes dimethylbiguanide."},
+                ],
+                extra_info={
+                    "note_id": "note-2",
+                    "mode": "benign",
+                    "sentences": "1. Foo.\n2. The patient takes dimethylbiguanide.",
+                    "error_type": "management",
+                },
+            )
+
+            self.assertEqual(output.extra_fields["injector_outcome"], "parse_failure")
+            self.assertEqual(output.extra_fields["judge_verdict"], "ABSTAIN")
+            self.assertFalse(output.extra_fields["injector_format_valid"])
+            self.assertEqual(output.extra_fields["assessor_ground_truth"], "CORRECT")
+            self.assertEqual(output.extra_fields["assessor_output"], "CORRECT")
+            self.assertGreater(output.extra_fields["assessor_reward"], 0)
+            spans = output.extra_fields["turn_reward_spans"]
+            self.assertEqual([span["role"] for span in spans], ["injector", "assessor"])
+
+        asyncio.run(run_test())
+
 
 if __name__ == "__main__":
     unittest.main()

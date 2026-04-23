@@ -77,6 +77,7 @@ def compute_assessor_game_reward(
     *,
     judge_verdict: str,
     changed_sid: Optional[int],
+    ground_truth_override: Optional[str] = None,
 ) -> AssessorRewardResult:
     """Grade assessor against the judge-derived truth.
 
@@ -86,7 +87,7 @@ def compute_assessor_game_reward(
     label, pred_sid = parse_assessor_answer(assessor_output or "")
     has_valid_format = label != "UNKNOWN"
     format_bonus = FORMAT_BONUS if has_valid_format else 0.0
-    ground_truth = derive_assessor_ground_truth(judge_verdict, changed_sid)
+    ground_truth = ground_truth_override or derive_assessor_ground_truth(judge_verdict, changed_sid)
 
     if ground_truth is None:
         return AssessorRewardResult(

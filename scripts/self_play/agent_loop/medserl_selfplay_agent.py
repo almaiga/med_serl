@@ -356,9 +356,10 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             judge_result["verdict"],
             parse_success=parse_success,
         )
+        assessor_ground_truth_override = "CORRECT" if not parse_success else None
 
         base_metadata = {
-            "phase": "game_complete" if game_valid else "injector_failed",
+            "phase": "game_complete",
             "requested_mode": mode,
             "mode": mode,
             "note_id": note_id,
@@ -376,28 +377,9 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "injector_reward": float(injector_reward),
             "injector_outcome": injector_outcome,
             "game_valid": bool(game_valid),
+            "injector_format_valid": bool(parse_success),
             "role": "injector",
         }
-
-        if not game_valid:
-            total_time = time.perf_counter() - t0
-            _append_game_log(
-                {
-                    "timestamp": datetime.now().isoformat(),
-                    **base_metadata,
-                    "assessor_skipped": True,
-                    "assessor_reward": 0.0,
-                }
-            )
-            return self._single_turn_output(
-                prompt_ids=prompt_ids,
-                injector_ids=injector_ids,
-                injector_log_probs=injector_log_probs,
-                injector_reward=injector_reward,
-                extra_fields=base_metadata,
-                num_turns=2,
-                total_time=total_time,
-            )
 
         assessor_prompt = self._construct_assessor_prompt(modified_note)
         conversation_before_assessor = prompt_messages + [{"role": "assistant", "content": injector_text}]
@@ -423,6 +405,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             assessor_text,
             judge_verdict=judge_result["verdict"],
             changed_sid=changed_sid,
+            ground_truth_override=assessor_ground_truth_override,
         )
 
         response_ids = injector_ids + assessor_prompt_ids + assessor_ids
@@ -452,7 +435,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         if assessor_ids:
             token_level_scores[len(response_ids) - 1] = float(assessor_reward.reward)
 
-        ground_truth = derive_assessor_ground_truth(judge_result["verdict"], changed_sid)
+        ground_truth = assessor_ground_truth_override or derive_assessor_ground_truth(judge_result["verdict"], changed_sid)
         extra_fields = {
             **base_metadata,
             "assessor_ground_truth": ground_truth,

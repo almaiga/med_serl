@@ -69,6 +69,17 @@ class GameRewardLogicTest(unittest.TestCase):
         self.assertEqual(result.reward, REWARD_MISS + FORMAT_BONUS)
         self.assertEqual(result.outcome, "miss")
 
+    def test_assessor_override_for_injector_parse_failure(self):
+        result = compute_assessor_game_reward(
+            "CORRECT",
+            judge_verdict="ABSTAIN",
+            changed_sid=None,
+            ground_truth_override="CORRECT",
+        )
+        self.assertEqual(result.reward, REWARD_EXACT + FORMAT_BONUS)
+        self.assertEqual(result.outcome, "exact_match")
+        self.assertEqual(result.ground_truth, "CORRECT")
+
 
 if __name__ == "__main__":
     unittest.main()
