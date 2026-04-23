@@ -191,7 +191,7 @@ def main():
     parser.add_argument("--assessor-data", default="data_processed/medrect/generated_assessor_all_sft.jsonl")
     parser.add_argument("--injector-data", default="data_processed/medrect/injector_error_chains_20260310_135156.jsonl")
     parser.add_argument("--base-id", default=None, help="Base sample id like ms-train-1349")
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--no-think", action="store_true", help="Disable Qwen thinking mode.")
     parser.add_argument("--device", default="auto")
