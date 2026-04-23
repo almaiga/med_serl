@@ -12,6 +12,7 @@ Default data sources are the mixed SFT files used by run_medrect_mixed_sft.sh.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +28,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.self_play.utils import strip_thinking
-from scripts.inference_error_detection import detect_model_type, load_model_and_tokenizer
 
 
 def load_jsonl(path: Path):
@@ -116,9 +117,30 @@ def load_pair(assessor_path: Path, injector_path: Path, base_id: Optional[str]):
 
 class ChatModel:
     def __init__(self, model_path: str, device: str = "auto"):
-        del device
-        model_type = detect_model_type(model_path)
-        self.model, self.tokenizer = load_model_and_tokenizer(model_path, model_type)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        if device == "auto":
+            if torch.cuda.is_available():
+                device_map = "auto"
+                dtype = torch.bfloat16
+            elif torch.backends.mps.is_available():
+                device_map = "mps"
+                dtype = torch.float32
+            else:
+                device_map = "cpu"
+                dtype = torch.float32
+        else:
+            device_map = device
+            dtype = torch.bfloat16 if device != "cpu" else torch.float32
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=dtype,
+            device_map=device_map,
+            trust_remote_code=True,
+        )
         self.model.eval()
 
     def generate(self, messages, *, temperature: float, max_new_tokens: int, enable_thinking: bool):
@@ -131,16 +153,24 @@ class ChatModel:
         prompt = self.tokenizer.apply_chat_template(messages, **template_kwargs)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         prompt_len = inputs["input_ids"].shape[1]
-        kwargs = {
-            "max_new_tokens": max_new_tokens,
-            "do_sample": temperature > 0,
-            "pad_token_id": self.tokenizer.pad_token_id,
-            "eos_token_id": self.tokenizer.eos_token_id,
-        }
+
+        generation_config = copy.deepcopy(self.model.generation_config)
+        generation_config.pad_token_id = self.tokenizer.pad_token_id
+        generation_config.eos_token_id = self.tokenizer.eos_token_id
+        generation_config.max_new_tokens = max_new_tokens
+        generation_config.do_sample = temperature > 0
         if temperature > 0:
-            kwargs["temperature"] = temperature
+            generation_config.temperature = temperature
+        else:
+            generation_config.temperature = None
+            generation_config.top_p = None
+            generation_config.top_k = None
+
         with torch.no_grad():
-            out = self.model.generate(**inputs, **kwargs)
+            out = self.model.generate(
+                **inputs,
+                generation_config=generation_config,
+            )
         new_ids = out[0, prompt_len:]
         return self.tokenizer.decode(new_ids, skip_special_tokens=True)
 
