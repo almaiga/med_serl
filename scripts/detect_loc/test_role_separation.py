@@ -161,7 +161,7 @@ def main():
     parser.add_argument("--base-id", default=None, help="Base sample id like ms-train-1349")
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=1024)
-    parser.add_argument("--think", action="store_true", default=False)
+    parser.add_argument("--no-think", action="store_true", help="Disable Qwen thinking mode.")
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
@@ -173,7 +173,9 @@ def main():
 
     print(f"Model            : {args.model_path}")
     print(f"Base sample      : {base_id}")
-    print(f"Thinking         : {args.think}")
+    enable_thinking = not args.no_think
+
+    print(f"Thinking         : {enable_thinking}")
     print(f"Temperature      : {args.temperature}")
     print(f"Assessor label   : {ass_row.get('label')}")
     print(f"Injector label   : {inj_row.get('label')}")
@@ -195,13 +197,13 @@ def main():
         ass_messages,
         temperature=args.temperature,
         max_new_tokens=args.max_new_tokens,
-        enable_thinking=args.think,
+        enable_thinking=enable_thinking,
     )
     inj_output = model.generate(
         inj_messages,
         temperature=args.temperature,
         max_new_tokens=args.max_new_tokens,
-        enable_thinking=args.think,
+        enable_thinking=enable_thinking,
     )
 
     ass_thinking, ass_answer = strip_thinking(ass_output)

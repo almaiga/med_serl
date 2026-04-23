@@ -177,7 +177,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=1024)
-    parser.add_argument("--think", action="store_true", default=False)
+    parser.add_argument("--no-think", action="store_true", help="Disable Qwen thinking mode.")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--show", type=int, default=5, help="Number of flagged examples to print")
     parser.add_argument(
@@ -204,7 +204,9 @@ def main():
         pairs = pairs[: args.n]
 
     print(f"Model               : {args.model_path}")
-    print(f"Thinking            : {args.think}")
+    enable_thinking = not args.no_think
+
+    print(f"Thinking            : {enable_thinking}")
     print(f"Temperature         : {args.temperature}")
     print(f"Paired samples pool : {len(load_clean_pairs(Path(args.assessor_data), Path(args.injector_data)))}")
     print(f"Samples tested      : {len(pairs)}")
@@ -227,13 +229,13 @@ def main():
             ass_messages,
             temperature=args.temperature,
             max_new_tokens=args.max_new_tokens,
-            enable_thinking=args.think,
+            enable_thinking=enable_thinking,
         )
         inj_output = model.generate(
             inj_messages,
             temperature=args.temperature,
             max_new_tokens=args.max_new_tokens,
-            enable_thinking=args.think,
+            enable_thinking=enable_thinking,
         )
 
         ass_thinking, ass_answer = strip_thinking(ass_output)
