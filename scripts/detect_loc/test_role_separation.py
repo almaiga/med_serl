@@ -124,7 +124,8 @@ class ChatModel:
         if device == "auto":
             if torch.cuda.is_available():
                 device_map = "auto"
-                dtype = torch.bfloat16
+                # Keep this debug script numerically stable during sampling.
+                dtype = torch.float32
             elif torch.backends.mps.is_available():
                 device_map = "mps"
                 dtype = torch.float32
@@ -133,11 +134,11 @@ class ChatModel:
                 dtype = torch.float32
         else:
             device_map = device
-            dtype = torch.bfloat16 if device != "cpu" else torch.float32
+            dtype = torch.float32
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=dtype,
+            dtype=dtype,
             device_map=device_map,
             trust_remote_code=True,
         )
@@ -161,6 +162,7 @@ class ChatModel:
         generation_config.do_sample = temperature > 0
         if temperature > 0:
             generation_config.temperature = temperature
+            generation_config.renormalize_logits = True
         else:
             generation_config.temperature = None
             generation_config.top_p = None
