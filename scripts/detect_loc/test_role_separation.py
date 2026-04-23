@@ -132,8 +132,10 @@ class ChatModel:
         if device == "auto":
             if torch.cuda.is_available():
                 device_map = "auto"
-                # Keep this debug script numerically stable during sampling.
-                dtype = torch.float32
+                # Float16 might cause less NaN probability issues on older CUDA,
+                # but bfloat16 is mathematically more robust for outliers.
+                # Since we still saw NaNs, let's explicitly push it back to float16 or keep float32 but avoid typical NaN patterns.
+                dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
             elif torch.backends.mps.is_available():
                 device_map = "mps"
                 dtype = torch.float32
@@ -172,6 +174,10 @@ class ChatModel:
         # Avoid NaN/Inf issues during sampling
         if temperature > 0:
             generation_config.temperature = temperature
+            # Hugging Face top_p sampling handles zero probability better than just thresholding
+            # Adding top_p=1.0 or keeping top_k fallback can bypass pure multinomial sample bugs.
+            generation_config.top_p = 1.0
+            generation_config.top_k = 50
         else:
             generation_config.temperature = None
             generation_config.top_p = None
