@@ -29,9 +29,7 @@ actor_rollout_ref:
     enable_sleep_mode: True
     free_cache_engine: True
     load_format: dummy
-    temperature: 0.6
-    top_p: 0.95
-    top_k: 20
+    temperature: 1.0
     gpu_memory_utilization: 0.5
     tensor_model_parallel_size: 1
     n: 1

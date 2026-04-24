@@ -149,9 +149,9 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     injector_max_new_tokens: int
     assessor_max_new_tokens: int
     assessor_temperature: float
-    assessor_top_p: float
-    assessor_top_k: int
-    assessor_repetition_penalty: float
+    assessor_top_p: Optional[float]
+    assessor_top_k: Optional[int]
+    assessor_repetition_penalty: Optional[float]
     judge_url: str
     judge_model: str
 
@@ -203,10 +203,10 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         detection_prompts_path: str = "configs/prompts/detection_localization_prompts.json",
         injector_max_new_tokens: int = 512,
         assessor_max_new_tokens: int = 256,
-        assessor_temperature: float = 0.6,
-        assessor_top_p: float = 0.95,
-        assessor_top_k: int = 20,
-        assessor_repetition_penalty: float = 1.0,
+        assessor_temperature: float = 1.0,
+        assessor_top_p: Optional[float] = None,
+        assessor_top_k: Optional[int] = None,
+        assessor_repetition_penalty: Optional[float] = None,
         judge_url: str = "",
         judge_model: str = "",
         **kwargs,
@@ -221,9 +221,11 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             os.environ.get("MEDSERL_ASSESSOR_MAX_NEW_TOKENS", assessor_max_new_tokens)
         )
         cls.assessor_temperature = float(assessor_temperature)
-        cls.assessor_top_p = float(assessor_top_p)
-        cls.assessor_top_k = int(assessor_top_k)
-        cls.assessor_repetition_penalty = float(assessor_repetition_penalty)
+        cls.assessor_top_p = float(assessor_top_p) if assessor_top_p is not None else None
+        cls.assessor_top_k = int(assessor_top_k) if assessor_top_k is not None else None
+        cls.assessor_repetition_penalty = (
+            float(assessor_repetition_penalty) if assessor_repetition_penalty is not None else None
+        )
         cls.judge_url = judge_url or os.environ.get("JUDGE_VLLM_URL", "")
         cls.judge_model = judge_model or os.environ.get("JUDGE_MODEL", "Qwen/Qwen3-8B")
         cls._class_initialized = True

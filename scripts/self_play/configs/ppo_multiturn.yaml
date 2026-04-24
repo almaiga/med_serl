@@ -22,11 +22,9 @@ actor_rollout_ref:
   hybrid_engine: True
   rollout:
     name: sglang  # CRITICAL: sglang required for multi-turn interactions
-    temperature: 0.6       # Default (Injector turn); Assessor overrides via interaction
-    top_p: 0.95            # Qwen3 official recommendation
+    temperature: 1.0       # Exploration temperature shared by injector/assessor
     multi_turn:
       enable: True
       max_user_turns: 2
       max_assistant_turns: 2
       # interaction_config_path set via CLI override
-

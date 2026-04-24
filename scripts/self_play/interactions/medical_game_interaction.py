@@ -7,8 +7,8 @@ This interaction orchestrates the two-turn self-play game:
 The Assessor sees the full modified note (CoT is stripped from Injector output).
 
 Per-turn sampling:
-- Injector: temperature=0.6, top_p=0.95 (Qwen3 recommendation for thinking mode)
-- Assessor: temperature=0.3, top_p=0.95 (lower temperature for precise classification)
+- Injector: temperature=1.0
+- Assessor: temperature=1.0
 
 Rewards are 3-tier:
 - Exact match (CORRECT↔CORRECT, or same sentence number): +1.0
@@ -54,13 +54,12 @@ REWARD_PARTIAL = 0.3    # Detected error but wrong sentence number
 REWARD_MISS = -1.0      # Missed or wrong classification
 FORMAT_BONUS = 0.2      # Bonus for parseable output format
 
-# Per-turn sampling parameters
-# Injector: moderate creativity for generating plausible modifications
-INJECTOR_TEMPERATURE = 0.6   # Qwen3 official recommendation for thinking mode
-INJECTOR_TOP_P = 0.95        # Qwen3 official recommendation
-# Assessor: low temperature for precise, deterministic classification
-ASSESSOR_TEMPERATURE = 0.3
-ASSESSOR_TOP_P = 0.95
+# Per-turn sampling parameters. Keep non-temperature params unset so the
+# rollout backend can use its defaults.
+INJECTOR_TEMPERATURE = 1.0
+INJECTOR_TOP_P = None
+ASSESSOR_TEMPERATURE = 1.0
+ASSESSOR_TOP_P = None
 ASSESSOR_MAX_NEW_TOKENS = 256
 
 
@@ -156,10 +155,10 @@ class MedicalGameInteraction(BaseInteraction):
     
     Phase 1: Injector modifies a clinical note (benign or error injection)
              Output: "N. <modified sentence>"
-             Sampling: temperature=0.6, top_p=0.95
+             Sampling: temperature=1.0
     Phase 2: Assessor classifies the modified note
              Output: "CORRECT" or "<sentence_number>"
-             Sampling: temperature=0.3, top_p=0.95
+             Sampling: temperature=1.0
     
     Rewards are 3-tier:
     - Exact match: +1.0 + format_bonus
@@ -177,7 +176,7 @@ class MedicalGameInteraction(BaseInteraction):
         self.injector_top_p = config.get("injector_top_p", INJECTOR_TOP_P)
         self.assessor_temperature = config.get("assessor_temperature", ASSESSOR_TEMPERATURE)
         self.assessor_top_p = config.get("assessor_top_p", ASSESSOR_TOP_P)
-        self.assessor_repetition_penalty = config.get("assessor_repetition_penalty", 1.1)
+        self.assessor_repetition_penalty = config.get("assessor_repetition_penalty")
         self.assessor_max_new_tokens = int(
             _os.environ.get(
                 "MEDSERL_ASSESSOR_MAX_NEW_TOKENS",
@@ -266,7 +265,7 @@ class MedicalGameInteraction(BaseInteraction):
         """Process model response and generate next prompt or terminate.
         
         Returns (done, next_prompt_or_feedback, reward, info).
-        ``info`` may contain ``sampling_params`` dict to override temperature/top_p
+        ``info`` may contain ``sampling_params`` dict to override sampling
         for the next generation turn.
         """
         instance = self._instance_dict[instance_id]
@@ -303,7 +302,7 @@ class MedicalGameInteraction(BaseInteraction):
           - Valid format, wrong sentence        : +0.5  (REWARD_PARTIAL + FORMAT_BONUS)
           - Invalid format / early termination  : -1.0  (REWARD_MISS)
 
-        Returns sampling_params for the assessor turn (temperature=0.3).
+        Returns sampling_params for the assessor turn.
         """
         instance = self._instance_dict[instance_id]
         _debug(
@@ -357,15 +356,19 @@ class MedicalGameInteraction(BaseInteraction):
         assessor_prompt = self._construct_assessor_prompt(instance["modified_sentences"])
 
         # Pass per-turn sampling params for the assessor turn
+        assessor_sampling_params = {
+            "temperature": self.assessor_temperature,
+            "max_new_tokens": self.assessor_max_new_tokens,
+        }
+        if self.assessor_top_p is not None:
+            assessor_sampling_params["top_p"] = self.assessor_top_p
+        if self.assessor_repetition_penalty is not None:
+            assessor_sampling_params["repetition_penalty"] = self.assessor_repetition_penalty
+
         info = {
             "phase": "injector_complete",
             "injector_reward": injector_reward,
-            "sampling_params": {
-                "temperature": self.assessor_temperature,
-                "top_p": self.assessor_top_p,
-                "repetition_penalty": self.assessor_repetition_penalty,
-                "max_new_tokens": self.assessor_max_new_tokens,
-            },
+            "sampling_params": assessor_sampling_params,
         }
 
         # Return the injector's per-turn reward so verl applies it to injector tokens.

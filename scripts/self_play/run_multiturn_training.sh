@@ -54,6 +54,7 @@ ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}"
 ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-6}"
 ROLLOUT_RESPONSE_LENGTH="${ROLLOUT_RESPONSE_LENGTH:-2048}"
 ROLLOUT_PROMPT_LENGTH="${ROLLOUT_PROMPT_LENGTH:-1024}"
+ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.0}"
 RAY_NUM_CPUS="${RAY_NUM_CPUS:-8}"
 RAY_CLEAN_START="${RAY_CLEAN_START:-1}"
 REQUIRE_JUDGE="${REQUIRE_JUDGE:-1}"
@@ -148,6 +149,7 @@ echo "Rollout GPU mem util: $ROLLOUT_GPU_MEMORY_UTILIZATION"
 echo "Rollout max num seqs: $ROLLOUT_MAX_NUM_SEQS"
 echo "Rollout prompt length: $ROLLOUT_PROMPT_LENGTH"
 echo "Rollout response length: $ROLLOUT_RESPONSE_LENGTH"
+echo "Rollout temperature: $ROLLOUT_TEMPERATURE"
 echo "Injector max new tokens: $INJECTOR_MAX_NEW_TOKENS"
 echo "Assessor max new tokens: $ASSESSOR_MAX_NEW_TOKENS"
 echo "Agent loop workers: $AGENT_LOOP_WORKERS"
@@ -397,9 +399,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.checkpoint.load_contents="$ACTOR_CKPT_LOAD_CONTENTS" \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.rollout.temperature=0.6 \
-    actor_rollout_ref.rollout.top_p=0.95 \
-    actor_rollout_ref.rollout.top_k=20 \
+    actor_rollout_ref.rollout.temperature="$ROLLOUT_TEMPERATURE" \
     actor_rollout_ref.rollout.n=1 \
     actor_rollout_ref.rollout.disable_log_stats=False \
     actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
