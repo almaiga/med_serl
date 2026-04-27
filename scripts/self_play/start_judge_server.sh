@@ -25,7 +25,7 @@ if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
         exit 1
     fi
 
-    if screen -list | grep -q "[[:space:]]${SCREEN_SESSION}[[:space:]]"; then
+    if screen -list | grep -q "\.${SCREEN_SESSION}[[:space:]]"; then
         echo "Screen session '${SCREEN_SESSION}' already exists."
         echo "Attach with: screen -r ${SCREEN_SESSION}"
         echo "Kill with:   screen -X -S ${SCREEN_SESSION} quit"

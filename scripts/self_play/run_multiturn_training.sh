@@ -19,7 +19,7 @@ if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
         exit 1
     fi
 
-    if screen -list | grep -q "[[:space:]]${SCREEN_SESSION}[[:space:]]"; then
+    if screen -list | grep -q "\.${SCREEN_SESSION}[[:space:]]"; then
         echo "Screen session '${SCREEN_SESSION}' already exists."
         echo "Attach with: screen -r ${SCREEN_SESSION}"
         echo "Kill with:   screen -X -S ${SCREEN_SESSION} quit"
@@ -133,10 +133,19 @@ if [[ "$ASSESSOR_THINK_MAX_NEW_TOKENS" =~ ^[0-9]+$ ]] && [[ "$MIN_ASSESSOR_THINK
     fi
 fi
 
-MIN_ROLLOUT_RESPONSE_LENGTH=$((INJECTOR_MAX_NEW_TOKENS + ASSESSOR_THINK_MAX_NEW_TOKENS + ASSESSOR_FINAL_MAX_NEW_TOKENS + ROLLOUT_PROMPT_LENGTH + 256))
+if [[ "$ASSESSOR_THINK_MAX_NEW_TOKENS" =~ ^[0-9]+$ ]] && [[ "$ASSESSOR_FINAL_MAX_NEW_TOKENS" =~ ^[0-9]+$ ]] && [[ "$ASSESSOR_MAX_NEW_TOKENS" =~ ^[0-9]+$ ]]; then
+    _ASSESSOR_TOTAL=$((ASSESSOR_THINK_MAX_NEW_TOKENS + ASSESSOR_FINAL_MAX_NEW_TOKENS))
+    if [ "$_ASSESSOR_TOTAL" -gt "$ASSESSOR_MAX_NEW_TOKENS" ]; then
+        echo "ERROR: ASSESSOR_THINK_MAX_NEW_TOKENS + ASSESSOR_FINAL_MAX_NEW_TOKENS ($_ASSESSOR_TOTAL) exceeds ASSESSOR_MAX_NEW_TOKENS ($ASSESSOR_MAX_NEW_TOKENS)."
+        echo "Lower ASSESSOR_THINK_MAX_NEW_TOKENS or ASSESSOR_FINAL_MAX_NEW_TOKENS, or raise ASSESSOR_MAX_NEW_TOKENS."
+        exit 1
+    fi
+fi
+
+MIN_ROLLOUT_RESPONSE_LENGTH=$((INJECTOR_MAX_NEW_TOKENS + ASSESSOR_THINK_MAX_NEW_TOKENS + ASSESSOR_FINAL_MAX_NEW_TOKENS + 256))
 if [[ "$ROLLOUT_RESPONSE_LENGTH" =~ ^[0-9]+$ ]] && [ "$ROLLOUT_RESPONSE_LENGTH" -lt "$MIN_ROLLOUT_RESPONSE_LENGTH" ]; then
     echo "ERROR: ROLLOUT_RESPONSE_LENGTH=$ROLLOUT_RESPONSE_LENGTH is too small for the two-turn response."
-    echo "Need at least $MIN_ROLLOUT_RESPONSE_LENGTH = injector budget + assessor think budget + assessor final budget + assessor prompt room."
+    echo "Need at least $MIN_ROLLOUT_RESPONSE_LENGTH = injector budget + assessor think budget + assessor final budget + 256 overhead."
     exit 1
 fi
 
@@ -414,7 +423,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.ppo_epochs="$PPO_EPOCHS" \
     actor_rollout_ref.actor.use_kl_loss=False \
-    actor_rollout_ref.actor.kl_loss_coef=1e-3 \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
@@ -441,8 +449,9 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     critic.enable=false \
     algorithm.gamma=1.0 \
-    algorithm.lam=0.95 \
-    algorithm.use_kl_in_reward=False \
+    algorithm.use_kl_in_reward=True \
+    algorithm.kl_penalty=low_var_kl \
+    algorithm.kl_coef=1e-3 \
     reward_model.enable=False \
     trainer.logger="$TRAINER_LOGGER" \
     trainer.project_name="$WANDB_PROJECT" \
@@ -468,6 +477,7 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
     "++ray_kwargs.runtime_env.env_vars.JUDGE_VLLM_URL=${JUDGE_VLLM_URL:-}" \
     "++ray_kwargs.runtime_env.env_vars.JUDGE_MODEL=$JUDGE_MODEL" \
+    "++ray_kwargs.runtime_env.env_vars.SIMPLE_JUDGE_WEIGHT=$SIMPLE_JUDGE_WEIGHT" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_MAX_NEW_TOKENS=$ASSESSOR_MAX_NEW_TOKENS" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_THINK_MAX_NEW_TOKENS=$ASSESSOR_THINK_MAX_NEW_TOKENS" \

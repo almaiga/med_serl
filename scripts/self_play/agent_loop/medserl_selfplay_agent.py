@@ -518,12 +518,14 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             parse_success=parse_success,
             judge_status=judge_result.get("status"),
         )
+        # When the injector failed to parse, the note is unchanged so the
+        # assessor ground truth is always CORRECT.  In all other cases we let
+        # derive_assessor_ground_truth() resolve from the judge verdict — this
+        # includes judge failures (request_failed, semantic_abstain, etc.) where
+        # the verdict will be ABSTAIN, producing a noisy-but-zeroed reward rather
+        # than a hard override.
         if not parse_success:
             assessor_ground_truth_override = "CORRECT"
-        elif judge_result.get("status") in {"request_failed", "unexpected_error", "bad_response_shape", "no_json_verdict", "no_judge_url"}:
-            assessor_ground_truth_override = None
-        elif judge_result.get("status") == "semantic_abstain":
-            assessor_ground_truth_override = None
         else:
             assessor_ground_truth_override = None
 

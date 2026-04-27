@@ -372,6 +372,9 @@ def _compute_assessor_reward(
         elif pred_sid is not None:
             reward, outcome = REWARD_PARTIAL + format_bonus, "partial_match"
         else:
+            # Correctly flagged an error but gave no sentence ID — partial credit
+            # with no format bonus.  The agent loop's _assessor_format_bonus()
+            # mirrors this: bonus requires pred_sid to be present in partial match.
             reward, outcome = REWARD_PARTIAL, "partial_match"
     else:
         reward, outcome = REWARD_MISS, "invalid_format"
