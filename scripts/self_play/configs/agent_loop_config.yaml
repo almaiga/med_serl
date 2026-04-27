@@ -2,5 +2,5 @@
   _target_: scripts.self_play.agent_loop.medserl_selfplay_agent.MedSerlSelfPlayAgentLoop
   detection_prompts_path: configs/prompts/detection_localization_prompts.json
   injector_max_new_tokens: 512
-  assessor_max_new_tokens: 256
-  assessor_temperature: 1.0
+  assessor_max_new_tokens: 768
+  assessor_temperature: 0.7

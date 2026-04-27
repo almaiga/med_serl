@@ -541,6 +541,11 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "assessor_pred_sid": assessor_reward.pred_sid,
             "assessor_reward": float(assessor_reward.reward),
             "assessor_outcome": assessor_reward.outcome,
+            "injector_token_count": len(injector_ids),
+            "assessor_prompt_token_count": len(assessor_prompt_ids),
+            "assessor_token_count": len(assessor_ids),
+            "injector_max_new_tokens": int(self.injector_max_new_tokens),
+            "assessor_max_new_tokens": int(self.assessor_max_new_tokens),
             "generated_token_scores": token_level_scores,
             "turn_reward_spans": [
                 {

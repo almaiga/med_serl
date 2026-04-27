@@ -82,6 +82,9 @@ def compute_statistics(interactions: list) -> dict:
             "truncated": 0,
             "with_think_tags": 0,
             "missing_closing_think": 0,
+            "assessor_token_total": 0,
+            "assessor_token_count": 0,
+            "assessor_cap_hits": 0,
         },
         # Note similarity metrics
         "similarity": {
@@ -135,6 +138,18 @@ def compute_statistics(interactions: list) -> dict:
             missing_closing = ("<think>" in joined) and ("</think>" not in joined)
         if missing_closing:
             stats["token_metrics"]["missing_closing_think"] += 1
+
+        assessor_tokens = ix.get("assessor_token_count")
+        assessor_max_tokens = ix.get("assessor_max_new_tokens")
+        if assessor_tokens is not None:
+            try:
+                assessor_tokens = int(assessor_tokens)
+                stats["token_metrics"]["assessor_token_total"] += assessor_tokens
+                stats["token_metrics"]["assessor_token_count"] += 1
+                if assessor_max_tokens is not None and assessor_tokens >= int(assessor_max_tokens):
+                    stats["token_metrics"]["assessor_cap_hits"] += 1
+            except (TypeError, ValueError):
+                pass
         
         # Similarity metrics (if available)
         similarity = ix.get("note_similarity")
@@ -205,6 +220,9 @@ def compute_statistics(interactions: list) -> dict:
         "truncated_count": truncated,
         "with_think_tags": token_metrics["with_think_tags"],
         "missing_closing_think": token_metrics["missing_closing_think"],
+        "avg_assessor_tokens": token_metrics["assessor_token_total"] / max(token_metrics["assessor_token_count"], 1),
+        "assessor_cap_hits": token_metrics["assessor_cap_hits"],
+        "assessor_token_count": token_metrics["assessor_token_count"],
         
         # Similarity metrics
         "avg_similarity_benign": stats["similarity"]["benign_total"] / max(stats["similarity"]["benign_count"], 1),
@@ -278,6 +296,9 @@ def print_report(stats: dict):
     print(f"  Truncation Rate:       {metrics.get('truncation_rate', 0):.2%} ({metrics.get('truncated_count', 0)} truncated)")
     print(f"  With <think> tags:     {metrics.get('with_think_tags', 0)}")
     print(f"  Missing </think>:      {metrics.get('missing_closing_think', 0)}")
+    if metrics.get("assessor_token_count", 0):
+        print(f"  Avg Assessor Tokens:   {metrics.get('avg_assessor_tokens', 0):.0f}")
+        print(f"  Assessor Cap Hits:     {metrics.get('assessor_cap_hits', 0)}")
     
     # Note similarity metrics
     print(f"\n📝 NOTE SIMILARITY (Original vs Generated)")
