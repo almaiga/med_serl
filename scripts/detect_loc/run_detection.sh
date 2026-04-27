@@ -60,6 +60,17 @@ resolve_model_path() {
     esac
 }
 
+model_size_slug() {
+    case "$1" in
+        *4[Bb]*)  echo "4b" ;;
+        *8[Bb]*)  echo "8b" ;;
+        *14[Bb]*) echo "14b" ;;
+        *32[Bb]*) echo "32b" ;;
+        *72[Bb]*) echo "72b" ;;
+        *)        echo "unknown_size" ;;
+    esac
+}
+
 # ── Resolve model name ──────────────────────────────────────────────────
 MODEL_NAME="${1:-}"
 MODE="${2:-${MODE:-}}"
@@ -107,7 +118,10 @@ if [[ -z "${MODEL_PATH}" ]]; then
     MODEL_PATH="${MODEL_NAME}"
 fi
 
-MODEL_SLUG="${MODEL_NAME//\//_}"
+MODEL_REF="${MODEL_PATH}"
+MODEL_SLUG="${MODEL_REF//\//_}"
+MODEL_SLUG="${MODEL_SLUG//[^A-Za-z0-9._-]/_}"
+MODEL_SIZE="$(model_size_slug "${MODEL_REF}")"
 
 # ── Inference parameters ─────────────────────────────────────────────────────
 DATASET="${DATASET:-all}"
@@ -128,7 +142,7 @@ else
     MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16384}"
 fi
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
-OUTPUT_DIR="results/detection/${MODEL_SLUG}"
+OUTPUT_DIR="${OUTPUT_DIR:-results/detection/${MODEL_SIZE}_${MODEL_SLUG}}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${OUTPUT_DIR}/logs"
@@ -185,6 +199,7 @@ echo "============================================================"
 echo "  Detection + Localization Inference"
 echo "============================================================"
 echo "Model:         ${MODEL_NAME}  (${MODEL_PATH})"
+echo "Model size:    ${MODEL_SIZE}"
 echo "Mode:          ${MODE}"
 echo "HF cache:      ${HF_HOME}"
 echo "Dataset:       ${DATASET}"
