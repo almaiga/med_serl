@@ -222,17 +222,20 @@ def main():
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--min-p", type=float, default=0.0)
     parser.add_argument("--presence-penalty", type=float, default=0.0)
+    parser.add_argument("--mode", choices=["thinking", "no-thinking"], default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--no-think", action="store_true", help="Disable Qwen thinking mode.")
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
-    enable_thinking = not args.no_think
+    if args.mode is None:
+        args.mode = "no-thinking" if args.no_think else "thinking"
+    enable_thinking = args.mode == "thinking"
     if args.temperature is None:
         args.temperature = 0.6 if enable_thinking else 0.7
     if args.top_p is None:
         args.top_p = 0.95 if enable_thinking else 0.8
     if args.max_new_tokens is None:
-        args.max_new_tokens = 2048
+        args.max_new_tokens = 32768 if enable_thinking else 16384
 
     ass_row, inj_row = load_pair(Path(args.assessor_data), Path(args.injector_data), args.base_id)
     base_id = ass_row["sample_id"]
@@ -243,6 +246,7 @@ def main():
     print(f"Model            : {args.model_path}")
     print(f"Base sample      : {base_id}")
 
+    print(f"Mode             : {args.mode}")
     print(f"Thinking         : {enable_thinking}")
     print(f"Temperature      : {args.temperature}")
     print(f"Top p / top k    : {args.top_p} / {args.top_k}")

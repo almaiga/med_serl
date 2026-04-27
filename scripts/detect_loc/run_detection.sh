@@ -7,25 +7,25 @@ set -eo pipefail
 # Models are cached at /workspace/.cache/huggingface — runs fully offline.
 #
 # Usage:
-#   bash scripts/detect_loc/run_detection.sh <model_name>
+#   bash scripts/detect_loc/run_detection.sh <model_name> [thinking|no-thinking]
 #
-#   bash scripts/detect_loc/run_detection.sh Qwen3-8B
-#   bash scripts/detect_loc/run_detection.sh medrect-sft
-#   MAX_SAMPLES=50 bash scripts/detect_loc/run_detection.sh Qwen3-8B
-#   NO_THINKING=1  bash scripts/detect_loc/run_detection.sh Qwen3-8B
+#   bash scripts/detect_loc/run_detection.sh Qwen3-8B no-thinking
+#   bash scripts/detect_loc/run_detection.sh Qwen3-8B thinking
+#   bash scripts/detect_loc/run_detection.sh medrect-sft no-thinking
+#   MAX_SAMPLES=50 bash scripts/detect_loc/run_detection.sh Qwen3-8B no-thinking
 #
 # Optional env overrides:
 #   DATASET         — ms | uw | all  (default: all)
 #   BATCH_SIZE      — default: 8
-#   TEMPERATURE     — default: 0.6 with thinking, 0.7 without thinking
-#   TOP_P           — default: 0.95 with thinking, 0.8 without thinking
-#   TOP_K           — default: 20
-#   MIN_P           — default: 0
-#   PRESENCE_PENALTY— default: 0
-#   THINKING_BUDGET — default: 2048
-#   MAX_NEW_TOKENS  — default: 512
+#   MODE            — thinking | no-thinking  (default: no-thinking)
+#   TEMPERATURE     — mode default: 0.6 thinking, 0.7 no-thinking
+#   TOP_P           — mode default: 0.95 thinking, 0.8 no-thinking
+#   TOP_K           — mode default: 20
+#   MIN_P           — mode default: 0
+#   PRESENCE_PENALTY— mode default: 0
+#   THINKING_BUDGET — mode default: 32768 thinking
+#   MAX_NEW_TOKENS  — mode default: 16384 no-thinking
 #   MAX_SAMPLES     — limit samples  (default: all)
-#   NO_THINKING     — set 1 to disable thinking mode (default: 1)
 #   HF_HOME         — HuggingFace cache dir (default: /workspace/.cache/huggingface)
 # =============================================================================
 
@@ -59,8 +59,9 @@ resolve_model_path() {
 
 # ── Resolve model name ──────────────────────────────────────────────────
 MODEL_NAME="${1:-}"
+MODE="${2:-${MODE:-}}"
 if [[ -z "${MODEL_NAME}" ]]; then
-    echo "Usage: bash $0 <model_name>"
+    echo "Usage: bash $0 <model_name> [thinking|no-thinking]"
     echo ""
     echo "Available models:"
     echo "  HuatuoGPT-o1-7B            FreedomIntelligence/HuatuoGPT-o1-7B"
@@ -72,6 +73,29 @@ if [[ -z "${MODEL_NAME}" ]]; then
     echo "  medrect-sft                outputs/local_training/qwen3-8b-medrect-sft"
     exit 1
 fi
+
+if [[ -z "${MODE}" ]]; then
+    if [[ "${NO_THINKING:-1}" == "0" ]]; then
+        MODE="thinking"
+    else
+        MODE="no-thinking"
+    fi
+fi
+
+case "${MODE}" in
+    thinking|think)
+        MODE="thinking"
+        NO_THINKING=0
+        ;;
+    no-thinking|non-thinking|nothinking|no_thinking|no-think|none)
+        MODE="no-thinking"
+        NO_THINKING=1
+        ;;
+    *)
+        echo "ERROR: unknown mode '${MODE}'. Use 'thinking' or 'no-thinking'."
+        exit 1
+        ;;
+esac
 
 MODEL_PATH="$(resolve_model_path "${MODEL_NAME}")"
 if [[ -z "${MODEL_PATH}" ]]; then
@@ -85,18 +109,19 @@ MODEL_SLUG="${MODEL_NAME//\//_}"
 DATASET="${DATASET:-all}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
-NO_THINKING="${NO_THINKING:-1}"
 TOP_K="${TOP_K:-20}"
 MIN_P="${MIN_P:-0}"
 PRESENCE_PENALTY="${PRESENCE_PENALTY:-0}"
-THINKING_BUDGET="${THINKING_BUDGET:-2048}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 if [[ "${NO_THINKING}" == "1" ]]; then
     TEMPERATURE="${TEMPERATURE:-0.7}"
     TOP_P="${TOP_P:-0.8}"
+    MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16384}"
+    THINKING_BUDGET="${THINKING_BUDGET:-32768}"
 else
     TEMPERATURE="${TEMPERATURE:-0.6}"
     TOP_P="${TOP_P:-0.95}"
+    THINKING_BUDGET="${THINKING_BUDGET:-32768}"
+    MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16384}"
 fi
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
 OUTPUT_DIR="results/detection/${MODEL_SLUG}"
@@ -137,6 +162,7 @@ PYTHON_CMD="accelerate launch --config_file configs/accelerate_config.yaml ${INF
 PYTHON_CMD+=" --model_path ${MODEL_PATH}"
 PYTHON_CMD+=" --prompt_config ${PROMPT_CONFIG}"
 PYTHON_CMD+=" --dataset ${DATASET}"
+PYTHON_CMD+=" --mode ${MODE}"
 PYTHON_CMD+=" --batch_size ${BATCH_SIZE}"
 PYTHON_CMD+=" --temperature ${TEMPERATURE}"
 PYTHON_CMD+=" --top_p ${TOP_P}"
@@ -155,6 +181,7 @@ echo "============================================================"
 echo "  Detection + Localization Inference"
 echo "============================================================"
 echo "Model:         ${MODEL_NAME}  (${MODEL_PATH})"
+echo "Mode:          ${MODE}"
 echo "HF cache:      ${HF_HOME}"
 echo "Dataset:       ${DATASET}"
 echo "Batch size:    ${BATCH_SIZE}"
@@ -163,7 +190,7 @@ echo "Top p / top k: ${TOP_P} / ${TOP_K}"
 echo "Min p:         ${MIN_P}"
 echo "Presence pen.: ${PRESENCE_PENALTY}"
 echo "Thinking:      $([ "${NO_THINKING}" == "1" ] && echo disabled || echo "enabled (budget=${THINKING_BUDGET})")"
-echo "Max new tok:   ${MAX_NEW_TOKENS}"
+echo "Max new tok:   $([ "${NO_THINKING}" == "1" ] && echo "${MAX_NEW_TOKENS}" || echo "${THINKING_BUDGET}")"
 echo "Max samples:   ${MAX_SAMPLES:-all}"
 echo "Output dir:    ${OUTPUT_DIR}"
 echo "Log:           ${LOG_FILE}"

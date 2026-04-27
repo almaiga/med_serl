@@ -15,8 +15,7 @@ Usage
 -----
     python scripts/medrect/inference_detection.py \\
         --model_path FreedomIntelligence/HuatuoGPT-o1-7B \\
-        --dataset all --batch_size 8 --temperature 0.7 \\
-        --thinking_budget 1024 --max_new_tokens 1536
+        --dataset all --batch_size 8 --mode no-thinking
 """
 
 import json
@@ -161,8 +160,8 @@ def run_inference(
     top_k: int = 20,
     min_p: float = 0.0,
     presence_penalty: float = 0.0,
-    max_new_tokens: int = 512,
-    thinking_budget: int = 1024,
+    max_new_tokens: int = 16384,
+    thinking_budget: int = 32768,
     batch_size: int = 8,
 ) -> List[Dict]:
     if max_samples:
@@ -359,8 +358,9 @@ def main():
     p.add_argument("--top_k",           type=int, default=20)
     p.add_argument("--min_p",           type=float, default=0.0)
     p.add_argument("--presence_penalty", type=float, default=0.0)
-    p.add_argument("--max_new_tokens",  type=int, default=512)
-    p.add_argument("--thinking_budget", type=int, default=2048)
+    p.add_argument("--max_new_tokens",  type=int, default=None)
+    p.add_argument("--thinking_budget", type=int, default=None)
+    p.add_argument("--mode",            choices=["thinking", "no-thinking"], default=None)
     p.add_argument("--no_thinking",     action="store_true", help="Disable thinking mode")
     p.add_argument("--output_dir",      default="results/detection")
     p.add_argument("--base_model_path", default=None,
@@ -368,17 +368,23 @@ def main():
                         "(use when running offline and adapter_config "
                         "points to an HF hub ID)")
     args = p.parse_args()
-    use_thinking = not args.no_thinking
+    if args.mode is None:
+        args.mode = "no-thinking" if args.no_thinking else "thinking"
+    use_thinking = args.mode == "thinking"
     if args.temperature is None:
         args.temperature = 0.6 if use_thinking else 0.7
     if args.top_p is None:
         args.top_p = 0.95 if use_thinking else 0.8
+    if args.thinking_budget is None:
+        args.thinking_budget = 32768
+    if args.max_new_tokens is None:
+        args.max_new_tokens = 16384
 
     model_type = detect_model_type(args.model_path)
 
     print(f"\n{'='*50}")
     print(f"Model   : {args.model_path}  ({model_type})")
-    print(f"Dataset : {args.dataset}  |  Thinking: {use_thinking}")
+    print(f"Dataset : {args.dataset}  |  Mode: {args.mode}  |  Thinking: {use_thinking}")
     print(
         f"Sampling: temperature={args.temperature} top_p={args.top_p} "
         f"top_k={args.top_k} min_p={args.min_p} presence_penalty={args.presence_penalty}"
@@ -430,6 +436,7 @@ def main():
             dict(model_path=args.model_path, dataset=args.dataset,
                  timestamp=ts, prompt_config=args.prompt_config,
                  generation=dict(
+                     mode=args.mode,
                      thinking=use_thinking,
                      temperature=args.temperature,
                      top_p=args.top_p,
