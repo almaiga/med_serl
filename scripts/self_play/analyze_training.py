@@ -416,7 +416,13 @@ def print_report(stats: dict):
     print("\n" + "="*70)
 
 
-def print_sample_interactions(interactions: list, n: int = 3):
+def print_sample_interactions(
+    interactions: list,
+    n: int = 3,
+    *,
+    show_thinking: bool = False,
+    max_chars: int = 1200,
+):
     """Print sample interactions for review."""
 
     if not interactions:
@@ -435,6 +441,13 @@ def print_sample_interactions(interactions: list, n: int = 3):
             if line:
                 return line[:160]
         return ""
+
+    def clip(text: object) -> str:
+        text = "" if text is None else str(text)
+        text = text.strip()
+        if max_chars <= 0 or len(text) <= max_chars:
+            return text
+        return text[:max_chars] + "\n...[truncated]"
 
     def outcome(ix: dict) -> str:
         return ix.get("assessor_outcome", ix.get("outcome", "unknown"))
@@ -481,7 +494,19 @@ def print_sample_interactions(interactions: list, n: int = 3):
         final_output = ix.get("assessor_final_output")
         if final_output is not None:
             print(f"  Assessor final output: {public_answer(final_output)}")
+            if show_thinking:
+                print(f"  Assessor final raw:\n{clip(final_output)}")
+        if ix.get("assessor_scored_output_source") is not None:
+            print(f"  Assessor scored source: {ix.get('assessor_scored_output_source')}")
+            if show_thinking:
+                print(f"  Assessor scored raw:\n{clip(ix.get('assessor_scored_output'))}")
         print(f"  Assessor output: {public_answer(ix.get('assessor_output', ix.get('assessor_response', '')))}")
+        if show_thinking:
+            reasoning = ix.get("assessor_reasoning_output")
+            if reasoning is not None:
+                print(f"  Assessor reasoning raw:\n{clip(reasoning)}")
+            else:
+                print(f"  Assessor raw:\n{clip(ix.get('assessor_output', ix.get('assessor_response', '')))}")
 
     # Get samples from different categories. New game logs use
     # `assessor_outcome`; older reward-function logs use `outcome`.
@@ -547,6 +572,17 @@ def main():
         action="store_true",
         help="List discovered local self-play game logs and row counts, then exit",
     )
+    parser.add_argument(
+        "--show-thinking",
+        action="store_true",
+        help="Print raw assessor reasoning/final text for sample interactions",
+    )
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=1200,
+        help="Max characters for raw thinking blocks when --show-thinking is set",
+    )
     
     args = parser.parse_args()
 
@@ -569,7 +605,12 @@ def main():
     
     # Print samples
     if args.samples > 0:
-        print_sample_interactions(interactions, args.samples)
+        print_sample_interactions(
+            interactions,
+            args.samples,
+            show_thinking=args.show_thinking,
+            max_chars=args.max_chars,
+        )
     
     # Export if requested
     if args.export_json:

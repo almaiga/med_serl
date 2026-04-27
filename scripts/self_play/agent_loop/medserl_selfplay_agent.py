@@ -73,6 +73,7 @@ from scripts.self_play.game_reward import (
 )
 from scripts.self_play.judge_client import judge_sentence_pair
 from scripts.self_play.utils import (
+    parse_assessor_answer,
     parse_injector_compact,
     parse_numbered_sentences,
     reconstruct_note,
@@ -619,9 +620,16 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         assessor_cap_hit = bool(assessor_think_cap_hit or assessor_final_cap_hit)
         assessor_ids = assessor_reasoning_ids + forced_close_ids + assessor_final_prompt_ids + assessor_final_ids
         assessor_text = assessor_reasoning_text + forced_close_text + "\n" + assessor_final_text
+        final_label, _ = parse_assessor_answer(assessor_final_text)
+        if final_label != "UNKNOWN":
+            assessor_scored_text = assessor_final_text
+            assessor_scored_source = "final"
+        else:
+            assessor_scored_text = assessor_text
+            assessor_scored_source = "combined"
 
         assessor_reward = compute_assessor_game_reward(
-            assessor_text,
+            assessor_scored_text,
             judge_verdict=judge_result["verdict"],
             changed_sid=changed_sid,
             ground_truth_override=assessor_ground_truth_override,
@@ -681,6 +689,9 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "assessor_ground_truth": ground_truth,
             "ground_truth": ground_truth,
             "assessor_output": assessor_text[:4000],
+            "assessor_reasoning_output": assessor_reasoning_text[:4000],
+            "assessor_scored_output": assessor_scored_text[:1000],
+            "assessor_scored_output_source": assessor_scored_source,
             "assessor_label": assessor_reward.label,
             "assessor_pred_sid": assessor_reward.pred_sid,
             "assessor_reward": float(assessor_reward.reward),
