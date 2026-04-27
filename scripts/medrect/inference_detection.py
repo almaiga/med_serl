@@ -359,8 +359,8 @@ def main():
     p.add_argument("--top_k",           type=int, default=20)
     p.add_argument("--min_p",           type=float, default=0.0)
     p.add_argument("--presence_penalty", type=float, default=0.0)
-    p.add_argument("--max_new_tokens",  type=int, default=16384)
-    p.add_argument("--thinking_budget", type=int, default=32768)
+    p.add_argument("--max_new_tokens",  type=int, default=4096)
+    p.add_argument("--thinking_budget", type=int, default=4096)
     p.add_argument("--no_thinking",     action="store_true", help="Disable thinking mode")
     p.add_argument("--output_dir",      default="results/detection")
     p.add_argument("--base_model_path", default=None,

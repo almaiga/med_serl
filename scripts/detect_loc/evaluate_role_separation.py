@@ -217,7 +217,7 @@ def main():
     if args.top_p is None:
         args.top_p = 0.95 if enable_thinking else 0.8
     if args.max_new_tokens is None:
-        args.max_new_tokens = 32768 if enable_thinking else 16384
+        args.max_new_tokens = 4096
 
     pairs = load_clean_pairs(Path(args.assessor_data), Path(args.injector_data))
     if not pairs:
