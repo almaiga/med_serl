@@ -149,6 +149,8 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
     detection_prompts: dict[str, Any]
     injector_max_new_tokens: int
     assessor_max_new_tokens: int
+    assessor_think_max_new_tokens: int
+    assessor_final_max_new_tokens: int
     assessor_temperature: float
     assessor_top_p: Optional[float]
     assessor_top_k: Optional[int]
@@ -204,6 +206,8 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         detection_prompts_path: str = "configs/prompts/detection_localization_prompts.json",
         injector_max_new_tokens: int = 512,
         assessor_max_new_tokens: int = 256,
+        assessor_think_max_new_tokens: Optional[int] = None,
+        assessor_final_max_new_tokens: int = 32,
         assessor_temperature: float = 1.0,
         assessor_top_p: Optional[float] = None,
         assessor_top_k: Optional[int] = None,
@@ -220,6 +224,15 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         cls.injector_max_new_tokens = int(injector_max_new_tokens)
         cls.assessor_max_new_tokens = int(
             os.environ.get("MEDSERL_ASSESSOR_MAX_NEW_TOKENS", assessor_max_new_tokens)
+        )
+        cls.assessor_think_max_new_tokens = int(
+            os.environ.get(
+                "MEDSERL_ASSESSOR_THINK_MAX_NEW_TOKENS",
+                assessor_think_max_new_tokens or cls.assessor_max_new_tokens,
+            )
+        )
+        cls.assessor_final_max_new_tokens = int(
+            os.environ.get("MEDSERL_ASSESSOR_FINAL_MAX_NEW_TOKENS", assessor_final_max_new_tokens)
         )
         cls.assessor_temperature = float(assessor_temperature)
         cls.assessor_top_p = float(assessor_top_p) if assessor_top_p is not None else None
@@ -318,6 +331,16 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         if system_prompt:
             return f"{override}\n\n{system_prompt}\n\n{user_content}"
         return f"{override}\n\n{user_content}"
+
+    def _construct_assessor_final_prompt(self) -> str:
+        return (
+            "/no_think\n"
+            "Now provide the final assessor answer only.\n"
+            "Output exactly one token/string:\n"
+            "- CORRECT if the note is clinically correct\n"
+            "- otherwise the sentence number containing the single medical error\n"
+            "No explanation. No punctuation. No extra text."
+        )
 
     def _sampling_with_max_tokens(
         self,
@@ -536,19 +559,66 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         turn2_prompt_ids = prompt_ids + injector_ids + assessor_prompt_ids
         assessor_sampling = self._sampling_with_max_tokens(
             sampling_params,
-            max_new_tokens=self.assessor_max_new_tokens,
+            max_new_tokens=self.assessor_think_max_new_tokens,
             temperature=self.assessor_temperature,
             top_p=self.assessor_top_p,
             top_k=self.assessor_top_k,
             repetition_penalty=self.assessor_repetition_penalty,
         )
-        assessor_output = await self._generate(request_id, turn2_prompt_ids, assessor_sampling)
-        assessor_ids = list(assessor_output.token_ids)
-        assessor_log_probs = (
-            list(assessor_output.log_probs) if getattr(assessor_output, "log_probs", None) is not None else None
+        assessor_reasoning_output = await self._generate(request_id, turn2_prompt_ids, assessor_sampling)
+        assessor_reasoning_ids = list(assessor_reasoning_output.token_ids)
+        assessor_reasoning_log_probs = (
+            list(assessor_reasoning_output.log_probs)
+            if getattr(assessor_reasoning_output, "log_probs", None) is not None
+            else None
         )
-        assessor_text = self._decode(assessor_ids)
-        assessor_cap_hit = len(assessor_ids) >= int(self.assessor_max_new_tokens)
+        assessor_reasoning_text = self._decode(assessor_reasoning_ids)
+        assessor_think_cap_hit = len(assessor_reasoning_ids) >= int(self.assessor_think_max_new_tokens)
+
+        conversation_before_final_raw = conversation_with_assessor + [
+            {"role": "assistant", "content": assessor_reasoning_text}
+        ]
+        forced_close_text = ""
+        assessor_reasoning_context_text = assessor_reasoning_text
+        if "<think>" in assessor_reasoning_text.lower() and "</think>" not in assessor_reasoning_text.lower():
+            forced_close_text = "\n</think>"
+            assessor_reasoning_context_text = assessor_reasoning_text + forced_close_text
+
+        conversation_before_final = conversation_with_assessor + [
+            {"role": "assistant", "content": assessor_reasoning_context_text}
+        ]
+        forced_close_ids = (
+            self._token_delta(conversation_before_final_raw, conversation_before_final)
+            if forced_close_text
+            else []
+        )
+        final_prompt = self._construct_assessor_final_prompt()
+        conversation_with_final_prompt = conversation_before_final + [{"role": "user", "content": final_prompt}]
+        assessor_final_prompt_ids = self._token_delta(conversation_before_final, conversation_with_final_prompt)
+
+        assessor_final_sampling = self._sampling_with_max_tokens(
+            sampling_params,
+            max_new_tokens=self.assessor_final_max_new_tokens,
+            temperature=0.0,
+        )
+        final_prompt_input_ids = (
+            turn2_prompt_ids
+            + assessor_reasoning_ids
+            + forced_close_ids
+            + assessor_final_prompt_ids
+        )
+        assessor_final_output = await self._generate(request_id, final_prompt_input_ids, assessor_final_sampling)
+        assessor_final_ids = list(assessor_final_output.token_ids)
+        assessor_final_log_probs = (
+            list(assessor_final_output.log_probs)
+            if getattr(assessor_final_output, "log_probs", None) is not None
+            else None
+        )
+        assessor_final_text = self._decode(assessor_final_ids)
+        assessor_final_cap_hit = len(assessor_final_ids) >= int(self.assessor_final_max_new_tokens)
+        assessor_cap_hit = bool(assessor_think_cap_hit or assessor_final_cap_hit)
+        assessor_ids = assessor_reasoning_ids + forced_close_ids + assessor_final_prompt_ids + assessor_final_ids
+        assessor_text = assessor_reasoning_text + forced_close_text + "\n" + assessor_final_text
 
         assessor_reward = compute_assessor_game_reward(
             assessor_text,
@@ -562,14 +632,24 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         response_mask = (
             [1] * len(injector_ids)
             + [0] * len(assessor_prompt_ids)
-            + [1] * len(assessor_ids)
+            + [1] * len(assessor_reasoning_ids)
+            + [0] * len(forced_close_ids)
+            + [0] * len(assessor_final_prompt_ids)
+            + [1] * len(assessor_final_ids)
         )
         response_logprobs = None
-        if injector_log_probs is not None or assessor_log_probs is not None:
+        if (
+            injector_log_probs is not None
+            or assessor_reasoning_log_probs is not None
+            or assessor_final_log_probs is not None
+        ):
             response_logprobs = (
                 list(injector_log_probs or [0.0] * len(injector_ids))
                 + [0.0] * len(assessor_prompt_ids)
-                + list(assessor_log_probs or [0.0] * len(assessor_ids))
+                + list(assessor_reasoning_log_probs or [0.0] * len(assessor_reasoning_ids))
+                + [0.0] * len(forced_close_ids)
+                + [0.0] * len(assessor_final_prompt_ids)
+                + list(assessor_final_log_probs or [0.0] * len(assessor_final_ids))
             )
 
         gamma = 1.0  # approximate PPO discount factor
@@ -585,8 +665,15 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         token_level_scores = [0.0] * len(response_ids)
         if injector_ids:
             token_level_scores[len(injector_ids) - 1] = assigned_injector_reward
-        if assessor_ids:
+        if assessor_final_ids:
             token_level_scores[len(response_ids) - 1] = float(assessor_reward.reward)
+        elif assessor_reasoning_ids:
+            token_level_scores[
+                len(injector_ids)
+                + len(assessor_prompt_ids)
+                + len(assessor_reasoning_ids)
+                - 1
+            ] = float(assessor_reward.reward)
 
         ground_truth = assessor_ground_truth_override or derive_assessor_ground_truth(judge_result["verdict"], changed_sid)
         extra_fields = {
@@ -604,9 +691,18 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "assessor_cap_hit": bool(assessor_cap_hit),
             "injector_token_count": len(injector_ids),
             "assessor_prompt_token_count": len(assessor_prompt_ids),
+            "assessor_reasoning_token_count": len(assessor_reasoning_ids),
+            "assessor_forced_close_token_count": len(forced_close_ids),
+            "assessor_final_prompt_token_count": len(assessor_final_prompt_ids),
+            "assessor_final_token_count": len(assessor_final_ids),
             "assessor_token_count": len(assessor_ids),
             "injector_max_new_tokens": int(self.injector_max_new_tokens),
             "assessor_max_new_tokens": int(self.assessor_max_new_tokens),
+            "assessor_think_max_new_tokens": int(self.assessor_think_max_new_tokens),
+            "assessor_final_max_new_tokens": int(self.assessor_final_max_new_tokens),
+            "assessor_think_cap_hit": bool(assessor_think_cap_hit),
+            "assessor_final_cap_hit": bool(assessor_final_cap_hit),
+            "assessor_final_output": assessor_final_text[:1000],
             "injector_assigned_reward": float(assigned_injector_reward),
             "injector_target_return": float(injector_target_return),
             "injector_coupling_mode": coupling_mode,

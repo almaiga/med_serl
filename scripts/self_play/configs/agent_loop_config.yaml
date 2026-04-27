@@ -3,4 +3,6 @@
   detection_prompts_path: configs/prompts/detection_localization_prompts.json
   injector_max_new_tokens: 512
   assessor_max_new_tokens: 768
+  assessor_think_max_new_tokens: 768
+  assessor_final_max_new_tokens: 32
   assessor_temperature: 0.7
