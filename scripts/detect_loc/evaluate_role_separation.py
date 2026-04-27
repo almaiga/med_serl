@@ -139,7 +139,18 @@ class ChatModel:
         self.model, self.tokenizer = load_model_and_tokenizer(model_path, model_type)
         self.model.eval()
 
-    def generate(self, messages, *, temperature: float, max_new_tokens: int, enable_thinking: bool):
+    def generate(
+        self,
+        messages,
+        *,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        min_p: float,
+        presence_penalty: float,
+        max_new_tokens: int,
+        enable_thinking: bool,
+    ):
         template_kwargs = {
             "tokenize": False,
             "add_generation_prompt": True,
@@ -151,12 +162,16 @@ class ChatModel:
         prompt_len = inputs["input_ids"].shape[1]
         kwargs = {
             "max_new_tokens": max_new_tokens,
-            "do_sample": temperature > 0,
+            "do_sample": True,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "min_p": min_p,
             "pad_token_id": self.tokenizer.pad_token_id,
             "eos_token_id": self.tokenizer.eos_token_id,
         }
-        if temperature > 0:
-            kwargs["temperature"] = temperature
+        if presence_penalty > 0:
+            kwargs["presence_penalty"] = presence_penalty
         with torch.no_grad():
             out = self.model.generate(**inputs, **kwargs)
         new_ids = out[0, prompt_len:]
@@ -175,8 +190,12 @@ def main():
     parser.add_argument("--injector-data", default="data_processed/medrect/injector_error_chains_20260310_135156.jsonl")
     parser.add_argument("--n", type=int, default=8, help="Number of clean paired samples to test")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--max-new-tokens", type=int, default=1024)
+    parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument("--top-p", type=float, default=None)
+    parser.add_argument("--top-k", type=int, default=20)
+    parser.add_argument("--min-p", type=float, default=0.0)
+    parser.add_argument("--presence-penalty", type=float, default=0.0)
+    parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--no-think", action="store_true", help="Disable Qwen thinking mode.")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--show", type=int, default=5, help="Number of flagged examples to print")
@@ -192,6 +211,13 @@ def main():
         help="Optional path to save all probe results as JSONL",
     )
     args = parser.parse_args()
+    enable_thinking = not args.no_think
+    if args.temperature is None:
+        args.temperature = 0.6 if enable_thinking else 0.7
+    if args.top_p is None:
+        args.top_p = 0.95 if enable_thinking else 0.8
+    if args.max_new_tokens is None:
+        args.max_new_tokens = 32768 if enable_thinking else 16384
 
     pairs = load_clean_pairs(Path(args.assessor_data), Path(args.injector_data))
     if not pairs:
@@ -204,10 +230,13 @@ def main():
         pairs = pairs[: args.n]
 
     print(f"Model               : {args.model_path}")
-    enable_thinking = not args.no_think
 
     print(f"Thinking            : {enable_thinking}")
     print(f"Temperature         : {args.temperature}")
+    print(f"Top p / top k       : {args.top_p} / {args.top_k}")
+    print(f"Min p               : {args.min_p}")
+    print(f"Presence penalty    : {args.presence_penalty}")
+    print(f"Max new tokens      : {args.max_new_tokens}")
     print(f"Paired samples pool : {len(load_clean_pairs(Path(args.assessor_data), Path(args.injector_data)))}")
     print(f"Samples tested      : {len(pairs)}")
     print()
@@ -228,12 +257,20 @@ def main():
         ass_output = model.generate(
             ass_messages,
             temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            min_p=args.min_p,
+            presence_penalty=args.presence_penalty,
             max_new_tokens=args.max_new_tokens,
             enable_thinking=enable_thinking,
         )
         inj_output = model.generate(
             inj_messages,
             temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            min_p=args.min_p,
+            presence_penalty=args.presence_penalty,
             max_new_tokens=args.max_new_tokens,
             enable_thinking=enable_thinking,
         )

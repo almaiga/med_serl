@@ -122,17 +122,24 @@ def build_generation_kwargs(
     *,
     max_new_tokens: int,
     temperature: float,
+    top_p: float,
+    top_k: int,
+    min_p: float,
+    presence_penalty: float,
     repetition_penalty: float,
 ) -> Dict:
     kwargs = {
         "max_new_tokens": max_new_tokens,
-        "do_sample": temperature > 0,
+        "do_sample": True,
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
+        "min_p": min_p,
         "repetition_penalty": repetition_penalty,
         "pad_token_id": tokenizer.pad_token_id,
     }
-    if temperature > 0:
-        kwargs["temperature"] = temperature
-        kwargs["top_p"] = 0.95
+    if presence_penalty > 0:
+        kwargs["presence_penalty"] = presence_penalty
     return kwargs
 
 
@@ -150,6 +157,10 @@ def run_inference(
     use_thinking: bool = True,
     max_samples: Optional[int] = None,
     temperature: float = 0.7,
+    top_p: float = 0.8,
+    top_k: int = 20,
+    min_p: float = 0.0,
+    presence_penalty: float = 0.0,
     max_new_tokens: int = 512,
     thinking_budget: int = 1024,
     batch_size: int = 8,
@@ -209,6 +220,10 @@ def run_inference(
             tokenizer,
             max_new_tokens=thinking_budget if (is_qwen and use_thinking) else max_new_tokens,
             temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            presence_penalty=presence_penalty,
             repetition_penalty=1.05,
         )
         with torch.no_grad():
@@ -339,9 +354,13 @@ def main():
     p.add_argument("--dataset",         default="all", choices=["ms", "uw", "all"])
     p.add_argument("--max_samples",     type=int, default=None)
     p.add_argument("--batch_size",      type=int, default=8)
-    p.add_argument("--temperature",     type=float, default=0.7)
-    p.add_argument("--max_new_tokens",  type=int, default=512)
-    p.add_argument("--thinking_budget", type=int, default=1024)
+    p.add_argument("--temperature",     type=float, default=None)
+    p.add_argument("--top_p",           type=float, default=None)
+    p.add_argument("--top_k",           type=int, default=20)
+    p.add_argument("--min_p",           type=float, default=0.0)
+    p.add_argument("--presence_penalty", type=float, default=0.0)
+    p.add_argument("--max_new_tokens",  type=int, default=16384)
+    p.add_argument("--thinking_budget", type=int, default=32768)
     p.add_argument("--no_thinking",     action="store_true", help="Disable thinking mode")
     p.add_argument("--output_dir",      default="results/detection")
     p.add_argument("--base_model_path", default=None,
@@ -349,12 +368,21 @@ def main():
                         "(use when running offline and adapter_config "
                         "points to an HF hub ID)")
     args = p.parse_args()
+    use_thinking = not args.no_thinking
+    if args.temperature is None:
+        args.temperature = 0.6 if use_thinking else 0.7
+    if args.top_p is None:
+        args.top_p = 0.95 if use_thinking else 0.8
 
     model_type = detect_model_type(args.model_path)
 
     print(f"\n{'='*50}")
     print(f"Model   : {args.model_path}  ({model_type})")
-    print(f"Dataset : {args.dataset}  |  Thinking: {not args.no_thinking}")
+    print(f"Dataset : {args.dataset}  |  Thinking: {use_thinking}")
+    print(
+        f"Sampling: temperature={args.temperature} top_p={args.top_p} "
+        f"top_k={args.top_k} min_p={args.min_p} presence_penalty={args.presence_penalty}"
+    )
     print(f"{'='*50}\n")
 
     model, tokenizer = load_model_and_tokenizer(
@@ -371,9 +399,13 @@ def main():
         test_df,
         model_type,
         prompt_config,
-        use_thinking=not args.no_thinking,
+        use_thinking=use_thinking,
         max_samples=args.max_samples,
         temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        presence_penalty=args.presence_penalty,
         max_new_tokens=args.max_new_tokens,
         thinking_budget=args.thinking_budget,
         batch_size=args.batch_size,
@@ -396,7 +428,18 @@ def main():
     with open(summary_file, "w") as f:
         json.dump(
             dict(model_path=args.model_path, dataset=args.dataset,
-                 timestamp=ts, prompt_config=args.prompt_config, metrics=metrics),
+                 timestamp=ts, prompt_config=args.prompt_config,
+                 generation=dict(
+                     thinking=use_thinking,
+                     temperature=args.temperature,
+                     top_p=args.top_p,
+                     top_k=args.top_k,
+                     min_p=args.min_p,
+                     presence_penalty=args.presence_penalty,
+                     max_new_tokens=args.max_new_tokens,
+                     thinking_budget=args.thinking_budget,
+                 ),
+                 metrics=metrics),
             f, indent=2,
         )
 

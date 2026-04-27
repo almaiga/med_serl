@@ -17,11 +17,15 @@ set -eo pipefail
 # Optional env overrides:
 #   DATASET         — ms | uw | all  (default: all)
 #   BATCH_SIZE      — default: 8
-#   TEMPERATURE     — default: 0.7
-#   THINKING_BUDGET — default: 1024
-#   MAX_NEW_TOKENS  — default: 512
+#   TEMPERATURE     — default: 0.6 with thinking, 0.7 without thinking
+#   TOP_P           — default: 0.95 with thinking, 0.8 without thinking
+#   TOP_K           — default: 20
+#   MIN_P           — default: 0
+#   PRESENCE_PENALTY— default: 0
+#   THINKING_BUDGET — default: 32768
+#   MAX_NEW_TOKENS  — default: 16384
 #   MAX_SAMPLES     — limit samples  (default: all)
-#   NO_THINKING     — set 1 to disable thinking mode
+#   NO_THINKING     — set 1 to disable thinking mode (default: 0)
 #   HF_HOME         — HuggingFace cache dir (default: /workspace/.cache/huggingface)
 # =============================================================================
 
@@ -80,11 +84,20 @@ MODEL_SLUG="${MODEL_NAME//\//_}"
 # ── Inference parameters ─────────────────────────────────────────────────────
 DATASET="${DATASET:-all}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
-TEMPERATURE="${TEMPERATURE:-0}"
-THINKING_BUDGET="${THINKING_BUDGET:-1024}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
-NO_THINKING="${NO_THINKING:-1}"
+NO_THINKING="${NO_THINKING:-0}"
+TOP_K="${TOP_K:-20}"
+MIN_P="${MIN_P:-0}"
+PRESENCE_PENALTY="${PRESENCE_PENALTY:-0}"
+THINKING_BUDGET="${THINKING_BUDGET:-32768}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16384}"
+if [[ "${NO_THINKING}" == "1" ]]; then
+    TEMPERATURE="${TEMPERATURE:-0.7}"
+    TOP_P="${TOP_P:-0.8}"
+else
+    TEMPERATURE="${TEMPERATURE:-0.6}"
+    TOP_P="${TOP_P:-0.95}"
+fi
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
 OUTPUT_DIR="results/detection/${MODEL_SLUG}"
 
@@ -126,6 +139,10 @@ PYTHON_CMD+=" --prompt_config ${PROMPT_CONFIG}"
 PYTHON_CMD+=" --dataset ${DATASET}"
 PYTHON_CMD+=" --batch_size ${BATCH_SIZE}"
 PYTHON_CMD+=" --temperature ${TEMPERATURE}"
+PYTHON_CMD+=" --top_p ${TOP_P}"
+PYTHON_CMD+=" --top_k ${TOP_K}"
+PYTHON_CMD+=" --min_p ${MIN_P}"
+PYTHON_CMD+=" --presence_penalty ${PRESENCE_PENALTY}"
 PYTHON_CMD+=" --thinking_budget ${THINKING_BUDGET}"
 PYTHON_CMD+=" --max_new_tokens ${MAX_NEW_TOKENS}"
 PYTHON_CMD+=" --output_dir ${OUTPUT_DIR}"
@@ -142,6 +159,9 @@ echo "HF cache:      ${HF_HOME}"
 echo "Dataset:       ${DATASET}"
 echo "Batch size:    ${BATCH_SIZE}"
 echo "Temperature:   ${TEMPERATURE}"
+echo "Top p / top k: ${TOP_P} / ${TOP_K}"
+echo "Min p:         ${MIN_P}"
+echo "Presence pen.: ${PRESENCE_PENALTY}"
 echo "Thinking:      $([ "${NO_THINKING}" == "1" ] && echo disabled || echo "enabled (budget=${THINKING_BUDGET})")"
 echo "Max new tok:   ${MAX_NEW_TOKENS}"
 echo "Max samples:   ${MAX_SAMPLES:-all}"

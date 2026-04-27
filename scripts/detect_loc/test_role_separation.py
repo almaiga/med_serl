@@ -139,7 +139,18 @@ class ChatModel:
         )
         self.model.eval()
 
-    def generate(self, messages, *, temperature: float, max_new_tokens: int, enable_thinking: bool):
+    def generate(
+        self,
+        messages,
+        *,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        min_p: float,
+        presence_penalty: float,
+        max_new_tokens: int,
+        enable_thinking: bool,
+    ):
         template_kwargs = {
             "tokenize": False,
             "add_generation_prompt": True,
@@ -154,13 +165,14 @@ class ChatModel:
             "max_new_tokens": max_new_tokens,
             "pad_token_id": self.tokenizer.pad_token_id,
             "eos_token_id": self.tokenizer.eos_token_id,
-            "do_sample": temperature > 0,
+            "do_sample": True,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "min_p": min_p,
         }
-        
-        if temperature > 0:
-            gen_kwargs["temperature"] = temperature
-            # Standard safe sampling properties that prevent the multinomial from failing
-            gen_kwargs["top_p"] = 0.95 
+        if presence_penalty > 0:
+            gen_kwargs["presence_penalty"] = presence_penalty
 
         with torch.no_grad():
             out = self.model.generate(
@@ -205,11 +217,22 @@ def main():
     parser.add_argument("--assessor-data", default="data_processed/medrect/generated_assessor_all_sft.jsonl")
     parser.add_argument("--injector-data", default="data_processed/medrect/injector_error_chains_20260310_135156.jsonl")
     parser.add_argument("--base-id", default=None, help="Base sample id like ms-train-1349")
-    parser.add_argument("--temperature", type=float, default=0.3)
-    parser.add_argument("--max-new-tokens", type=int, default=1024)
+    parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument("--top-p", type=float, default=None)
+    parser.add_argument("--top-k", type=int, default=20)
+    parser.add_argument("--min-p", type=float, default=0.0)
+    parser.add_argument("--presence-penalty", type=float, default=0.0)
+    parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--no-think", action="store_true", help="Disable Qwen thinking mode.")
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
+    enable_thinking = not args.no_think
+    if args.temperature is None:
+        args.temperature = 0.6 if enable_thinking else 0.7
+    if args.top_p is None:
+        args.top_p = 0.95 if enable_thinking else 0.8
+    if args.max_new_tokens is None:
+        args.max_new_tokens = 32768 if enable_thinking else 16384
 
     ass_row, inj_row = load_pair(Path(args.assessor_data), Path(args.injector_data), args.base_id)
     base_id = ass_row["sample_id"]
@@ -219,10 +242,13 @@ def main():
 
     print(f"Model            : {args.model_path}")
     print(f"Base sample      : {base_id}")
-    enable_thinking = not args.no_think
 
     print(f"Thinking         : {enable_thinking}")
     print(f"Temperature      : {args.temperature}")
+    print(f"Top p / top k    : {args.top_p} / {args.top_k}")
+    print(f"Min p            : {args.min_p}")
+    print(f"Presence penalty : {args.presence_penalty}")
+    print(f"Max new tokens   : {args.max_new_tokens}")
     print(f"Assessor label   : {ass_row.get('label')}")
     print(f"Injector label   : {inj_row.get('label')}")
     print(f"Differing sids   : {diff_ids}")
@@ -242,12 +268,20 @@ def main():
     ass_output = model.generate(
         ass_messages,
         temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        presence_penalty=args.presence_penalty,
         max_new_tokens=args.max_new_tokens,
         enable_thinking=enable_thinking,
     )
     inj_output = model.generate(
         inj_messages,
         temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        presence_penalty=args.presence_penalty,
         max_new_tokens=args.max_new_tokens,
         enable_thinking=enable_thinking,
     )
