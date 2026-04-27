@@ -11,6 +11,7 @@ set -eo pipefail
 #
 #   bash scripts/detect_loc/run_detection.sh Qwen3-8B no-thinking
 #   bash scripts/detect_loc/run_detection.sh Qwen3-8B thinking
+#   bash scripts/detect_loc/run_detection.sh medrect-assessor no-thinking
 #   bash scripts/detect_loc/run_detection.sh medrect-sft no-thinking
 #   MAX_SAMPLES=50 bash scripts/detect_loc/run_detection.sh Qwen3-8B no-thinking
 #
@@ -52,6 +53,8 @@ resolve_model_path() {
         Qwen3-32B)       echo "Qwen/Qwen3-32B" ;;
         medrect-mixed|qwen3-4b-medrect-mixed|Abdine/qwen3-4b-medrect-mixed)
                          echo "Abdine/qwen3-4b-medrect-mixed" ;;
+        medrect-assessor|qwen3-4b-medrect-assessor|Abdine/qwen3-4b-medrect-assessor)
+                         echo "Abdine/qwen3-4b-medrect-assessor" ;;
         medrect-sft)     echo "outputs/local_training/qwen3-8b-medrect-sft" ;;
         *)               echo "" ;;
     esac
@@ -70,6 +73,7 @@ if [[ -z "${MODEL_NAME}" ]]; then
     echo "  Qwen3-14B                  Qwen/Qwen3-14B"
     echo "  Qwen3-32B                  Qwen/Qwen3-32B"
     echo "  medrect-mixed              Abdine/qwen3-4b-medrect-mixed"
+    echo "  medrect-assessor           Abdine/qwen3-4b-medrect-assessor"
     echo "  medrect-sft                outputs/local_training/qwen3-8b-medrect-sft"
     exit 1
 fi
