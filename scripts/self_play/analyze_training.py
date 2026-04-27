@@ -20,22 +20,42 @@ import sys
 import re
 
 
+def is_game_log(path: Path) -> bool:
+    """Return True if a JSONL file appears to contain self-play game rows."""
+    try:
+        with open(path, "r") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                return bool(
+                    row.get("phase") == "game_complete"
+                    or row.get("turn_reward_spans")
+                    or row.get("injector_output")
+                    or row.get("assessor_output")
+                )
+    except (OSError, json.JSONDecodeError):
+        return False
+    return False
+
+
 def load_interactions(log_path: Path) -> list:
     """Load interactions from a specific file or a directory.
 
-    When given a directory, prefer `game_*.jsonl` because those are the
-    multi-turn interaction logs written by MedicalGameInteraction. The older
-    `interactions_*.jsonl` files are reward-function logs with a different
-    schema and can be newer by mtime, which makes auto-selection misleading.
+    When given a directory, choose the newest JSONL file that looks like a
+    self-play game log. This includes custom MEDSERL_GAME_LOG names such as
+    `smoke_*.jsonl`, not only the default `game_*.jsonl` files.
     """
     interactions = []
 
     if log_path.is_file():
         log_file = log_path
     else:
-        game_logs = sorted(log_path.glob("game_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-        interaction_logs = sorted(log_path.glob("interactions_*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-        log_files = game_logs if game_logs else interaction_logs
+        log_files = sorted(
+            [p for p in log_path.glob("*.jsonl") if is_game_log(p)],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
         if not log_files:
             print(f"No interaction logs found in {log_path}")
             return []
