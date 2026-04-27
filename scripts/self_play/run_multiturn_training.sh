@@ -121,6 +121,22 @@ if [ -z "$VAL_INPUT_JSONL" ]; then
     VAL_INPUT_JSONL="$PROJECT_ROOT/data_processed/medec_paired/train_val_split/rl_val.jsonl"
 fi
 
+MIN_ASSESSOR_MAX_NEW_TOKENS="${MIN_ASSESSOR_MAX_NEW_TOKENS:-512}"
+if [[ "$ASSESSOR_MAX_NEW_TOKENS" =~ ^[0-9]+$ ]] && [[ "$MIN_ASSESSOR_MAX_NEW_TOKENS" =~ ^[0-9]+$ ]]; then
+    if [ "$ASSESSOR_MAX_NEW_TOKENS" -lt "$MIN_ASSESSOR_MAX_NEW_TOKENS" ] && [ "${ALLOW_LOW_ASSESSOR_BUDGET:-0}" != "1" ]; then
+        echo "ERROR: ASSESSOR_MAX_NEW_TOKENS=$ASSESSOR_MAX_NEW_TOKENS is too low for /think assessor outputs."
+        echo "Use at least $MIN_ASSESSOR_MAX_NEW_TOKENS, or set ALLOW_LOW_ASSESSOR_BUDGET=1 for a diagnostic-only run."
+        exit 1
+    fi
+fi
+
+MIN_ROLLOUT_RESPONSE_LENGTH=$((INJECTOR_MAX_NEW_TOKENS + ASSESSOR_MAX_NEW_TOKENS + ROLLOUT_PROMPT_LENGTH + 256))
+if [[ "$ROLLOUT_RESPONSE_LENGTH" =~ ^[0-9]+$ ]] && [ "$ROLLOUT_RESPONSE_LENGTH" -lt "$MIN_ROLLOUT_RESPONSE_LENGTH" ]; then
+    echo "ERROR: ROLLOUT_RESPONSE_LENGTH=$ROLLOUT_RESPONSE_LENGTH is too small for the two-turn response."
+    echo "Need at least $MIN_ROLLOUT_RESPONSE_LENGTH = injector budget + assessor budget + assessor prompt room."
+    exit 1
+fi
+
 DATA_DIR="${DATA_DIR:-$PROJECT_ROOT/data_processed/self_play_vllm_agent_loop}"
 TRAIN_PARQUET="$DATA_DIR/train_injector_seed.parquet"
 VAL_PARQUET="$DATA_DIR/val_injector_seed.parquet"

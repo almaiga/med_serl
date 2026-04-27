@@ -123,6 +123,54 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
         self.assertTrue(token_ids)
         self.assertTrue(all(isinstance(tok, int) for tok in token_ids))
 
+    def test_injector_reward_assignment_is_adversarial_for_invalid_assessor(self):
+        assigned, target, mode = MedSerlSelfPlayAgentLoop._assign_injector_reward(
+            raw_injector_reward=1.2,
+            assessor_reward=-1.0,
+            assessor_format_bonus=0.0,
+            mode="error_injection",
+            game_valid=True,
+        )
+        self.assertEqual(assigned, 3.2)
+        self.assertEqual(target, 2.2)
+        self.assertEqual(mode, "adversarial_error_injection")
+
+    def test_injector_reward_assignment_is_adversarial_for_benign(self):
+        assigned, target, mode = MedSerlSelfPlayAgentLoop._assign_injector_reward(
+            raw_injector_reward=1.2,
+            assessor_reward=1.2,
+            assessor_format_bonus=0.2,
+            mode="benign",
+            game_valid=True,
+        )
+        self.assertAlmostEqual(assigned, -1.0)
+        self.assertAlmostEqual(target, 0.2)
+        self.assertEqual(mode, "adversarial_benign")
+
+    def test_injector_reward_assignment_is_adversarial_for_error_mode(self):
+        assigned, target, mode = MedSerlSelfPlayAgentLoop._assign_injector_reward(
+            raw_injector_reward=1.2,
+            assessor_reward=1.2,
+            assessor_format_bonus=0.2,
+            mode="error_injection",
+            game_valid=True,
+        )
+        self.assertAlmostEqual(assigned, -1.0)
+        self.assertAlmostEqual(target, 0.2)
+        self.assertEqual(mode, "adversarial_error_injection")
+
+    def test_injector_reward_assignment_cancels_future_reward_for_invalid_game(self):
+        assigned, target, mode = MedSerlSelfPlayAgentLoop._assign_injector_reward(
+            raw_injector_reward=-1.0,
+            assessor_reward=1.2,
+            assessor_format_bonus=0.2,
+            mode="benign",
+            game_valid=False,
+        )
+        self.assertEqual(assigned, -2.2)
+        self.assertEqual(target, -1.0)
+        self.assertEqual(mode, "uncoupled_game_invalid")
+
     def test_two_phase_game_emits_sparse_token_scores(self):
         async def run_test():
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:

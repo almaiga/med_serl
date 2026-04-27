@@ -65,6 +65,7 @@ except ImportError:  # pragma: no cover - local unit tests without verl
             self.extra_fields = extra_fields or {}
 
 from scripts.self_play.game_reward import (
+    FORMAT_BONUS,
     REWARD_MISS,
     compute_assessor_game_reward,
     compute_injector_game_reward,
@@ -375,6 +376,57 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             extra_fields=extra_fields,
         )
 
+    @staticmethod
+    def _assign_injector_reward(
+        *,
+        raw_injector_reward: float,
+        assessor_reward: float,
+        assessor_format_bonus: float,
+        mode: str,
+        game_valid: bool,
+        gamma: float = 1.0,
+    ) -> tuple[float, float, str]:
+        """Assign reward to the injector span for adversarial self-play.
+
+        The later assessor token reward is part of the same trajectory. We set
+        the injector-span reward so the injector return after that future reward
+        equals the desired game value.
+
+        The task component is adversarial for every requested mode, including
+        benign edits. Role-local format/compliance bonuses remain local: the
+        injector keeps its own format bonus inside `raw_injector_reward`, while
+        the assessor's format bonus is cancelled out of the adversarial term.
+        """
+        raw = float(raw_injector_reward)
+        assessor_total = float(assessor_reward)
+        assessor_task = assessor_total - float(assessor_format_bonus)
+        mode = str(mode or "")
+
+        if not game_valid:
+            target_return = raw
+            assigned_reward = target_return - gamma * assessor_total
+            return assigned_reward, target_return, "uncoupled_game_invalid"
+
+        if mode in {"benign", "error_injection"}:
+            target_return = raw - assessor_task
+            assigned_reward = target_return - gamma * assessor_total
+            return assigned_reward, target_return, f"adversarial_{mode}"
+
+        target_return = raw
+        assigned_reward = target_return - gamma * assessor_total
+        return assigned_reward, target_return, "uncoupled_unknown_mode"
+
+    @staticmethod
+    def _assessor_format_bonus(reward_result: Any) -> float:
+        """Return the role-local assessor format bonus included in its reward."""
+        if not getattr(reward_result, "has_valid_format", False):
+            return 0.0
+        if getattr(reward_result, "ground_truth", None) is None:
+            return 0.0
+        if getattr(reward_result, "outcome", "") == "partial_match" and getattr(reward_result, "pred_sid", None) is None:
+            return 0.0
+        return FORMAT_BONUS
+
     async def run(
         self,
         sampling_params: dict[str, Any],
@@ -496,6 +548,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             list(assessor_output.log_probs) if getattr(assessor_output, "log_probs", None) is not None else None
         )
         assessor_text = self._decode(assessor_ids)
+        assessor_cap_hit = len(assessor_ids) >= int(self.assessor_max_new_tokens)
 
         assessor_reward = compute_assessor_game_reward(
             assessor_text,
@@ -503,6 +556,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             changed_sid=changed_sid,
             ground_truth_override=assessor_ground_truth_override,
         )
+        assessor_format_bonus = self._assessor_format_bonus(assessor_reward)
 
         response_ids = injector_ids + assessor_prompt_ids + assessor_ids
         response_mask = (
@@ -518,16 +572,19 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
                 + list(assessor_log_probs or [0.0] * len(assessor_ids))
             )
 
-        # Zero-Sum Reward Cancellation for single-model self-play
-        # We want Injector Return = Injector Realism - Assessor Accuracy
-        # Because GAE adds future rewards (gamma * Assessor Accuracy) to the Injector's return,
-        # we must subtract (1 + gamma) * Assessor_Reward to achieve the desired zero-sum outcome.
         gamma = 1.0  # approximate PPO discount factor
-        cancelled_injector_reward = float(injector_reward) - (1.0 + gamma) * float(assessor_reward.reward)
+        assigned_injector_reward, injector_target_return, coupling_mode = self._assign_injector_reward(
+            raw_injector_reward=float(injector_reward),
+            assessor_reward=float(assessor_reward.reward),
+            assessor_format_bonus=float(assessor_format_bonus),
+            mode=mode,
+            game_valid=bool(game_valid),
+            gamma=gamma,
+        )
 
         token_level_scores = [0.0] * len(response_ids)
         if injector_ids:
-            token_level_scores[len(injector_ids) - 1] = cancelled_injector_reward
+            token_level_scores[len(injector_ids) - 1] = assigned_injector_reward
         if assessor_ids:
             token_level_scores[len(response_ids) - 1] = float(assessor_reward.reward)
 
@@ -540,19 +597,28 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "assessor_label": assessor_reward.label,
             "assessor_pred_sid": assessor_reward.pred_sid,
             "assessor_reward": float(assessor_reward.reward),
+            "assessor_format_bonus": float(assessor_format_bonus),
+            "assessor_task_reward": float(assessor_reward.reward) - float(assessor_format_bonus),
             "assessor_outcome": assessor_reward.outcome,
+            "assessor_format_valid": bool(assessor_reward.has_valid_format),
+            "assessor_cap_hit": bool(assessor_cap_hit),
             "injector_token_count": len(injector_ids),
             "assessor_prompt_token_count": len(assessor_prompt_ids),
             "assessor_token_count": len(assessor_ids),
             "injector_max_new_tokens": int(self.injector_max_new_tokens),
             "assessor_max_new_tokens": int(self.assessor_max_new_tokens),
+            "injector_assigned_reward": float(assigned_injector_reward),
+            "injector_target_return": float(injector_target_return),
+            "injector_coupling_mode": coupling_mode,
             "generated_token_scores": token_level_scores,
             "turn_reward_spans": [
                 {
                     "role": "injector",
                     "start": 0,
                     "end": max(len(injector_ids) - 1, 0),
-                    "reward": cancelled_injector_reward,
+                    "reward": float(assigned_injector_reward),
+                    "target_return": float(injector_target_return),
+                    "coupling_mode": coupling_mode,
                     "raw_reward": float(injector_reward),
                 },
                 {

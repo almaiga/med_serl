@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import datetime
 import sys
 import re
+import subprocess
 
 
 def is_game_log(path: Path) -> bool:
@@ -39,6 +40,55 @@ def is_game_log(path: Path) -> bool:
     return False
 
 
+def git_tracked_files(root: Path) -> set[Path]:
+    """Return repo-tracked files under root, or an empty set outside git."""
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "--", str(root)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return set()
+
+    repo_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    base = Path(repo_root.stdout.strip()) if repo_root.returncode == 0 else Path.cwd()
+    return {(base / line.strip()).resolve() for line in proc.stdout.splitlines() if line.strip()}
+
+
+def count_rows(path: Path) -> int:
+    try:
+        with open(path, "r") as f:
+            return sum(1 for line in f if line.strip())
+    except OSError:
+        return 0
+
+
+def find_game_logs(log_dir: Path) -> list[Path]:
+    logs = [p for p in log_dir.glob("*.jsonl") if is_game_log(p)]
+    tracked = git_tracked_files(log_dir)
+    local_logs = [p for p in logs if p.resolve() not in tracked]
+    selected = local_logs if local_logs else logs
+    return sorted(selected, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def print_log_listing(log_dir: Path, limit: int = 30) -> None:
+    logs = find_game_logs(log_dir)
+    if not logs:
+        print(f"No self-play game logs found in {log_dir}")
+        return
+    print(f"Self-play game logs in {log_dir}:")
+    for path in logs[:limit]:
+        ts = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        print(f"  {ts} rows={count_rows(path):5d} {path}")
+
+
 def load_interactions(log_path: Path) -> list:
     """Load interactions from a specific file or a directory.
 
@@ -51,11 +101,7 @@ def load_interactions(log_path: Path) -> list:
     if log_path.is_file():
         log_file = log_path
     else:
-        log_files = sorted(
-            [p for p in log_path.glob("*.jsonl") if is_game_log(p)],
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+        log_files = find_game_logs(log_path)
         if not log_files:
             print(f"No interaction logs found in {log_path}")
             return []
@@ -380,10 +426,20 @@ def print_sample_interactions(interactions: list, n: int = 3):
         assessor_span = reward_span(ix, "assessor")
         injector_reward = ix.get("injector_reward", injector_span.get("raw_reward", "N/A"))
         assigned_injector_reward = injector_span.get("reward", injector_reward)
+        injector_target_return = injector_span.get("target_return", ix.get("injector_target_return", "N/A"))
+        coupling_mode = injector_span.get("coupling_mode", ix.get("injector_coupling_mode", "N/A"))
         assessor_reward = ix.get("assessor_reward", assessor_span.get("reward", "N/A"))
         print(f"  Judge: {ix.get('judge_verdict', 'N/A')} ({ix.get('judge_status', '')})")
-        print(f"  Injector reward: raw={injector_reward}, assigned={assigned_injector_reward}")
+        print(
+            f"  Injector reward: raw={injector_reward}, assigned={assigned_injector_reward}, "
+            f"target_return={injector_target_return}, coupling={coupling_mode}"
+        )
         print(f"  Assessor reward: {assessor_reward}")
+        if ix.get("assessor_token_count") is not None:
+            print(
+                f"  Assessor tokens: {ix.get('assessor_token_count')}/{ix.get('assessor_max_new_tokens')} "
+                f"cap_hit={ix.get('assessor_cap_hit', '')}"
+            )
         print(f"  Injector output: {public_answer(ix.get('injector_output', ix.get('injector_response', '')))}")
         print(f"  Changed sentence: {ix.get('changed_sid', 'N/A')}")
         if ix.get("original_sentence") or ix.get("modified_sentence"):
@@ -450,8 +506,17 @@ def main():
         default=None,
         help="Export statistics to JSON file",
     )
+    parser.add_argument(
+        "--list-logs",
+        action="store_true",
+        help="List discovered local self-play game logs and row counts, then exit",
+    )
     
     args = parser.parse_args()
+
+    if args.list_logs:
+        print_log_listing(args.log_dir)
+        return
     
     # Load interactions
     interactions = load_interactions(args.log_dir)
