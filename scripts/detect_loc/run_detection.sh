@@ -23,9 +23,9 @@ set -eo pipefail
 #   MIN_P           — default: 0
 #   PRESENCE_PENALTY— default: 0
 #   THINKING_BUDGET — default: 2048
-#   MAX_NEW_TOKENS  — default: 2048
+#   MAX_NEW_TOKENS  — default: 512
 #   MAX_SAMPLES     — limit samples  (default: all)
-#   NO_THINKING     — set 1 to disable thinking mode (default: 0)
+#   NO_THINKING     — set 1 to disable thinking mode (default: 1)
 #   HF_HOME         — HuggingFace cache dir (default: /workspace/.cache/huggingface)
 # =============================================================================
 
@@ -85,12 +85,12 @@ MODEL_SLUG="${MODEL_NAME//\//_}"
 DATASET="${DATASET:-all}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
-NO_THINKING="${NO_THINKING:-0}"
+NO_THINKING="${NO_THINKING:-1}"
 TOP_K="${TOP_K:-20}"
 MIN_P="${MIN_P:-0}"
 PRESENCE_PENALTY="${PRESENCE_PENALTY:-0}"
 THINKING_BUDGET="${THINKING_BUDGET:-2048}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-2048}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 if [[ "${NO_THINKING}" == "1" ]]; then
     TEMPERATURE="${TEMPERATURE:-0.7}"
     TOP_P="${TOP_P:-0.8}"
