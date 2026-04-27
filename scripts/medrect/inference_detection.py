@@ -425,12 +425,19 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    results_file = f"{args.output_dir}/{args.dataset}_{ts}.jsonl"
+    mode_slug = args.mode.replace("-", "_")
+    sample_slug = f"n{len(results)}"
+    if use_thinking:
+        generation_slug = f"{mode_slug}_tb{args.thinking_budget}_{sample_slug}"
+    else:
+        generation_slug = f"{mode_slug}_max{args.max_new_tokens}_{sample_slug}"
+
+    results_file = f"{args.output_dir}/{args.dataset}_{generation_slug}_{ts}.jsonl"
     with open(results_file, "w") as f:
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    summary_file = f"{args.output_dir}/{args.dataset}_{ts}_summary.json"
+    summary_file = f"{args.output_dir}/{args.dataset}_{generation_slug}_{ts}_summary.json"
     with open(summary_file, "w") as f:
         json.dump(
             dict(model_path=args.model_path, dataset=args.dataset,

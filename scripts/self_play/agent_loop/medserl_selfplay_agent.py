@@ -458,6 +458,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "note_id": note_id,
             "error_type": error_type,
             "changed_sid": changed_sid,
+            "original_sentences": str(extra_info.get("sentences", "")),
             "original_sentence": original_sentence,
             "modified_sentence": str(modified_sentence or ""),
             "modified_sentences": modified_note,

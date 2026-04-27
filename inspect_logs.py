@@ -8,6 +8,7 @@ import glob
 import json
 import os
 from collections import Counter
+from textwrap import shorten
 
 
 def resolve_input(path: str | None) -> str:
@@ -45,25 +46,49 @@ def is_two_turn(row: dict) -> bool:
     )
 
 
-def print_example(row: dict, idx: int) -> None:
+def clip_text(value: object, max_chars: int) -> str:
+    text = "" if value is None else str(value)
+    text = text.strip()
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return shorten(text, width=max_chars, placeholder="\n...[truncated]")
+
+
+def print_block(title: str, value: object, max_chars: int) -> None:
+    text = clip_text(value, max_chars)
+    print(f"\n--- {title} ---")
+    print(text if text else "(empty)")
+
+
+def print_example(row: dict, idx: int, *, max_chars: int) -> None:
     spans = row.get("turn_reward_spans") or []
     print(f"\n=== example {idx} ===")
     print("note_id:", row.get("note_id", ""))
     print("phase:", row.get("phase", ""))
     print("mode:", row.get("mode", ""))
     print("judge:", row.get("judge_verdict", ""))
+    print("judge_status:", row.get("judge_status", ""))
+    print("ground_truth:", row.get("ground_truth", row.get("assessor_ground_truth", "")))
+    print("assessor_label:", row.get("assessor_label", ""))
     print("two_turn:", is_two_turn(row))
-    print("injector_output:", row.get("injector_output", ""))
-    print("assessor_output:", row.get("assessor_output", ""))
     print("turn_reward_spans:", spans)
     print("injector_reward:", row.get("injector_reward"))
     print("assessor_reward:", row.get("assessor_reward"))
+    print_block("original numbered note", row.get("original_sentences") or row.get("modified_sentences", ""), max_chars)
+    if row.get("original_sentence") or row.get("modified_sentence"):
+        print_block("changed sentence before", row.get("original_sentence", ""), max_chars)
+        print_block("changed sentence after", row.get("modified_sentence", ""), max_chars)
+    print_block("injector output", row.get("injector_output", ""), max_chars)
+    print_block("modified numbered note", row.get("modified_sentences", ""), max_chars)
+    print_block("judge reason", row.get("judge_reason", ""), max_chars)
+    print_block("assessor output", row.get("assessor_output", ""), max_chars)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", help="Path to a specific game_*.jsonl file")
     parser.add_argument("--limit", type=int, default=5, help="How many examples to print")
+    parser.add_argument("--max-chars", type=int, default=2000, help="Max characters per text block")
     parser.add_argument(
         "--only-failures",
         action="store_true",
@@ -93,7 +118,7 @@ def main() -> int:
 
     to_show = one_turn_rows if args.only_failures else rows
     for idx, row in enumerate(to_show[: args.limit], 1):
-        print_example(row, idx)
+        print_example(row, idx, max_chars=args.max_chars)
 
     return 0
 

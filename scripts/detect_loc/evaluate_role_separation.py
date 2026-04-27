@@ -354,7 +354,15 @@ def main():
         out_path = Path(args.output_jsonl)
     else:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = PROJECT_ROOT / "results" / "detection" / f"role_separation_{ts}.jsonl"
+        mode_slug = args.mode.replace("-", "_")
+        sample_slug = f"n{len(results)}"
+        generation_slug = f"{mode_slug}_max{args.max_new_tokens}_{sample_slug}"
+        out_path = (
+            PROJECT_ROOT
+            / "results"
+            / "detection"
+            / f"role_separation_{generation_slug}_{ts}.jsonl"
+        )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as f:
         for row in results:
