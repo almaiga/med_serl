@@ -185,6 +185,7 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
             server_manager = FakeServerManager(
                 outputs=[
                     FakeTokenOutput("2. The patient takes metformin.", [ord(c) for c in "2. The patient takes metformin."]),
+                    FakeTokenOutput("<think>looks equivalent</think>", [ord(c) for c in "<think>looks equivalent</think>"]),
                     FakeTokenOutput("CORRECT", [ord(c) for c in "CORRECT"]),
                 ]
             )
@@ -247,6 +248,7 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
             server_manager = FakeServerManager(
                 outputs=[
                     FakeTokenOutput("<think>reasoning only</think>", [ord(c) for c in "<think>reasoning only</think>"]),
+                    FakeTokenOutput("<think>no parsed edit</think>", [ord(c) for c in "<think>no parsed edit</think>"]),
                     FakeTokenOutput("CORRECT", [ord(c) for c in "CORRECT"]),
                 ]
             )
@@ -279,7 +281,7 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
             self.assertEqual(output.extra_fields["judge_verdict"], "ABSTAIN")
             self.assertFalse(output.extra_fields["injector_format_valid"])
             self.assertEqual(output.extra_fields["assessor_ground_truth"], "CORRECT")
-            self.assertEqual(output.extra_fields["assessor_output"], "CORRECT")
+            self.assertEqual(output.extra_fields["assessor_final_output"], "CORRECT")
             self.assertGreater(output.extra_fields["assessor_reward"], 0)
             spans = output.extra_fields["turn_reward_spans"]
             self.assertEqual([span["role"] for span in spans], ["injector", "assessor"])
@@ -300,6 +302,7 @@ class MedSerlSelfPlayAgentTest(unittest.TestCase):
             server_manager = FakeServerManager(
                 outputs=[
                     FakeTokenOutput("2. The patient takes metformin.", [ord(c) for c in "2. The patient takes metformin."]),
+                    FakeTokenOutput("<think>judge unavailable</think>", [ord(c) for c in "<think>judge unavailable</think>"]),
                     FakeTokenOutput("CORRECT", [ord(c) for c in "CORRECT"]),
                 ]
             )

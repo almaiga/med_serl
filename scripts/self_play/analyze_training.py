@@ -151,6 +151,10 @@ def compute_statistics(interactions: list) -> dict:
             "assessor_token_total": 0,
             "assessor_token_count": 0,
             "assessor_cap_hits": 0,
+            "assessor_reasoning_token_total": 0,
+            "assessor_final_token_total": 0,
+            "assessor_think_cap_hits": 0,
+            "assessor_final_cap_hits": 0,
         },
         # Note similarity metrics
         "similarity": {
@@ -212,10 +216,21 @@ def compute_statistics(interactions: list) -> dict:
                 assessor_tokens = int(assessor_tokens)
                 stats["token_metrics"]["assessor_token_total"] += assessor_tokens
                 stats["token_metrics"]["assessor_token_count"] += 1
-                if assessor_max_tokens is not None and assessor_tokens >= int(assessor_max_tokens):
+                if ix.get("assessor_cap_hit") is True:
+                    stats["token_metrics"]["assessor_cap_hits"] += 1
+                elif assessor_max_tokens is not None and assessor_tokens >= int(assessor_max_tokens):
                     stats["token_metrics"]["assessor_cap_hits"] += 1
             except (TypeError, ValueError):
                 pass
+        try:
+            stats["token_metrics"]["assessor_reasoning_token_total"] += int(ix.get("assessor_reasoning_token_count", 0) or 0)
+            stats["token_metrics"]["assessor_final_token_total"] += int(ix.get("assessor_final_token_count", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+        if ix.get("assessor_think_cap_hit") is True:
+            stats["token_metrics"]["assessor_think_cap_hits"] += 1
+        if ix.get("assessor_final_cap_hit") is True:
+            stats["token_metrics"]["assessor_final_cap_hits"] += 1
         
         # Similarity metrics (if available)
         similarity = ix.get("note_similarity")
@@ -287,7 +302,11 @@ def compute_statistics(interactions: list) -> dict:
         "with_think_tags": token_metrics["with_think_tags"],
         "missing_closing_think": token_metrics["missing_closing_think"],
         "avg_assessor_tokens": token_metrics["assessor_token_total"] / max(token_metrics["assessor_token_count"], 1),
+        "avg_assessor_reasoning_tokens": token_metrics["assessor_reasoning_token_total"] / max(token_metrics["assessor_token_count"], 1),
+        "avg_assessor_final_tokens": token_metrics["assessor_final_token_total"] / max(token_metrics["assessor_token_count"], 1),
         "assessor_cap_hits": token_metrics["assessor_cap_hits"],
+        "assessor_think_cap_hits": token_metrics["assessor_think_cap_hits"],
+        "assessor_final_cap_hits": token_metrics["assessor_final_cap_hits"],
         "assessor_token_count": token_metrics["assessor_token_count"],
         
         # Similarity metrics
@@ -365,6 +384,11 @@ def print_report(stats: dict):
     if metrics.get("assessor_token_count", 0):
         print(f"  Avg Assessor Tokens:   {metrics.get('avg_assessor_tokens', 0):.0f}")
         print(f"  Assessor Cap Hits:     {metrics.get('assessor_cap_hits', 0)}")
+        if metrics.get("avg_assessor_reasoning_tokens", 0) or metrics.get("avg_assessor_final_tokens", 0):
+            print(f"  Avg Reasoning Tokens:  {metrics.get('avg_assessor_reasoning_tokens', 0):.0f}")
+            print(f"  Avg Final Tokens:      {metrics.get('avg_assessor_final_tokens', 0):.0f}")
+            print(f"  Think Cap Hits:        {metrics.get('assessor_think_cap_hits', 0)}")
+            print(f"  Final Cap Hits:        {metrics.get('assessor_final_cap_hits', 0)}")
     
     # Note similarity metrics
     print(f"\n📝 NOTE SIMILARITY (Original vs Generated)")
@@ -436,15 +460,27 @@ def print_sample_interactions(interactions: list, n: int = 3):
         )
         print(f"  Assessor reward: {assessor_reward}")
         if ix.get("assessor_token_count") is not None:
-            print(
-                f"  Assessor tokens: {ix.get('assessor_token_count')}/{ix.get('assessor_max_new_tokens')} "
-                f"cap_hit={ix.get('assessor_cap_hit', '')}"
-            )
+            if ix.get("assessor_reasoning_token_count") is not None:
+                print(
+                    f"  Assessor tokens: total={ix.get('assessor_token_count')} "
+                    f"reasoning={ix.get('assessor_reasoning_token_count')}/{ix.get('assessor_think_max_new_tokens')} "
+                    f"final={ix.get('assessor_final_token_count')}/{ix.get('assessor_final_max_new_tokens')} "
+                    f"think_cap={ix.get('assessor_think_cap_hit', '')} "
+                    f"final_cap={ix.get('assessor_final_cap_hit', '')}"
+                )
+            else:
+                print(
+                    f"  Assessor tokens: {ix.get('assessor_token_count')}/{ix.get('assessor_max_new_tokens')} "
+                    f"cap_hit={ix.get('assessor_cap_hit', '')}"
+                )
         print(f"  Injector output: {public_answer(ix.get('injector_output', ix.get('injector_response', '')))}")
         print(f"  Changed sentence: {ix.get('changed_sid', 'N/A')}")
         if ix.get("original_sentence") or ix.get("modified_sentence"):
             print(f"    Before: {str(ix.get('original_sentence', ''))[:180]}")
             print(f"    After : {str(ix.get('modified_sentence', ''))[:180]}")
+        final_output = ix.get("assessor_final_output")
+        if final_output is not None:
+            print(f"  Assessor final output: {public_answer(final_output)}")
         print(f"  Assessor output: {public_answer(ix.get('assessor_output', ix.get('assessor_response', '')))}")
 
     # Get samples from different categories. New game logs use
