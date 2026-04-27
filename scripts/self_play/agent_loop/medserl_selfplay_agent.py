@@ -576,57 +576,75 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         assessor_reasoning_text = self._decode(assessor_reasoning_ids)
         assessor_think_cap_hit = len(assessor_reasoning_ids) >= int(self.assessor_think_max_new_tokens)
 
-        conversation_before_final_raw = conversation_with_assessor + [
-            {"role": "assistant", "content": assessor_reasoning_text}
-        ]
-        forced_close_text = ""
-        assessor_reasoning_context_text = assessor_reasoning_text
-        if "<think>" in assessor_reasoning_text.lower() and "</think>" not in assessor_reasoning_text.lower():
-            forced_close_text = "\n</think>"
-            assessor_reasoning_context_text = assessor_reasoning_text + forced_close_text
-
-        conversation_before_final = conversation_with_assessor + [
-            {"role": "assistant", "content": assessor_reasoning_context_text}
-        ]
-        forced_close_ids = (
-            self._token_delta(conversation_before_final_raw, conversation_before_final)
-            if forced_close_text
-            else []
-        )
-        final_prompt = self._construct_assessor_final_prompt()
-        conversation_with_final_prompt = conversation_before_final + [{"role": "user", "content": final_prompt}]
-        assessor_final_prompt_ids = self._token_delta(conversation_before_final, conversation_with_final_prompt)
-
-        assessor_final_sampling = self._sampling_with_max_tokens(
-            sampling_params,
-            max_new_tokens=self.assessor_final_max_new_tokens,
-            temperature=0.0,
-        )
-        final_prompt_input_ids = (
-            turn2_prompt_ids
-            + assessor_reasoning_ids
-            + forced_close_ids
-            + assessor_final_prompt_ids
-        )
-        assessor_final_output = await self._generate(request_id, final_prompt_input_ids, assessor_final_sampling)
-        assessor_final_ids = list(assessor_final_output.token_ids)
-        assessor_final_log_probs = (
-            list(assessor_final_output.log_probs)
-            if getattr(assessor_final_output, "log_probs", None) is not None
-            else None
-        )
-        assessor_final_text = self._decode(assessor_final_ids)
-        assessor_final_cap_hit = len(assessor_final_ids) >= int(self.assessor_final_max_new_tokens)
-        assessor_cap_hit = bool(assessor_think_cap_hit or assessor_final_cap_hit)
-        assessor_ids = assessor_reasoning_ids + forced_close_ids + assessor_final_prompt_ids + assessor_final_ids
-        assessor_text = assessor_reasoning_text + forced_close_text + "\n" + assessor_final_text
-        final_label, _ = parse_assessor_answer(assessor_final_text)
-        if final_label != "UNKNOWN":
-            assessor_scored_text = assessor_final_text
-            assessor_scored_source = "final"
-        else:
-            assessor_scored_text = assessor_text
+        # Check if the model already generated a valid final answer in the first pass
+        pre_label, pre_sid = parse_assessor_answer(assessor_reasoning_text)
+        if pre_label != "UNKNOWN":
+            assessor_final_prompt_ids = []
+            forced_close_ids = []
+            forced_close_text = ""
+            assessor_final_ids = []
+            assessor_final_log_probs = None
+            assessor_final_text = ""
+            assessor_final_cap_hit = False
+            assessor_cap_hit = assessor_think_cap_hit
+            assessor_ids = assessor_reasoning_ids
+            assessor_text = assessor_reasoning_text
+            final_label = pre_label
+            assessor_scored_text = assessor_reasoning_text
             assessor_scored_source = "combined"
+        else:
+            conversation_before_final_raw = conversation_with_assessor + [
+                {"role": "assistant", "content": assessor_reasoning_text}
+            ]
+            forced_close_text = ""
+            assessor_reasoning_context_text = assessor_reasoning_text
+            if "<think>" in assessor_reasoning_text.lower() and "</think>" not in assessor_reasoning_text.lower():
+                forced_close_text = "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
+                assessor_reasoning_context_text = assessor_reasoning_text + forced_close_text
+
+            conversation_before_final = conversation_with_assessor + [
+                {"role": "assistant", "content": assessor_reasoning_context_text}
+            ]
+            forced_close_ids = (
+                self._token_delta(conversation_before_final_raw, conversation_before_final)
+                if forced_close_text
+                else []
+            )
+            final_prompt = self._construct_assessor_final_prompt()
+            conversation_with_final_prompt = conversation_before_final + [{"role": "user", "content": final_prompt}]
+            assessor_final_prompt_ids = self._token_delta(conversation_before_final, conversation_with_final_prompt)
+
+            assessor_final_sampling = self._sampling_with_max_tokens(
+                sampling_params,
+                max_new_tokens=self.assessor_final_max_new_tokens,
+                temperature=0.0,
+            )
+            final_prompt_input_ids = (
+                turn2_prompt_ids
+                + assessor_reasoning_ids
+                + forced_close_ids
+                + assessor_final_prompt_ids
+            )
+            assessor_final_output = await self._generate(request_id, final_prompt_input_ids, assessor_final_sampling)
+            assessor_final_ids = list(assessor_final_output.token_ids)
+            assessor_final_log_probs = (
+                list(assessor_final_output.log_probs)
+                if getattr(assessor_final_output, "log_probs", None) is not None
+                else None
+            )
+            assessor_final_text = self._decode(assessor_final_ids)
+            assessor_final_cap_hit = len(assessor_final_ids) >= int(self.assessor_final_max_new_tokens)
+            assessor_cap_hit = bool(assessor_think_cap_hit or assessor_final_cap_hit)
+            assessor_ids = assessor_reasoning_ids + forced_close_ids + assessor_final_prompt_ids + assessor_final_ids
+            assessor_text = assessor_reasoning_text + forced_close_text + "\n" + assessor_final_text
+
+            final_label, _ = parse_assessor_answer(assessor_final_text)
+            if final_label != "UNKNOWN":
+                assessor_scored_text = assessor_final_text
+                assessor_scored_source = "final"
+            else:
+                assessor_scored_text = assessor_text
+                assessor_scored_source = "combined"
 
         assessor_reward = compute_assessor_game_reward(
             assessor_scored_text,
