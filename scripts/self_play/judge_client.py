@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "simple_judge_prompts.json"
 JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
-JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "20"))
+JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "60"))
+JUDGE_MAX_RETRIES = int(os.getenv("SIMPLE_JUDGE_MAX_RETRIES", "2"))
 
 _PROMPT_CACHE: Optional[dict] = None
 
@@ -178,30 +179,48 @@ async def judge_sentence_pair(
     if not reward_router_address:
         payload.setdefault("model", judge_model or JUDGE_MODEL)
 
+    _transient_exc = (URLError, OSError, asyncio.TimeoutError, ValueError)
     try:
-        result = await post_json(target_url, payload)
-    except (URLError, OSError, asyncio.TimeoutError, ValueError) as exc:
-        logger.warning(
-            "Simple judge request failed [%s] url=%s timeout=%ss: %s",
-            type(exc).__name__,
-            target_url,
-            JUDGE_TIMEOUT,
-            exc,
-        )
+        import aiohttp as _aiohttp
+        _transient_exc = _transient_exc + (_aiohttp.ClientError,)
+    except ImportError:
+        pass
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(1 + JUDGE_MAX_RETRIES):
+        if attempt > 0:
+            await asyncio.sleep(2 ** (attempt - 1))  # 1s, 2s, ...
+        try:
+            result = await post_json(target_url, payload)
+            last_exc = None
+            break
+        except _transient_exc as exc:
+            last_exc = exc
+            logger.warning(
+                "Simple judge request failed (attempt %d/%d) [%s] url=%s timeout=%ss: %s",
+                attempt + 1,
+                1 + JUDGE_MAX_RETRIES,
+                type(exc).__name__,
+                target_url,
+                JUDGE_TIMEOUT,
+                exc,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Simple judge unexpected failure [%s] url=%s: %s", type(exc).__name__, target_url, exc)
+            return {
+                "verdict": "ABSTAIN",
+                "status": "unexpected_error",
+                "judge_score": 0.0,
+                "reason": f"unexpected_error:{exc}",
+                "judge_output": "",
+            }
+
+    if last_exc is not None:
         return {
             "verdict": "ABSTAIN",
             "status": "request_failed",
             "judge_score": 0.0,
-            "reason": f"request_failed:{exc}",
-            "judge_output": "",
-        }
-    except Exception as exc:  # pragma: no cover
-        logger.warning("Simple judge unexpected failure [%s] url=%s: %s", type(exc).__name__, target_url, exc)
-        return {
-            "verdict": "ABSTAIN",
-            "status": "unexpected_error",
-            "judge_score": 0.0,
-            "reason": f"unexpected_error:{exc}",
+            "reason": f"request_failed:{last_exc}",
             "judge_output": "",
         }
 
