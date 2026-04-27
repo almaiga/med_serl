@@ -126,6 +126,9 @@ TRAIN_PARQUET="$DATA_DIR/train_injector_seed.parquet"
 VAL_PARQUET="$DATA_DIR/val_injector_seed.parquet"
 AGENT_LOOP_CONFIG_PATH="$PROJECT_ROOT/scripts/self_play/configs/agent_loop_config.yaml"
 CONFIG_PATH="$PROJECT_ROOT/scripts/self_play/configs"
+GAME_LOG_DIR="${GAME_LOG_DIR:-$PROJECT_ROOT/results/self_play/interactions}"
+GAME_LOG_TS="$(date +%Y%m%d_%H%M%S)"
+MEDSERL_GAME_LOG="${MEDSERL_GAME_LOG:-$GAME_LOG_DIR/game_${GAME_LOG_TS}.jsonl}"
 
 TRAINER_LOGGER="console"
 if [ "$WANDB" = "1" ]; then
@@ -170,6 +173,7 @@ echo "W&B: $WANDB"
 echo "Logger: $TRAINER_LOGGER"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled>}"
 echo "Require judge: $REQUIRE_JUDGE"
+echo "Game log: $MEDSERL_GAME_LOG"
 echo "=================================================="
 
 if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
@@ -193,6 +197,7 @@ export PYTHONFAULTHANDLER=1
 export HYDRA_FULL_ERROR=1
 export WANDB_PROJECT
 export WANDB_MODE
+export MEDSERL_GAME_LOG
 export MEDSERL_ASSESSOR_MAX_NEW_TOKENS="$ASSESSOR_MAX_NEW_TOKENS"
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_API_KEY
@@ -213,7 +218,7 @@ if [ "$REQUIRE_JUDGE" = "1" ] && [ -z "${JUDGE_VLLM_URL:-}" ]; then
 fi
 
 cd "$PROJECT_ROOT"
-mkdir -p "$OUTPUT_DIR" "$DATA_DIR"
+mkdir -p "$OUTPUT_DIR" "$DATA_DIR" "$(dirname "$MEDSERL_GAME_LOG")"
 
 python3 - <<'PY'
 import ray, torch
@@ -444,6 +449,7 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
     "++ray_kwargs.runtime_env.env_vars.JUDGE_VLLM_URL=${JUDGE_VLLM_URL:-}" \
     "++ray_kwargs.runtime_env.env_vars.JUDGE_MODEL=$JUDGE_MODEL" \
+    "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_MAX_NEW_TOKENS=$ASSESSOR_MAX_NEW_TOKENS" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_PROJECT=$WANDB_PROJECT" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_MODE=$WANDB_MODE" \
@@ -458,3 +464,4 @@ echo "=================================================="
 echo "Outputs: $OUTPUT_DIR"
 echo "Train parquet: $TRAIN_PARQUET"
 echo "Val parquet: $VAL_PARQUET"
+echo "Game log: $MEDSERL_GAME_LOG"
