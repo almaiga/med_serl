@@ -27,8 +27,8 @@ fi
 TOP_K="${TOP_K:-20}"
 MIN_P="${MIN_P:-0}"
 PRESENCE_PENALTY="${PRESENCE_PENALTY:-0}"
-THINKING_BUDGET="${THINKING_BUDGET:-4096}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-4096}"
+THINKING_BUDGET="${THINKING_BUDGET:-2048}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-2048}"
 
 echo "============================================================"
 echo "  Launching detection inference"
