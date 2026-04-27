@@ -68,6 +68,7 @@ WANDB_MODE="${WANDB_MODE:-online}"
 KEEP_ONLY_LATEST_CHECKPOINT="${KEEP_ONLY_LATEST_CHECKPOINT:-1}"
 LIVE_CHECKPOINT_RETENTION="${LIVE_CHECKPOINT_RETENTION:-1}"
 CHECKPOINT_PRUNE_INTERVAL_SEC="${CHECKPOINT_PRUNE_INTERVAL_SEC:-120}"
+LIVE_CHECKPOINT_PRUNING="${LIVE_CHECKPOINT_PRUNING:-0}"
 ACTOR_LR="${ACTOR_LR:-5e-7}"
 AGENT_LOOP_WORKERS="${AGENT_LOOP_WORKERS:-8}"
 INJECTOR_MAX_NEW_TOKENS="${INJECTOR_MAX_NEW_TOKENS:-512}"
@@ -338,12 +339,8 @@ cleanup_checkpoint_pruner() {
         kill "$PRUNER_PID" >/dev/null 2>&1 || true
         wait "$PRUNER_PID" 2>/dev/null || true
     fi
-    if [ "$KEEP_ONLY_LATEST_CHECKPOINT" = "1" ]; then
-        local keep_count=1
-        if [ "$exit_status" -ne 0 ]; then
-            keep_count="$LIVE_CHECKPOINT_RETENTION"
-        fi
-        prune_old_checkpoints "$OUTPUT_DIR" "$keep_count"
+    if [ "$KEEP_ONLY_LATEST_CHECKPOINT" = "1" ] && [ "$exit_status" -eq 0 ]; then
+        prune_old_checkpoints "$OUTPUT_DIR" 1
     fi
 }
 trap cleanup_checkpoint_pruner EXIT
@@ -374,7 +371,7 @@ fi
 
 if [ "$KEEP_ONLY_LATEST_CHECKPOINT" = "1" ]; then
     prune_old_checkpoints "$OUTPUT_DIR" "$LIVE_CHECKPOINT_RETENTION"
-    if [[ "$RESOLVED_SAVE_FREQ" =~ ^[0-9]+$ ]] && [ "$RESOLVED_SAVE_FREQ" -gt 0 ]; then
+    if [ "$LIVE_CHECKPOINT_PRUNING" = "1" ] && [[ "$RESOLVED_SAVE_FREQ" =~ ^[0-9]+$ ]] && [ "$RESOLVED_SAVE_FREQ" -gt 0 ]; then
         (
             while true; do
                 sleep "$CHECKPOINT_PRUNE_INTERVAL_SEC"
