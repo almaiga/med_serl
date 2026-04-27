@@ -325,9 +325,38 @@ def print_sample_interactions(interactions: list, n: int = 3):
                 return line[:160]
         return ""
 
-    # Get samples from different categories
-    correct_samples = [ix for ix in interactions if ix.get("outcome") == "exact_match"][:n]
-    wrong_samples = [ix for ix in interactions if ix.get("outcome") in ("miss", "invalid_format")] [:n]
+    def outcome(ix: dict) -> str:
+        return ix.get("assessor_outcome", ix.get("outcome", "unknown"))
+
+    def reward_span(ix: dict, role: str) -> dict:
+        for span in ix.get("turn_reward_spans") or []:
+            if isinstance(span, dict) and span.get("role") == role:
+                return span
+        return {}
+
+    def print_turns(ix: dict) -> None:
+        injector_span = reward_span(ix, "injector")
+        assessor_span = reward_span(ix, "assessor")
+        injector_reward = ix.get("injector_reward", injector_span.get("raw_reward", "N/A"))
+        assigned_injector_reward = injector_span.get("reward", injector_reward)
+        assessor_reward = ix.get("assessor_reward", assessor_span.get("reward", "N/A"))
+        print(f"  Judge: {ix.get('judge_verdict', 'N/A')} ({ix.get('judge_status', '')})")
+        print(f"  Injector reward: raw={injector_reward}, assigned={assigned_injector_reward}")
+        print(f"  Assessor reward: {assessor_reward}")
+        print(f"  Injector output: {public_answer(ix.get('injector_output', ix.get('injector_response', '')))}")
+        print(f"  Changed sentence: {ix.get('changed_sid', 'N/A')}")
+        if ix.get("original_sentence") or ix.get("modified_sentence"):
+            print(f"    Before: {str(ix.get('original_sentence', ''))[:180]}")
+            print(f"    After : {str(ix.get('modified_sentence', ''))[:180]}")
+        print(f"  Assessor output: {public_answer(ix.get('assessor_output', ix.get('assessor_response', '')))}")
+
+    # Get samples from different categories. New game logs use
+    # `assessor_outcome`; older reward-function logs use `outcome`.
+    correct_samples = [ix for ix in interactions if outcome(ix) == "exact_match"][:n]
+    wrong_samples = [
+        ix for ix in interactions
+        if outcome(ix) in ("miss", "invalid_format", "parse_failure", "game_invalid", "wrong")
+    ][:n]
 
     print(f"\n📝 SAMPLE CORRECT CLASSIFICATIONS")
     print("-"*50)
@@ -337,11 +366,12 @@ def print_sample_interactions(interactions: list, n: int = 3):
         note_preview = ix.get('modified_sentences') or public_answer(ix.get('injector_response', '')) or ix.get('model_response') or ''
         assessor_summary = ix.get('assessor_public_answer') or public_answer(ix.get('assessor_response', '')) or ix.get('model_response', 'N/A')
         print(f"  Note preview: {note_preview[:100]}...")
-        print(f"  Assessor: {assessor_summary[:120]}")
+        print(f"  Assessor: {public_answer(ix.get('assessor_output', '')) or assessor_summary[:120]}")
         if ix.get("assessor_label") == "ERROR":
             print(f"  Parsed answer: sentence {ix.get('assessor_pred_sid', 'N/A')}")
         elif ix.get("assessor_label"):
             print(f"  Parsed answer: {ix.get('assessor_label')}")
+        print_turns(ix)
         print()
 
     print(f"\n📝 SAMPLE WRONG CLASSIFICATIONS")
@@ -351,10 +381,11 @@ def print_sample_interactions(interactions: list, n: int = 3):
         print(f"  Mode: {ix.get('mode', 'N/A')}")
         print(f"  Ground Truth: {ix.get('ground_truth', 'N/A')}")
         assessor_summary = ix.get('assessor_public_answer') or public_answer(ix.get('assessor_response', '')) or ix.get('model_response', 'N/A')
-        print(f"  Assessor Output: {assessor_summary[:160]}")
+        print(f"  Assessor Output: {public_answer(ix.get('assessor_output', '')) or assessor_summary[:160]}")
         if ix.get("mode") == "error_injection":
             print(f"  Error Type: {ix.get('error_type', 'N/A')}")
             print(f"  Predicted SID: {ix.get('assessor_pred_sid', 'N/A')}")
+        print_turns(ix)
         print()
 
 
