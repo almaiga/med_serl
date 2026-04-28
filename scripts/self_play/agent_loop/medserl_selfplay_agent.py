@@ -555,7 +555,11 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         }
 
         assessor_prompt = self._construct_assessor_prompt(modified_note)
-        conversation_before_assessor = prompt_messages + [{"role": "assistant", "content": injector_text}]
+        # Show only the injector's visible output (strip <think> block) so the
+        # assessor cannot read the injector's private reasoning — Hidden CoT per SeRL.
+        _, injector_visible = strip_thinking(injector_text)
+        injector_context = injector_visible or injector_text
+        conversation_before_assessor = prompt_messages + [{"role": "assistant", "content": injector_context}]
         conversation_with_assessor = conversation_before_assessor + [{"role": "user", "content": assessor_prompt}]
         assessor_prompt_ids = self._token_delta(conversation_before_assessor, conversation_with_assessor)
 
