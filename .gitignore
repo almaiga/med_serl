@@ -12,6 +12,10 @@ outputs/
 .env
 .kiro
 .hypothesis
+scratch/
+logs/
+data_processed/self_play_vllm_agent_loop/
 results/Qwen3-4B Lora Results Jan 14 2026.jsonl
 results/self_play/interactions/*.json
 results/self_play/interactions/*.jsonl
+results/self_play/test_loop_*.jsonl
