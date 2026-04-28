@@ -555,15 +555,22 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         }
 
         assessor_prompt = self._construct_assessor_prompt(modified_note)
-        # Show only the injector's visible output (strip <think> block) so the
-        # assessor cannot read the injector's private reasoning — Hidden CoT per SeRL.
+        # Hidden CoT per SeRL: the assessor must not see the injector's private
+        # reasoning. Strip the <think> block so only the visible output line
+        # (e.g. "9. Modified sentence text.") is in the assessor's token context.
+        # response_ids below still uses the full injector_ids so the loss is
+        # computed on the complete injector generation including its thinking.
         _, injector_visible = strip_thinking(injector_text)
         injector_context = injector_visible or injector_text
         conversation_before_assessor = prompt_messages + [{"role": "assistant", "content": injector_context}]
         conversation_with_assessor = conversation_before_assessor + [{"role": "user", "content": assessor_prompt}]
         assessor_prompt_ids = self._token_delta(conversation_before_assessor, conversation_with_assessor)
+        # Derive token ids for the stripped injector output as an assistant turn.
+        # These replace injector_ids in the assessor prefix so the model never
+        # attends to the think tokens when generating its assessment.
+        injector_context_ids = self._token_delta(prompt_messages, conversation_before_assessor)
 
-        turn2_prompt_ids = prompt_ids + injector_ids + assessor_prompt_ids
+        turn2_prompt_ids = prompt_ids + injector_context_ids + assessor_prompt_ids
         assessor_sampling = self._sampling_with_max_tokens(
             sampling_params,
             max_new_tokens=self.assessor_think_max_new_tokens,
@@ -725,6 +732,7 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "assessor_format_valid": bool(assessor_reward.has_valid_format),
             "assessor_cap_hit": bool(assessor_cap_hit),
             "injector_token_count": len(injector_ids),
+            "injector_context_token_count": len(injector_context_ids),
             "assessor_prompt_token_count": len(assessor_prompt_ids),
             "assessor_reasoning_token_count": len(assessor_reasoning_ids),
             "assessor_forced_close_token_count": len(forced_close_ids),
