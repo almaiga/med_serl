@@ -36,6 +36,12 @@ def extract_json_object(text: str) -> Optional[dict]:
     text = (text or "").strip()
     if not text:
         return None
+    # Strip markdown code fences (```json ... ``` or ``` ... ```) that Qwen3
+    # sometimes wraps around its JSON output.
+    import re as _re
+    fence_match = _re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if fence_match:
+        text = fence_match.group(1).strip()
     try:
         parsed = json.loads(text)
         return parsed if isinstance(parsed, dict) else None
