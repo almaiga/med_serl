@@ -455,8 +455,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.test_freq="$TEST_FREQ" \
     trainer.val_before_train="$VAL_BEFORE_TRAIN" \
     "++ray_kwargs.ray_init.num_cpus=$RAY_NUM_CPUS" \
-    "++ray_kwargs.runtime_env.working_dir=$PROJECT_ROOT" \
-    "++ray_kwargs.runtime_env.env_vars.PYTHONPATH=$PYTHONPATH" \
+    "++ray_kwargs.runtime_env.working_dir='$PROJECT_ROOT'" \
+    "++ray_kwargs.runtime_env.env_vars.PYTHONPATH='$PYTHONPATH'" \
     "++ray_kwargs.runtime_env.env_vars.PYTHONUNBUFFERED=1" \
     "++ray_kwargs.runtime_env.env_vars.PYTHONFAULTHANDLER=1" \
     "++ray_kwargs.runtime_env.env_vars.TOKENIZERS_PARALLELISM=false" \
@@ -465,18 +465,18 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.RAY_DEDUP_LOGS=0" \
     "++ray_kwargs.runtime_env.env_vars.HYDRA_FULL_ERROR=1" \
     "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
-    "++ray_kwargs.runtime_env.env_vars.JUDGE_VLLM_URL=${JUDGE_VLLM_URL:-}" \
-    "++ray_kwargs.runtime_env.env_vars.JUDGE_MODEL=$JUDGE_MODEL" \
+    "++ray_kwargs.runtime_env.env_vars.JUDGE_MODEL='$JUDGE_MODEL'" \
     "++ray_kwargs.runtime_env.env_vars.SIMPLE_JUDGE_WEIGHT=$SIMPLE_JUDGE_WEIGHT" \
-    "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG=$MEDSERL_GAME_LOG" \
+    "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG='$MEDSERL_GAME_LOG'" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_MAX_NEW_TOKENS=$ASSESSOR_MAX_NEW_TOKENS" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_THINK_MAX_NEW_TOKENS=$ASSESSOR_THINK_MAX_NEW_TOKENS" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_FINAL_MAX_NEW_TOKENS=$ASSESSOR_FINAL_MAX_NEW_TOKENS" \
-    "++ray_kwargs.runtime_env.env_vars.WANDB_PROJECT=$WANDB_PROJECT" \
+    "++ray_kwargs.runtime_env.env_vars.WANDB_PROJECT='$WANDB_PROJECT'" \
     "++ray_kwargs.runtime_env.env_vars.WANDB_MODE=$WANDB_MODE" \
-    "++ray_kwargs.runtime_env.env_vars.WANDB_API_KEY=${WANDB_API_KEY:-}" \
-    "++ray_kwargs.runtime_env.env_vars.WANDB_ENTITY=$WANDB_ENTITY" \
-    "++ray_kwargs.runtime_env.env_vars.WANDB_BASE_URL=$WANDB_BASE_URL"
+    ${JUDGE_VLLM_URL:+"++ray_kwargs.runtime_env.env_vars.JUDGE_VLLM_URL='${JUDGE_VLLM_URL}'"} \
+    ${WANDB_API_KEY:+"++ray_kwargs.runtime_env.env_vars.WANDB_API_KEY='${WANDB_API_KEY}'"} \
+    ${WANDB_ENTITY:+"++ray_kwargs.runtime_env.env_vars.WANDB_ENTITY='${WANDB_ENTITY}'"} \
+    ${WANDB_BASE_URL:+"++ray_kwargs.runtime_env.env_vars.WANDB_BASE_URL='${WANDB_BASE_URL}'"}
 
 echo ""
 echo "=================================================="
