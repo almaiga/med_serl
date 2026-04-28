@@ -145,10 +145,26 @@ def parse_assessor_answer(text: str) -> Tuple[str, Optional[int]]:
 # Injector output parsing (compact format: "N. <modified sentence>")
 # ─────────────────────────────────────────────────────────────────────────────
 
+_INJECTOR_META_PHRASES = (
+    "identify the target",
+    "identify target",
+    "review each sentence",
+    "the best target",
+    "select the sentence",
+    "choose the sentence",
+    "pick the sentence",
+    "find the sentence",
+    "step-by-step",
+    "step by step",
+)
+
+
 def parse_injector_compact(text: str) -> Tuple[Optional[int], Optional[str]]:
     """Parse injector compact output: 'N. <modified sentence text>'.
 
     Strips <think>...</think> first, then extracts the sentence line.
+    Rejects lines that are meta-reasoning rather than an actual clinical
+    sentence (e.g. "3. Identify the target sentence for modification.").
 
     Returns:
         (sentence_id, modified_text) or (None, None) on failure.
@@ -160,7 +176,12 @@ def parse_injector_compact(text: str) -> Tuple[Optional[int], Optional[str]]:
         line = line.strip()
         m = re.match(r"^(\d+)\.\s+(.+)$", line)
         if m:
-            return int(m.group(1)), m.group(2).strip()
+            candidate = m.group(2).strip()
+            low = candidate.lower()
+            # Reject lines that are injector meta-reasoning leaked into output
+            if any(phrase in low for phrase in _INJECTOR_META_PHRASES):
+                continue
+            return int(m.group(1)), candidate
 
     return None, None
 
