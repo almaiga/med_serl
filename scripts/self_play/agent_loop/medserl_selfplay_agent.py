@@ -520,6 +520,17 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
                 judge_model=self.judge_model,
                 norm_edit=norm_edit,
             )
+            # Wholesale rewrite guard: injector violated the "1-3 words" constraint.
+            # RL pressure causes the model to ignore natural-language instructions,
+            # so we enforce programmatically. Only override CHANGED/ok — a SAME
+            # verdict already carries its own reward signal regardless of edit size.
+            if (
+                norm_edit > 0.80
+                and judge_result.get("verdict") == "CHANGED"
+                and judge_result.get("status") == "ok"
+            ):
+                judge_result = dict(judge_result)
+                judge_result["status"] = "wholesale_rewrite"
         elif parse_success and is_truncation:
             # Still reconstruct so the assessor sees the actual (truncated) note,
             # but skip the judge call and mark as truncation_filter.
@@ -588,6 +599,11 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "norm_edit": float(norm_edit),
             "length_ratio": float(length_ratio),
             "is_truncation": bool(is_truncation),
+            "is_wholesale_rewrite": bool(
+                norm_edit > 0.80
+                and not is_truncation
+                and judge_result.get("verdict") == "CHANGED"
+            ),
             "role": "injector",
         }
 
