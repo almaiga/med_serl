@@ -73,6 +73,7 @@ from scripts.self_play.game_reward import (
 )
 from scripts.self_play.judge_client import judge_sentence_pair
 from scripts.self_play.utils import (
+    normalized_edit_distance,
     parse_assessor_answer,
     parse_injector_compact,
     parse_numbered_sentences,
@@ -491,8 +492,24 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
         note_id = str(extra_info.get("note_id", interaction_kwargs.get("note_id", "")))
         error_type = str(extra_info.get("error_type", interaction_kwargs.get("error_type", "")))
 
+        # Compute edit-distance metrics used for pre-filtering and as a judge signal
         if parse_success:
-            modified_note = reconstruct_note(str(extra_info.get("sentences", "")), int(changed_sid), str(modified_sentence))
+            norm_edit = normalized_edit_distance(original_sentence, str(modified_sentence))
+            length_ratio = len(str(modified_sentence)) / max(len(original_sentence), 1)
+            # Truncation: modified sentence is less than 40% of original length.
+            # This catches the "sentence summarization" degenerate strategy where
+            # the injector rewrites the opening patient description as a brief label.
+            # Per MAGIC: these carry no useful learning signal → 0.0 reward, game_invalid.
+            is_truncation = length_ratio < 0.40
+        else:
+            norm_edit = 0.0
+            length_ratio = 1.0
+            is_truncation = False
+
+        if parse_success and not is_truncation:
+            modified_note = reconstruct_note(
+                str(extra_info.get("sentences", "")), int(changed_sid), str(modified_sentence)
+            )
             judge_result = await judge_sentence_pair(
                 note_id=note_id,
                 error_type=error_type,
@@ -501,13 +518,29 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
                 modified_sentence=str(modified_sentence),
                 judge_url=self.judge_url,
                 judge_model=self.judge_model,
+                norm_edit=norm_edit,
             )
+        elif parse_success and is_truncation:
+            # Still reconstruct so the assessor sees the actual (truncated) note,
+            # but skip the judge call and mark as truncation_filter.
+            modified_note = reconstruct_note(
+                str(extra_info.get("sentences", "")), int(changed_sid), str(modified_sentence)
+            )
+            judge_result = {
+                "verdict": "ABSTAIN",
+                "status": "truncation",
+                "judge_score": 0.0,
+                "norm_edit": float(norm_edit),
+                "reason": "truncation",
+                "judge_output": "",
+            }
         else:
             modified_note = str(extra_info.get("sentences", ""))
             judge_result = {
                 "verdict": "ABSTAIN",
                 "status": "parse_failure",
                 "judge_score": 0.0,
+                "norm_edit": 0.0,
                 "reason": "parse_failure",
                 "judge_output": "",
             }
@@ -545,12 +578,16 @@ class MedSerlSelfPlayAgentLoop(AgentLoopBase):
             "judge_verdict": judge_result["verdict"],
             "judge_status": judge_result.get("status", ""),
             "judge_score": float(judge_result["judge_score"]),
+            "judge_norm_edit": float(judge_result.get("norm_edit", norm_edit)),
             "judge_reason": judge_result["reason"],
             "judge_output": judge_result["judge_output"],
             "injector_reward": float(injector_reward),
             "injector_outcome": injector_outcome,
             "game_valid": bool(game_valid),
             "injector_format_valid": bool(parse_success),
+            "norm_edit": float(norm_edit),
+            "length_ratio": float(length_ratio),
+            "is_truncation": bool(is_truncation),
             "role": "injector",
         }
 

@@ -156,7 +156,31 @@ _INJECTOR_META_PHRASES = (
     "find the sentence",
     "step-by-step",
     "step by step",
+    # Observed failure patterns: injector leaking its own prompt instructions
+    "consider what type",
+    "what type of clinical error",
+    "description of the patient",
+    "introduction of patient",
+    "clinical scenario",
+    "no obvious error",
+    "sentence number",
 )
+
+_INJECTOR_META_MARKDOWN = ("**", "##", "- [", "1. [")
+
+
+def normalized_edit_distance(s1: str, s2: str) -> float:
+    """Normalized character-level edit distance in [0, 1].
+
+    Uses SequenceMatcher ratio: 0.0 = identical, 1.0 = completely different.
+    """
+    if not s1 and not s2:
+        return 0.0
+    if not s1 or not s2:
+        return 1.0
+    if s1 == s2:
+        return 0.0
+    return 1.0 - SequenceMatcher(None, s1, s2).ratio()
 
 
 def parse_injector_compact(text: str) -> Tuple[Optional[int], Optional[str]]:
@@ -178,8 +202,11 @@ def parse_injector_compact(text: str) -> Tuple[Optional[int], Optional[str]]:
         if m:
             candidate = m.group(2).strip()
             low = candidate.lower()
-            # Reject lines that are injector meta-reasoning leaked into output
+            # Reject meta-reasoning phrases leaked into output
             if any(phrase in low for phrase in _INJECTOR_META_PHRASES):
+                continue
+            # Reject markdown formatting (real clinical sentences don't use **)
+            if any(marker in candidate for marker in _INJECTOR_META_MARKDOWN):
                 continue
             return int(m.group(1)), candidate
 

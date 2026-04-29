@@ -11,7 +11,7 @@ from typing import Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from scripts.self_play.utils import strip_thinking
+from scripts.self_play.utils import normalized_edit_distance, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -74,17 +74,24 @@ def build_judge_messages(
     changed_sid: Optional[int],
     original_sentence: str,
     modified_sentence: str,
+    norm_edit: Optional[float] = None,
 ) -> list[dict]:
     prompt_cfg = load_prompt_config()
+    if norm_edit is None:
+        norm_edit = normalized_edit_distance(original_sentence, modified_sentence)
     user_prompt = prompt_cfg["user_template"].format(
         note_id=note_id,
         error_type=error_type,
         changed_sid=changed_sid,
         original_sentence=original_sentence[:2000],
         modified_sentence=modified_sentence[:2000],
+        norm_edit=f"{norm_edit:.2f}",
     )
     messages = [{"role": "system", "content": prompt_cfg["system_prompt"]}]
     for ex in prompt_cfg.get("few_shot_examples", []):
+        ex_norm_edit = normalized_edit_distance(
+            ex["original_sentence"], ex["modified_sentence"]
+        )
         messages.append(
             {
                 "role": "user",
@@ -94,6 +101,7 @@ def build_judge_messages(
                     changed_sid=ex.get("changed_sid", "?"),
                     original_sentence=ex["original_sentence"],
                     modified_sentence=ex["modified_sentence"],
+                    norm_edit=f"{ex_norm_edit:.2f}",
                 ),
             }
         )
@@ -148,6 +156,7 @@ async def judge_sentence_pair(
     judge_url: Optional[str] = None,
     judge_model: Optional[str] = None,
     reward_router_address: Optional[str] = None,
+    norm_edit: Optional[float] = None,
 ) -> dict:
     """Run the simple sentence-pair judge and return its raw verdict."""
     if not original_sentence and not modified_sentence:
@@ -159,6 +168,9 @@ async def judge_sentence_pair(
             "judge_output": "",
         }
 
+    if norm_edit is None:
+        norm_edit = normalized_edit_distance(original_sentence, modified_sentence)
+
     prompt_cfg = load_prompt_config()
     payload = {
         "messages": build_judge_messages(
@@ -167,6 +179,7 @@ async def judge_sentence_pair(
             changed_sid=changed_sid,
             original_sentence=original_sentence,
             modified_sentence=modified_sentence,
+            norm_edit=norm_edit,
         ),
         **prompt_cfg.get("sampling_params", {}),
     }
@@ -258,11 +271,18 @@ async def judge_sentence_pair(
     except (TypeError, ValueError):
         score = 0.0
     score = max(0.0, min(1.0, score))
-    status = "ok" if label in {"SAME", "CHANGED"} else "semantic_abstain"
+    if label in {"SAME", "CHANGED"}:
+        # Reject CHANGED verdicts the judge isn't confident about — these are
+        # typically garbage outputs (meta-text, complete rewrites) where the
+        # judge detects difference but assigns near-zero quality score.
+        status = "low_confidence_changed" if label == "CHANGED" and score < 0.3 else "ok"
+    else:
+        status = "semantic_abstain"
     return {
         "verdict": label,
         "status": status,
         "judge_score": score,
+        "norm_edit": float(norm_edit),
         "reason": str(verdict.get("reason", ""))[:1000],
         "judge_output": content[:2000],
     }

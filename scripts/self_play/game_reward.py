@@ -63,10 +63,15 @@ def compute_injector_game_reward(
     if not parse_success:
         return REWARD_MISS, "parse_failure", False
 
+    # Pre-judge filters: truncation (modified sentence much shorter than original)
+    # gets 0.0 reward so neither player learns from degenerate summary episodes.
+    if judge_status == "truncation":
+        return 0.0, "truncation_filter", False
+
     if judge_status in {"request_failed", "unexpected_error", "bad_response_shape", "no_json_verdict", "no_judge_url"}:
         return 0.0, "judge_unavailable", False
 
-    if judge_status == "semantic_abstain":
+    if judge_status in {"semantic_abstain", "low_confidence_changed"}:
         return REWARD_MISS + FORMAT_BONUS, "judge_semantic_abstain", False
 
     verdict = str(judge_verdict or "").upper()
