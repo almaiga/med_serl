@@ -75,18 +75,36 @@ def build_judge_messages(
     original_sentence: str,
     modified_sentence: str,
     norm_edit: Optional[float] = None,
+    modified_note: Optional[str] = None,
 ) -> list[dict]:
     prompt_cfg = load_prompt_config()
     if norm_edit is None:
         norm_edit = normalized_edit_distance(original_sentence, modified_sentence)
-    user_prompt = prompt_cfg["user_template"].format(
-        note_id=note_id,
-        error_type=error_type,
-        changed_sid=changed_sid,
-        original_sentence=original_sentence[:2000],
-        modified_sentence=modified_sentence[:2000],
-        norm_edit=f"{norm_edit:.2f}",
-    )
+
+    # Use the contextual template (with full note) for live calls when available.
+    # Few-shot examples always use the sentence-only template — they don't carry
+    # full notes and still teach the SAME/CHANGED/ABSTAIN taxonomy correctly.
+    if modified_note and "user_template_with_context" in prompt_cfg:
+        live_template = prompt_cfg["user_template_with_context"]
+        user_prompt = live_template.format(
+            note_id=note_id,
+            error_type=error_type,
+            changed_sid=changed_sid,
+            original_sentence=original_sentence[:2000],
+            modified_sentence=modified_sentence[:2000],
+            modified_note=modified_note[:3000],
+            norm_edit=f"{norm_edit:.2f}",
+        )
+    else:
+        user_prompt = prompt_cfg["user_template"].format(
+            note_id=note_id,
+            error_type=error_type,
+            changed_sid=changed_sid,
+            original_sentence=original_sentence[:2000],
+            modified_sentence=modified_sentence[:2000],
+            norm_edit=f"{norm_edit:.2f}",
+        )
+
     messages = [{"role": "system", "content": prompt_cfg["system_prompt"]}]
     for ex in prompt_cfg.get("few_shot_examples", []):
         ex_norm_edit = normalized_edit_distance(
@@ -157,6 +175,7 @@ async def judge_sentence_pair(
     judge_model: Optional[str] = None,
     reward_router_address: Optional[str] = None,
     norm_edit: Optional[float] = None,
+    modified_note: Optional[str] = None,
 ) -> dict:
     """Run the simple sentence-pair judge and return its raw verdict."""
     if not original_sentence and not modified_sentence:
@@ -180,6 +199,7 @@ async def judge_sentence_pair(
             original_sentence=original_sentence,
             modified_sentence=modified_sentence,
             norm_edit=norm_edit,
+            modified_note=modified_note,
         ),
         **prompt_cfg.get("sampling_params", {}),
     }

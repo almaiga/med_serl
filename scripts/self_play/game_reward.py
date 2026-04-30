@@ -63,17 +63,10 @@ def compute_injector_game_reward(
     if not parse_success:
         return REWARD_MISS, "parse_failure", False
 
-    # Pre-judge filters: truncation (modified sentence much shorter than original)
-    # gets 0.0 reward so neither player learns from degenerate summary episodes.
+    # Pre-judge filter: truncation (modified sentence much shorter than original).
+    # Neither player learns from these degenerate summary episodes.
     if judge_status == "truncation":
         return 0.0, "truncation_filter", False
-
-    # Wholesale rewrite: injector replaced too much of the sentence (norm_edit > 0.80),
-    # violating the "1-3 words" constraint from the system prompt. RL pressure causes
-    # the model to ignore this natural-language constraint, so we enforce it here.
-    # Cap at 0.0 (no gain) rather than penalising, per Chasing a Moving Target.
-    if judge_status == "wholesale_rewrite":
-        return 0.0, "wholesale_rewrite", False
 
     if judge_status in {"request_failed", "unexpected_error", "bad_response_shape", "no_json_verdict", "no_judge_url"}:
         return 0.0, "judge_unavailable", False
