@@ -53,6 +53,8 @@ resolve_model_path() {
         Qwen3-32B)       echo "Qwen/Qwen3-32B" ;;
         medrect-mixed|qwen3-4b-medrect-mixed|Abdine/qwen3-4b-medrect-mixed)
                          echo "Abdine/qwen3-4b-medrect-mixed" ;;
+        medrect-r2|selfplay-r2|medserl-r2|Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2)
+                         echo "Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2" ;;
         medrect-assessor|qwen3-4b-medrect-assessor|Abdine/qwen3-4b-medrect-assessor)
                          echo "Abdine/qwen3-4b-medrect-assessor" ;;
         medrect-sft)     echo "outputs/local_training/qwen3-8b-medrect-sft" ;;
@@ -84,6 +86,7 @@ if [[ -z "${MODEL_NAME}" ]]; then
     echo "  Qwen3-14B                  Qwen/Qwen3-14B"
     echo "  Qwen3-32B                  Qwen/Qwen3-32B"
     echo "  medrect-mixed              Abdine/qwen3-4b-medrect-mixed"
+    echo "  medrect-r2                 Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2"
     echo "  medrect-assessor           Abdine/qwen3-4b-medrect-assessor"
     echo "  medrect-sft                outputs/local_training/qwen3-8b-medrect-sft"
     exit 1
