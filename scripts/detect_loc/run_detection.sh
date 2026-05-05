@@ -179,7 +179,7 @@ INFERENCE_SCRIPT="scripts/medrect/inference_detection.py"
 mkdir -p "${LOG_DIR}"
 
 # ── Build command ────────────────────────────────────────────────────────────
-PYTHON_CMD="accelerate launch --config_file configs/accelerate_config.yaml ${INFERENCE_SCRIPT}"
+PYTHON_CMD="python ${INFERENCE_SCRIPT}"
 PYTHON_CMD+=" --model_path ${MODEL_PATH}"
 PYTHON_CMD+=" --prompt_config ${PROMPT_CONFIG}"
 PYTHON_CMD+=" --dataset ${DATASET}"
