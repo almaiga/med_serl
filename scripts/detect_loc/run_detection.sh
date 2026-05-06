@@ -56,6 +56,8 @@ resolve_model_path() {
         medrect-assessor|qwen3-4b-medrect-assessor|Abdine/qwen3-4b-medrect-assessor)
                          echo "Abdine/qwen3-4b-medrect-assessor" ;;
         medrect-sft)     echo "outputs/local_training/qwen3-8b-medrect-sft" ;;
+        medrect-r2|selfplay-r2|medserl-r2|Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2)
+                         echo "Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2" ;;
         *)               echo "" ;;
     esac
 }
@@ -176,7 +178,7 @@ INFERENCE_SCRIPT="scripts/medrect/inference_detection.py"
 mkdir -p "${LOG_DIR}"
 
 # ── Build command ────────────────────────────────────────────────────────────
-PYTHON_CMD="accelerate launch --config_file configs/accelerate_config.yaml ${INFERENCE_SCRIPT}"
+PYTHON_CMD="python ${INFERENCE_SCRIPT}"
 PYTHON_CMD+=" --model_path ${MODEL_PATH}"
 PYTHON_CMD+=" --prompt_config ${PROMPT_CONFIG}"
 PYTHON_CMD+=" --dataset ${DATASET}"
