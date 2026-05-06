@@ -20,6 +20,7 @@ import json
 import math
 import os
 import random
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -338,8 +339,9 @@ def main() -> None:
             ]
             if args.prompt_config:
                 eval_cmd.extend(["--prompt_config", args.prompt_config])
-            if args.base_model_path:
-                eval_cmd.extend(["--base_model_path", args.base_model_path])
+            # Always pass base_model_path so vLLM loads the adapter via LoRARequest
+            base_for_eval = args.base_model_path or args.model_name
+            eval_cmd.extend(["--base_model_path", base_for_eval])
             if args.temperature is not None:
                 eval_cmd.extend(["--temperature", str(args.temperature)])
             if args.top_p is not None:
@@ -351,6 +353,12 @@ def main() -> None:
             run_command(eval_cmd, log_dir / f"eval_frac_{idx:02d}.log", args.dry_run)
             if not args.dry_run:
                 eval_done.write_text("done\n", encoding="utf-8")
+
+        # Delete adapter after eval to save disk — keep only the final shard (100% data)
+        is_final_shard = (idx == args.fractions)
+        if not args.dry_run and not is_final_shard and adapter_dir.exists():
+            print(f"  Removing adapter {adapter_dir} to free disk space...")
+            shutil.rmtree(adapter_dir)
 
         row = dict(split)
         if not args.dry_run:

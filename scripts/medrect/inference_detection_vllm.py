@@ -199,16 +199,33 @@ def main():
     print(f"{'='*50}\n")
 
     # ── Load tokenizer (for chat template only) ───────────────────────────────
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    # If base_model_path is given, model_path is a LoRA adapter — use base for tokenizer
+    tokenizer_path = args.base_model_path if args.base_model_path else args.model_path
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
     # ── Load model via vLLM ───────────────────────────────────────────────────
-    llm = LLM(
-        model=args.model_path,
-        dtype="bfloat16",
-        tensor_parallel_size=args.tensor_parallel_size,
-        max_model_len=8192,
-        trust_remote_code=True,
-    )
+    use_lora = bool(args.base_model_path)
+    if use_lora:
+        from vllm.lora.request import LoRARequest
+        llm = LLM(
+            model=args.base_model_path,
+            dtype="bfloat16",
+            tensor_parallel_size=args.tensor_parallel_size,
+            max_model_len=8192,
+            trust_remote_code=True,
+            enable_lora=True,
+            max_lora_rank=64,
+        )
+        lora_request = LoRARequest("adapter", 1, args.model_path)
+    else:
+        llm = LLM(
+            model=args.model_path,
+            dtype="bfloat16",
+            tensor_parallel_size=args.tensor_parallel_size,
+            max_model_len=8192,
+            trust_remote_code=True,
+        )
+        lora_request = None
 
     sampling_params = SamplingParams(
         temperature=args.temperature,
@@ -263,7 +280,7 @@ def main():
 
     # ── vLLM inference (all samples in one shot) ──────────────────────────────
     print(f"Running vLLM inference on {len(prompts)} samples...")
-    outputs = llm.generate(prompts, sampling_params)
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     # ── Parse results ─────────────────────────────────────────────────────────
     results = []
