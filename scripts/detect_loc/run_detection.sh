@@ -53,8 +53,6 @@ resolve_model_path() {
         Qwen3-32B)       echo "Qwen/Qwen3-32B" ;;
         medrect-mixed|qwen3-4b-medrect-mixed|Abdine/qwen3-4b-medrect-mixed)
                          echo "Abdine/qwen3-4b-medrect-mixed" ;;
-        medrect-r2|selfplay-r2|medserl-r2|Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2)
-                         echo "Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2" ;;
         medrect-assessor|qwen3-4b-medrect-assessor|Abdine/qwen3-4b-medrect-assessor)
                          echo "Abdine/qwen3-4b-medrect-assessor" ;;
         medrect-sft)     echo "outputs/local_training/qwen3-8b-medrect-sft" ;;
@@ -86,7 +84,6 @@ if [[ -z "${MODEL_NAME}" ]]; then
     echo "  Qwen3-14B                  Qwen/Qwen3-14B"
     echo "  Qwen3-32B                  Qwen/Qwen3-32B"
     echo "  medrect-mixed              Abdine/qwen3-4b-medrect-mixed"
-    echo "  medrect-r2                 Abdine/medserl-qwen3-4b-medrect-mixed-selfplay-r2"
     echo "  medrect-assessor           Abdine/qwen3-4b-medrect-assessor"
     echo "  medrect-sft                outputs/local_training/qwen3-8b-medrect-sft"
     exit 1
@@ -128,7 +125,7 @@ MODEL_SIZE="$(model_size_slug "${MODEL_REF}")"
 
 # ── Inference parameters ─────────────────────────────────────────────────────
 DATASET="${DATASET:-all}"
-BATCH_SIZE="${BATCH_SIZE:-8}"
+BATCH_SIZE="${BATCH_SIZE:-16}"
 MAX_SAMPLES="${MAX_SAMPLES:-}"
 TOP_K="${TOP_K:-20}"
 MIN_P="${MIN_P:-0}"
@@ -136,13 +133,13 @@ PRESENCE_PENALTY="${PRESENCE_PENALTY:-0}"
 if [[ "${NO_THINKING}" == "1" ]]; then
     TEMPERATURE="${TEMPERATURE:-0.7}"
     TOP_P="${TOP_P:-0.8}"
-    MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16384}"
-    THINKING_BUDGET="${THINKING_BUDGET:-32768}"
+    MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-4096}"
+    THINKING_BUDGET="${THINKING_BUDGET:-4096}"
 else
     TEMPERATURE="${TEMPERATURE:-0.6}"
     TOP_P="${TOP_P:-0.95}"
-    THINKING_BUDGET="${THINKING_BUDGET:-32768}"
-    MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16384}"
+    THINKING_BUDGET="${THINKING_BUDGET:-4096}"
+    MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-4352}"
 fi
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
 OUTPUT_DIR="${OUTPUT_DIR:-results/detection/${MODEL_SIZE}_${MODEL_SLUG}}"
@@ -179,7 +176,7 @@ INFERENCE_SCRIPT="scripts/medrect/inference_detection.py"
 mkdir -p "${LOG_DIR}"
 
 # ── Build command ────────────────────────────────────────────────────────────
-PYTHON_CMD="python ${INFERENCE_SCRIPT}"
+PYTHON_CMD="accelerate launch --config_file configs/accelerate_config.yaml ${INFERENCE_SCRIPT}"
 PYTHON_CMD+=" --model_path ${MODEL_PATH}"
 PYTHON_CMD+=" --prompt_config ${PROMPT_CONFIG}"
 PYTHON_CMD+=" --dataset ${DATASET}"

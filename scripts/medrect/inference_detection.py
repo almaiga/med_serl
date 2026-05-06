@@ -210,6 +210,8 @@ def run_inference(
             prompt_kwargs = dict(tokenize=False, add_generation_prompt=True)
             if is_qwen:
                 prompt_kwargs["enable_thinking"] = bool(use_thinking)
+                if use_thinking:
+                    prompt_kwargs["thinking_budget"] = thinking_budget
             prompts.append(tokenizer.apply_chat_template(messages, **prompt_kwargs))
 
         inputs = tokenizer(
@@ -217,7 +219,7 @@ def run_inference(
         ).to(model.device)
         gen_kwargs = build_generation_kwargs(
             tokenizer,
-            max_new_tokens=thinking_budget if (is_qwen and use_thinking) else max_new_tokens,
+            max_new_tokens=(thinking_budget + 256) if (is_qwen and use_thinking) else max_new_tokens,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
