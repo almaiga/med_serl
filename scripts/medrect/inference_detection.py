@@ -367,6 +367,10 @@ def main():
                    help="Override base-model path for LoRA adapters "
                         "(use when running offline and adapter_config "
                         "points to an HF hub ID)")
+    p.add_argument("--shard_id",   type=int, default=0,
+                   help="Index of this shard (0-based)")
+    p.add_argument("--num_shards", type=int, default=1,
+                   help="Total number of shards (1 = no sharding)")
     args = p.parse_args()
     if args.mode is None:
         args.mode = "no-thinking" if args.no_thinking else "thinking"
@@ -389,6 +393,8 @@ def main():
         f"Sampling: temperature={args.temperature} top_p={args.top_p} "
         f"top_k={args.top_k} min_p={args.min_p} presence_penalty={args.presence_penalty}"
     )
+    if args.num_shards > 1:
+        print(f"Shard   : {args.shard_id + 1}/{args.num_shards}")
     print(f"{'='*50}\n")
 
     model, tokenizer = load_model_and_tokenizer(
@@ -397,6 +403,9 @@ def main():
     )
     prompt_config    = load_prompt_config(Path(args.prompt_config))
     test_df          = load_test_data(args.dataset)
+
+    if args.num_shards > 1:
+        test_df = test_df.iloc[args.shard_id::args.num_shards].reset_index(drop=True)
 
     # ── Run inference ────────────────────────────────────────────────────────────
     results = run_inference(
@@ -427,10 +436,11 @@ def main():
 
     mode_slug = args.mode.replace("-", "_")
     sample_slug = f"n{len(results)}"
+    shard_slug = f"_shard{args.shard_id}of{args.num_shards}" if args.num_shards > 1 else ""
     if use_thinking:
-        generation_slug = f"{mode_slug}_tb{args.thinking_budget}_{sample_slug}"
+        generation_slug = f"{mode_slug}_tb{args.thinking_budget}_{sample_slug}{shard_slug}"
     else:
-        generation_slug = f"{mode_slug}_max{args.max_new_tokens}_{sample_slug}"
+        generation_slug = f"{mode_slug}_max{args.max_new_tokens}_{sample_slug}{shard_slug}"
 
     results_file = f"{args.output_dir}/{args.dataset}_{generation_slug}_{ts}.jsonl"
     with open(results_file, "w") as f:

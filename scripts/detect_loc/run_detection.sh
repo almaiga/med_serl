@@ -143,13 +143,18 @@ else
     THINKING_BUDGET="${THINKING_BUDGET:-4096}"
     MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-4352}"
 fi
+GPU_ID="${GPU_ID:-}"
+NUM_SHARDS="${NUM_SHARDS:-1}"
+SHARD_ID="${SHARD_ID:-0}"
 PROMPT_CONFIG="configs/prompts/detection_localization_prompts.json"
 OUTPUT_DIR="${OUTPUT_DIR:-results/detection/${MODEL_SIZE}_${MODEL_SLUG}}"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_DIR="${OUTPUT_DIR}/logs"
-LOG_FILE="${LOG_DIR}/${DATASET}_${TIMESTAMP}.log"
-SCREEN_NAME="detect_${MODEL_SLUG}"
+SHARD_SUFFIX=""
+[[ "${NUM_SHARDS}" -gt 1 ]] && SHARD_SUFFIX="_shard${SHARD_ID}"
+LOG_FILE="${LOG_DIR}/${DATASET}${SHARD_SUFFIX}_${TIMESTAMP}.log"
+SCREEN_NAME="detect_${MODEL_SLUG}${SHARD_SUFFIX}"
 
 # ── Ensure screen is installed ──────────────────────────────────────────────
 if ! command -v screen &>/dev/null; then
@@ -178,7 +183,9 @@ INFERENCE_SCRIPT="scripts/medrect/inference_detection.py"
 mkdir -p "${LOG_DIR}"
 
 # ── Build command ────────────────────────────────────────────────────────────
-PYTHON_CMD="python ${INFERENCE_SCRIPT}"
+GPU_PREFIX=""
+[[ -n "${GPU_ID}" ]] && GPU_PREFIX="CUDA_VISIBLE_DEVICES=${GPU_ID} "
+PYTHON_CMD="${GPU_PREFIX}python ${INFERENCE_SCRIPT}"
 PYTHON_CMD+=" --model_path ${MODEL_PATH}"
 PYTHON_CMD+=" --prompt_config ${PROMPT_CONFIG}"
 PYTHON_CMD+=" --dataset ${DATASET}"
@@ -192,6 +199,7 @@ PYTHON_CMD+=" --presence_penalty ${PRESENCE_PENALTY}"
 PYTHON_CMD+=" --thinking_budget ${THINKING_BUDGET}"
 PYTHON_CMD+=" --max_new_tokens ${MAX_NEW_TOKENS}"
 PYTHON_CMD+=" --output_dir ${OUTPUT_DIR}"
+PYTHON_CMD+=" --num_shards ${NUM_SHARDS} --shard_id ${SHARD_ID}"
 [[ -n "${MAX_SAMPLES}" ]] && PYTHON_CMD+=" --max_samples ${MAX_SAMPLES}"
 [[ "${NO_THINKING}" == "1" ]] && PYTHON_CMD+=" --no_thinking"
 
@@ -213,6 +221,7 @@ echo "Presence pen.: ${PRESENCE_PENALTY}"
 echo "Thinking:      $([ "${NO_THINKING}" == "1" ] && echo disabled || echo "enabled (budget=${THINKING_BUDGET})")"
 echo "Max new tok:   $([ "${NO_THINKING}" == "1" ] && echo "${MAX_NEW_TOKENS}" || echo "${THINKING_BUDGET}")"
 echo "Max samples:   ${MAX_SAMPLES:-all}"
+[[ "${NUM_SHARDS}" -gt 1 ]] && echo "Shard:         ${SHARD_ID}/${NUM_SHARDS}  (GPU ${GPU_ID:-auto})"
 echo "Output dir:    ${OUTPUT_DIR}"
 echo "Log:           ${LOG_FILE}"
 echo "Screen:        ${SCREEN_NAME}"
