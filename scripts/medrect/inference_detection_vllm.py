@@ -158,6 +158,8 @@ def print_metrics(m: Dict) -> None:
 def main():
     p = argparse.ArgumentParser(description="Medical Error Detection + Localization (vLLM)")
     p.add_argument("--model_path",         required=True)
+    p.add_argument("--base_model_path",    default=None,
+                   help="Base model path/ID; if set, model_path is treated as a LoRA adapter")
     p.add_argument("--prompt_config",      default=str(DEFAULT_PROMPT_CONFIG))
     p.add_argument("--dataset",            default="all", choices=["ms", "uw", "all"])
     p.add_argument("--max_samples",        type=int, default=None)
