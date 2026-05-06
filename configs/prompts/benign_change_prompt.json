@@ -1,0 +1,60 @@
+[
+  {
+    "change_type": "pseudo_factual",
+    "description": "Replace a clinical term (diagnosis, organism, finding) with a UMLS-verified synonym that preserves meaning.",
+    "target_sections": [
+      "course_and_outcome.diagnosis_primary",
+      "history.history_of_present_illness",
+      "clinical_data.lab_results",
+      "clinical_data.microbiology",
+      "examination.physical_exam_findings"
+    ],
+    "system_prompt": "You are a clinical terminology expert. Replace the given medical term with a widely accepted, clinically equivalent synonym. The replacement must preserve the exact clinical meaning. Return ONLY the replacement term, nothing else.",
+    "user_template": "Replace this medical term with a clinically equivalent synonym.\n\nTerm: {target_term}\n\nContext (clinical note):\n{note_text}\n\nReturn ONLY the replacement term."
+  },
+  {
+    "change_type": "temporal_rephrasing",
+    "description": "Rephrase a time expression while preserving the exact duration (e.g., '6-month history' ↔ 'six-month history').",
+    "target_sections": [
+      "history.history_of_present_illness",
+      "history.past_medical_history",
+      "course_and_outcome.hospital_course_summary"
+    ],
+    "system_prompt": "You are a clinical documentation expert. Rephrase the given time expression while keeping the exact same duration. Do not change any clinical facts. Return ONLY the rephrased expression.",
+    "user_template": "Rephrase this time expression while preserving the exact duration.\n\nExpression: {target_term}\n\nContext (clinical note):\n{note_text}\n\nReturn ONLY the rephrased expression."
+  },
+  {
+    "change_type": "equivalent_citation",
+    "description": "Replace a drug or antibiotic with a pharmacologically equivalent alternative (same class, same indication).",
+    "target_sections": [
+      "history.medications_prior_to_admission",
+      "course_and_outcome.plan_and_treatment",
+      "clinical_data.lab_results",
+      "clinical_data.microbiology"
+    ],
+    "system_prompt": "You are a clinical pharmacology expert. Replace the given drug with a pharmacologically equivalent alternative from the same class and with the same indication. The replacement must be clinically interchangeable. Return ONLY the replacement drug name.",
+    "user_template": "Replace this drug with a pharmacologically equivalent alternative (same class, same indication).\n\nDrug: {target_term}\n\nContext (clinical note):\n{note_text}\n\nReturn ONLY the replacement drug name."
+  },
+  {
+    "change_type": "irrelevant_correlation",
+    "description": "Add a clinically irrelevant but plausible laboratory or vital-sign value that does not affect the diagnosis or management.",
+    "target_sections": [
+      "clinical_data.lab_results",
+      "examination.vital_signs",
+      "examination.physical_exam_findings"
+    ],
+    "system_prompt": "You are a clinical documentation expert. Insert a clinically irrelevant but plausible normal laboratory value or finding into the note. It must not affect diagnosis or management. Return ONLY the new sentence to insert.",
+    "user_template": "Insert a clinically irrelevant but plausible normal finding into this note.\n\nClinical note:\n{note_text}\n\nReturn ONLY the new sentence to insert."
+  },
+  {
+    "change_type": "logical_restatement",
+    "description": "Restate a sentence using different wording while preserving the exact clinical meaning.",
+    "target_sections": [
+      "history.history_of_present_illness",
+      "course_and_outcome.hospital_course_summary",
+      "examination.physical_exam_findings"
+    ],
+    "system_prompt": "You are a clinical documentation expert. Restate the given sentence using different wording while preserving the exact clinical meaning. Do not add, remove, or change any clinical facts. Return ONLY the restatement.",
+    "user_template": "Restate this sentence using different wording while preserving the exact clinical meaning.\n\nOriginal sentence: {original_sentence}\n\nContext (clinical note):\n{note_text}\n\nReturn ONLY the restatement."
+  }
+]

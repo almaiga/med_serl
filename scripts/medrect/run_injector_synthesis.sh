@@ -33,8 +33,8 @@ CONCURRENCY="${CONCURRENCY:-50}"
 CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-25}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 
-ERROR_DATA="data_processed/medec_paired/train_val_split/sft_train.jsonl"
-BENIGN_DATA="data_processed/benign_changes/benign_train_clean.jsonl"
+ERROR_DATA="${ERROR_DATA:-data_processed/medec_paired/train_val_split/sft_train.jsonl}"
+BENIGN_DATA="${BENIGN_DATA:-data_processed/benign_changes/benign_train_clean.jsonl}"
 PROMPT_CONFIG="configs/prompts/sft/injector_reasoning_prompts.json"
 OUTPUT_DIR="data_processed/medrect"
 

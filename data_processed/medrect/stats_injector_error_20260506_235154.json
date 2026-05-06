@@ -1,0 +1,18 @@
+{
+  "scenario": "injector_error",
+  "total_samples": 403,
+  "processed": 403,
+  "correct_samples_count": 403,
+  "rejected_samples_count": 0,
+  "skipped_checkpoint": 0,
+  "accuracy": 1.0,
+  "pass_rate_pct": 100.0,
+  "error_flag": 1,
+  "api_stats": {
+    "total": 403,
+    "success": 403,
+    "failed": 0
+  },
+  "output_file": "data_processed/medrect/injector_error_chains_20260506_235154.jsonl",
+  "timestamp": "20260506_235154"
+}

@@ -48,9 +48,9 @@ def get_processed_note_ids(success_path, failed_path):
     return processed
 
 
-def main(resume=False, skip_count=0, resume_files=None):
+def main(resume=False, skip_count=0, resume_files=None, data_path=None):
     # Paths
-    data_path = Path("data_processed/parsed_medical_note/extractions.jsonl")
+    data_path = Path(data_path) if data_path else Path("data_processed/parsed_medical_note/extractions.jsonl")
     output_dir = Path("data_processed/benign_changes")
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -282,6 +282,8 @@ if __name__ == "__main__":
     parser.add_argument("--skip", type=int, default=0, help="Skip first N notes (alternative to resume)")
     parser.add_argument("--success-file", type=str, help="Path to existing success file (for resume)")
     parser.add_argument("--failed-file", type=str, help="Path to existing failed file (for resume)")
+    parser.add_argument("--data-path", type=str, default=None,
+                        help="Path to extractions JSONL (default: data_processed/parsed_medical_note/extractions.jsonl)")
     
     args = parser.parse_args()
     
@@ -314,5 +316,5 @@ if __name__ == "__main__":
                 print("Run without --resume to start fresh.")
                 exit(1)
     
-    main(resume=args.resume, skip_count=args.skip, resume_files=resume_files)
+    main(resume=args.resume, skip_count=args.skip, resume_files=resume_files, data_path=args.data_path)
 

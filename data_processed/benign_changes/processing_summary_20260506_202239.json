@@ -1,0 +1,32 @@
+{
+  "timestamp": "20260506_202239",
+  "total_notes": 405,
+  "successful": 310,
+  "failed": 95,
+  "success_rate": "76.5%",
+  "output_files": {
+    "successful_changes": "data_processed/benign_changes/benign_changes_20260506_202239.jsonl",
+    "failed_notes": "data_processed/benign_changes/failed_notes_20260506_202239.jsonl"
+  },
+  "stats_by_type": {
+    "equivalent_citation": {
+      "success": 37,
+      "failed": 52,
+      "verified": 37
+    },
+    "pseudo_factual": {
+      "success": 158,
+      "failed": 15,
+      "verified": 158
+    },
+    "temporal_rephrasing": {
+      "success": 115,
+      "failed": 28,
+      "verified": 115
+    }
+  },
+  "failure_breakdown": {
+    "no_target_term": 57,
+    "no_verified_replacement": 38
+  }
+}

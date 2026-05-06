@@ -18,7 +18,7 @@ from datetime import datetime
 from openai import OpenAI
 from tqdm import tqdm
 
-INPUT_FILE = Path("data_processed/benign_changes/benign_train.jsonl")
+DEFAULT_INPUT_FILE = Path("data_processed/benign_changes/benign_train.jsonl")
 OUTPUT_DIR = Path("data_processed/benign_changes")
 
 SYSTEM_PROMPT = """You are a clinical reviewer. A benign change was applied to a medical note sentence.
@@ -75,11 +75,12 @@ def verify_one(client, record):
         return {**record, "llm_verdict": "ERROR", "llm_reason": str(e)}
 
 
-def main(limit=None):
+def main(limit=None, input_file=None):
     client = OpenAI()
+    input_path = Path(input_file) if input_file else DEFAULT_INPUT_FILE
 
     records = []
-    with open(INPUT_FILE) as f:
+    with open(input_path) as f:
         for line in f:
             if line.strip():
                 records.append(json.loads(line))
@@ -144,13 +145,15 @@ def main(limit=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Verify benign changes using GPT-4o")
+    parser.add_argument("--input", type=str, default=None,
+                        help="Path to input JSONL (default: data_processed/benign_changes/benign_train.jsonl)")
     parser.add_argument("--limit", type=int, default=None, help="Number of records to verify (default: 20)")
     parser.add_argument("--all", action="store_true", help="Process all records")
     parser.add_argument("--auto-fix", action="store_true",
                         help="Automatically run fix_failed_benign.py on failures after verification")
     args = parser.parse_args()
 
-    out_fails, fail_count = main(limit=None if args.all else (args.limit or 20))
+    out_fails, fail_count = main(limit=None if args.all else (args.limit or 20), input_file=args.input)
 
     if args.auto_fix and fail_count > 0:
         print(f"\n{'='*50}")

@@ -5,12 +5,14 @@ Merges:
   1. PASS entries from verified_*.jsonl
   2. Entries with fix_change_kept=YES from fixed_benign_*.jsonl
      (updates the original record with the fixed replacement_term/sentences)
+  3. Optionally prepends an existing clean file (--append-from) to preserve prior records
 
 Usage:
     python scripts/injection/merge_benign_clean.py
     python scripts/injection/merge_benign_clean.py \
         --verified data_processed/benign_changes/verified_20260218_150217.jsonl \
-        --fixed data_processed/benign_changes/fixed_benign_20260218_150814.jsonl
+        --fixed data_processed/benign_changes/fixed_benign_20260218_150814.jsonl \
+        --append-from data_processed/benign_changes/benign_train_clean.jsonl
 """
 
 import json
@@ -39,7 +41,7 @@ def load_jsonl(path: Path):
     return records
 
 
-def main(verified_path=None, fixed_path=None):
+def main(verified_path=None, fixed_path=None, append_from=None):
     # Auto-detect latest files if not specified
     verified_path = Path(verified_path) if verified_path else find_latest("verified")
     fixed_path = Path(fixed_path) if fixed_path else find_latest("fixed_benign")
@@ -92,6 +94,13 @@ def main(verified_path=None, fixed_path=None):
         entry["source"] = "fixed_kept"
         clean.append(entry)
 
+    # 3b. Prepend existing clean records if --append-from specified
+    if append_from:
+        append_path = Path(append_from)
+        existing = load_jsonl(append_path)
+        print(f"\nAppending from: {append_path} ({len(existing)} existing records)")
+        clean = existing + clean
+
     # 4. Deduplicate by note_id + change_type (shouldn't happen, but safety)
     seen = set()
     deduped = []
@@ -126,5 +135,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Merge verified+fixed benign changes into clean dataset")
     parser.add_argument("--verified", default=None, help="Path to verified_*.jsonl (auto-detects latest)")
     parser.add_argument("--fixed", default=None, help="Path to fixed_benign_*.jsonl (auto-detects latest)")
+    parser.add_argument("--append-from", default=None, dest="append_from",
+                        help="Existing clean JSONL to preserve (new records are appended, deduped by note_id+change_type)")
     args = parser.parse_args()
-    main(args.verified, args.fixed)
+    main(args.verified, args.fixed, args.append_from)
