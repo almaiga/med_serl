@@ -210,8 +210,6 @@ def run_inference(
             prompt_kwargs = dict(tokenize=False, add_generation_prompt=True)
             if is_qwen:
                 prompt_kwargs["enable_thinking"] = bool(use_thinking)
-                if use_thinking:
-                    prompt_kwargs["thinking_budget"] = thinking_budget
             prompts.append(tokenizer.apply_chat_template(messages, **prompt_kwargs))
 
         inputs = tokenizer(
