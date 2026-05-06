@@ -60,6 +60,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--thinking-budget", type=int, default=4096)
     parser.add_argument("--no-thinking", action="store_true")
     parser.add_argument("--max-eval-samples", type=int, default=None)
+    parser.add_argument("--tensor-parallel-size", type=int, default=1,
+                        help="Number of GPUs for vLLM tensor parallelism during eval")
 
     parser.add_argument("--nproc-per-node", type=int, default=None)
     parser.add_argument("--eval-split", type=float, default=0.0)
@@ -314,13 +316,11 @@ def main() -> None:
         else:
             eval_cmd = [
                 sys.executable,
-                "scripts/medrect/inference_detection.py",
+                "scripts/medrect/inference_detection_vllm.py",
                 "--model_path",
                 str(adapter_dir),
                 "--dataset",
                 args.dataset,
-                "--batch_size",
-                str(args.eval_batch_size),
                 "--top_k",
                 str(args.top_k),
                 "--min_p",
@@ -331,6 +331,8 @@ def main() -> None:
                 str(args.max_new_tokens),
                 "--thinking_budget",
                 str(args.thinking_budget),
+                "--tensor_parallel_size",
+                str(args.tensor_parallel_size),
                 "--output_dir",
                 str(eval_dir),
             ]
