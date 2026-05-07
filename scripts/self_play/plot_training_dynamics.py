@@ -30,7 +30,7 @@ DEFAULT_LOG_DIR = PROJECT_ROOT / "results/self_play/interactions"
 DEFAULT_OUT = PROJECT_ROOT / "results/self_play/training_dynamics.png"
 
 
-def load_all_games(log_dir: Path, latest_only: bool = True, gap_hours: float = 3.0):
+def load_all_games(log_dir: Path, latest_only: bool = True, gap_hours: float = 3.0, date_filter: str = None):
     """Load game entries. With latest_only=True, only files from the most
     recent continuous session are included. A new session starts when the gap
     between consecutive files exceeds gap_hours."""
@@ -41,7 +41,11 @@ def load_all_games(log_dir: Path, latest_only: bool = True, gap_hours: float = 3
     if not files:
         return []
 
-    if latest_only:
+    if date_filter:
+        files = [f for f in files if date_filter in f.name]
+        print(f"Date filter '{date_filter}': {len(files)} file(s)")
+
+    if latest_only and not date_filter:
         # Walk backwards from the newest file; stop when gap > gap_hours
         gap_secs = gap_hours * 3600
         session_files = [files[-1]]
@@ -348,6 +352,8 @@ def main():
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--all", action="store_true",
                         help="Use all logs instead of latest run only")
+    parser.add_argument("--date", type=str, default=None,
+                        help="Only load files containing this string in filename, e.g. 20260430")
     parser.add_argument("--gap-hours", type=float, default=3.0,
                         help="Max hours between files to be considered same run (default: 3)")
     parser.add_argument("--export", type=Path, default=None,
@@ -357,7 +363,7 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading games from: {args.log_dir}")
-    rows = load_all_games(args.log_dir, latest_only=not args.all, gap_hours=args.gap_hours)
+    rows = load_all_games(args.log_dir, latest_only=not args.all, gap_hours=args.gap_hours, date_filter=args.date)
     print(f"Found {len(rows)} game entries")
 
     if not rows:
