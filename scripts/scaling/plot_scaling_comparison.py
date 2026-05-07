@@ -68,16 +68,20 @@ def load_scaling_curve(exp_dir: Path, dataset: str, metric_keys):
         if not vals:
             continue
 
-        # get train_count from manifest
-        manifest_path = exp_dir / "splits" / "manifest.json" if (exp_dir / "splits").exists() else None
+        # get train_count from manifest — may be in outputs/ tree, not results/
         train_count = None
-        if manifest_path and manifest_path.exists():
-            with open(manifest_path) as f:
-                manifest = json.load(f)
-            for split in manifest["splits"]:
-                if split["index"] == idx:
-                    train_count = split["train_count"]
-                    break
+        for manifest_path in [
+            exp_dir / "splits" / "manifest.json",
+            PROJECT_ROOT / "outputs" / "local_training" / "medrect_sft_scaling" / exp_dir.name / "splits" / "manifest.json",
+        ]:
+            if manifest_path.exists():
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+                for split in manifest["splits"]:
+                    if split["index"] == idx:
+                        train_count = split["train_count"]
+                        break
+                break
         if train_count is None:
             train_count = idx  # fallback
 
