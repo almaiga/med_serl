@@ -59,6 +59,15 @@ def load_all_games(log_dir: Path, latest_only: bool = True, gap_hours: float = 3
         print(f"Latest run: {len(files)} file(s) from "
               f"{files[0].name} → {files[-1].name}")
 
+    KEEP = {
+        "phase", "mode", "error_type", "assessor_outcome", "assessor_reward",
+        "injector_reward", "injector_assigned_reward", "injector_outcome",
+        "judge_verdict", "judge_status", "game_valid",
+        "assessor_reasoning_token_count", "assessor_final_token_count",
+        "assessor_token_count", "injector_token_count",
+        "assessor_think_cap_hit", "assessor_final_cap_hit",
+        "timestamp", "note_id",
+    }
     rows = []
     for f in files:
         with open(f) as fp:
@@ -69,7 +78,7 @@ def load_all_games(log_dir: Path, latest_only: bool = True, gap_hours: float = 3
                 try:
                     r = json.loads(line)
                     if r.get("phase") == "game_complete" or "assessor_outcome" in r:
-                        rows.append(r)
+                        rows.append({k: v for k, v in r.items() if k in KEEP})
                 except json.JSONDecodeError:
                     continue
     return rows
