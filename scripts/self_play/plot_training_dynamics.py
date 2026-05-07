@@ -30,8 +30,35 @@ DEFAULT_LOG_DIR = PROJECT_ROOT / "results/self_play/interactions"
 DEFAULT_OUT = PROJECT_ROOT / "results/self_play/training_dynamics.png"
 
 
-def load_all_games(log_dir: Path):
-    files = sorted(log_dir.glob("game_*.jsonl")) + sorted(log_dir.glob("interactions_*.jsonl"))
+def load_all_games(log_dir: Path, latest_only: bool = True, gap_hours: float = 3.0):
+    """Load game entries. With latest_only=True, only files from the most
+    recent continuous session are included. A new session starts when the gap
+    between consecutive files exceeds gap_hours."""
+    files = sorted(
+        list(log_dir.glob("game_*.jsonl")) + list(log_dir.glob("interactions_*.jsonl")),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not files:
+        return []
+
+    if latest_only:
+        # Walk backwards from the newest file; stop when gap > gap_hours
+        gap_secs = gap_hours * 3600
+        session_files = [files[-1]]
+        for prev, curr in zip(reversed(files[:-1]), reversed(files[:-1])):
+            # compare consecutive mtimes
+            break
+        # simpler: iterate in reverse and collect while gap is small
+        session_files = [files[-1]]
+        for i in range(len(files) - 2, -1, -1):
+            if files[i + 1].stat().st_mtime - files[i].stat().st_mtime < gap_secs:
+                session_files.append(files[i])
+            else:
+                break
+        files = sorted(session_files, key=lambda p: p.stat().st_mtime)
+        print(f"Latest run: {len(files)} file(s) from "
+              f"{files[0].name} → {files[-1].name}")
+
     rows = []
     for f in files:
         with open(f) as fp:
@@ -245,23 +272,96 @@ def plot(rows, window, out):
     print(f"  Error accuracy    : {np.nanmean(ec):.1%}")
 
 
+def print_table(rows):
+    from collections import Counter
+    total = len(rows)
+    outcomes = Counter(r.get("assessor_outcome", r.get("outcome", "?")) for r in rows)
+    modes = Counter(r.get("mode", "?") for r in rows)
+    judges = Counter((r.get("judge_verdict") or "N/A").upper() for r in rows)
+
+    a_rews = [float(r.get("assessor_reward", 0) or 0) for r in rows]
+    i_rews = [float(r.get("injector_assigned_reward", r.get("injector_reward", 0)) or 0) for r in rows]
+
+    benign_rows = [r for r in rows if r.get("mode") == "benign"]
+    error_rows  = [r for r in rows if r.get("mode") == "error_injection"]
+    benign_acc  = sum(1 for r in benign_rows if r.get("assessor_outcome") == "exact_match") / max(len(benign_rows), 1)
+    error_acc   = sum(1 for r in error_rows  if r.get("assessor_outcome") == "exact_match") / max(len(error_rows),  1)
+
+    print(f"\n{'='*55}")
+    print(f"  Self-Play Training Summary  ({total} games)")
+    print(f"{'='*55}")
+    print(f"  {'Metric':<30} {'Value':>10}")
+    print(f"  {'-'*42}")
+    print(f"  {'Assessor win rate':<30} {outcomes.get('exact_match',0)/total:>10.1%}")
+    print(f"  {'Avg assessor reward':<30} {sum(a_rews)/total:>10.3f}")
+    print(f"  {'Avg injector reward':<30} {sum(i_rews)/total:>10.3f}")
+    print(f"  {'Benign accuracy':<30} {benign_acc:>10.1%}  (n={len(benign_rows)})")
+    print(f"  {'Error injection accuracy':<30} {error_acc:>10.1%}  (n={len(error_rows)})")
+    print(f"\n  {'Outcome':<25} {'Count':>6} {'%':>7}")
+    print(f"  {'-'*40}")
+    for k, v in sorted(outcomes.items(), key=lambda x: -x[1]):
+        print(f"  {k:<25} {v:>6} {v/total:>7.1%}")
+    print(f"\n  {'Judge verdict':<25} {'Count':>6} {'%':>7}")
+    print(f"  {'-'*40}")
+    for k, v in sorted(judges.items(), key=lambda x: -x[1]):
+        print(f"  {k:<25} {v:>6} {v/total:>7.1%}")
+    print(f"{'='*55}\n")
+
+
+def export_data(rows, out_json: Path):
+    """Export slim version of rows for local plotting."""
+    slim = []
+    for r in rows:
+        slim.append({
+            "mode":              r.get("mode"),
+            "assessor_outcome":  r.get("assessor_outcome", r.get("outcome")),
+            "assessor_reward":   float(r.get("assessor_reward", 0) or 0),
+            "injector_reward":   float(r.get("injector_assigned_reward", r.get("injector_reward", 0)) or 0),
+            "judge_verdict":     r.get("judge_verdict"),
+            "error_type":        r.get("error_type"),
+            "assessor_reasoning_token_count": r.get("assessor_reasoning_token_count"),
+            "assessor_final_token_count":     r.get("assessor_final_token_count"),
+            "assessor_token_count":           r.get("assessor_token_count"),
+        })
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_json, "w") as f:
+        json.dump(slim, f)
+    print(f"Data exported to: {out_json}")
+    print(f"Copy to local with:")
+    print(f"  scp root@<server>:{out_json} ~/Desktop/selfplay_data.json")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--window", type=int, default=30,
                         help="Rolling average window size (default: 30)")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--all", action="store_true",
+                        help="Use all logs instead of latest run only")
+    parser.add_argument("--gap-hours", type=float, default=3.0,
+                        help="Max hours between files to be considered same run (default: 3)")
+    parser.add_argument("--export", type=Path, default=None,
+                        help="Export slim JSON for local plotting")
+    parser.add_argument("--table-only", action="store_true",
+                        help="Print table and export data without generating plot")
     args = parser.parse_args()
 
     print(f"Loading games from: {args.log_dir}")
-    rows = load_all_games(args.log_dir)
+    rows = load_all_games(args.log_dir, latest_only=not args.all, gap_hours=args.gap_hours)
     print(f"Found {len(rows)} game entries")
 
     if not rows:
         print("No game entries found. Check --log-dir.")
         return
 
-    plot(rows, args.window, args.out)
+    print_table(rows)
+
+    export_path = args.export or args.out.parent / "selfplay_data.json"
+    export_data(rows, export_path)
+
+    if not args.table_only:
+        plot(rows, args.window, args.out)
 
 
 if __name__ == "__main__":
