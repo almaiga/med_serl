@@ -20,7 +20,6 @@ import json
 import math
 import os
 import random
-import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -63,6 +62,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-eval-samples", type=int, default=None)
     parser.add_argument("--tensor-parallel-size", type=int, default=1,
                         help="Number of GPUs for vLLM tensor parallelism during eval")
+    parser.add_argument("--num-eval-runs", type=int, default=1,
+                        help="Number of inference runs per shard to average (reduces sampling variance)")
+    parser.add_argument("--eval-base-model", action="store_true",
+                        help="Evaluate the base model (no LoRA) before training shards as a 0-shot baseline")
 
     parser.add_argument("--nproc-per-node", type=int, default=None)
     parser.add_argument("--eval-split", type=float, default=0.0)
@@ -200,6 +203,18 @@ def read_metrics(summary_path: Path) -> Dict:
     }
 
 
+def average_metrics(all_metrics: List[Dict]) -> Dict:
+    if len(all_metrics) == 1:
+        return all_metrics[0]
+    keys = [k for k in all_metrics[0] if isinstance(all_metrics[0][k], (int, float))]
+    averaged = {"summary_file": all_metrics[0]["summary_file"], "num_eval_runs": len(all_metrics)}
+    for k in keys:
+        vals = [m[k] for m in all_metrics]
+        averaged[k] = sum(vals) / len(vals)
+        averaged[f"{k}_std"] = (sum((v - averaged[k]) ** 2 for v in vals) / len(vals)) ** 0.5
+    return averaged
+
+
 def maybe_write_plot(csv_path: Path, png_path: Path) -> None:
     try:
         import matplotlib.pyplot as plt
@@ -246,7 +261,64 @@ def main() -> None:
         overwrite=args.overwrite_splits,
     )
 
+    def build_eval_cmd(model_path: str, eval_dir: Path, base_model_path: Optional[str] = None) -> List[str]:
+        cmd = [
+            sys.executable,
+            "scripts/medrect/inference_detection_vllm.py",
+            "--model_path", model_path,
+            "--dataset", args.dataset,
+            "--top_k", str(args.top_k),
+            "--min_p", str(args.min_p),
+            "--presence_penalty", str(args.presence_penalty),
+            "--max_new_tokens", str(args.max_new_tokens),
+            "--thinking_budget", str(args.thinking_budget),
+            "--tensor_parallel_size", str(args.tensor_parallel_size),
+            "--output_dir", str(eval_dir),
+        ]
+        if args.prompt_config:
+            cmd.extend(["--prompt_config", args.prompt_config])
+        if base_model_path:
+            cmd.extend(["--base_model_path", base_model_path])
+        if args.temperature is not None:
+            cmd.extend(["--temperature", str(args.temperature)])
+        if args.top_p is not None:
+            cmd.extend(["--top_p", str(args.top_p)])
+        if args.no_thinking:
+            cmd.append("--no_thinking")
+        if args.max_eval_samples:
+            cmd.extend(["--max_samples", str(args.max_eval_samples)])
+        return cmd
+
+    def run_eval_runs(eval_cmd: List[str], eval_dir: Path, log_prefix: str) -> Dict:
+        for run_idx in range(args.num_eval_runs):
+            log_suffix = f"_run{run_idx + 1}" if args.num_eval_runs > 1 else ""
+            run_command(eval_cmd, log_dir / f"{log_prefix}{log_suffix}.log", args.dry_run)
+        summaries = sorted(eval_dir.glob(f"{args.dataset}_*_summary.json"))
+        all_metrics = [read_metrics(s) for s in summaries]
+        return average_metrics(all_metrics)
+
     rows = []
+
+    # ── Optional base model evaluation (0-shot baseline) ─────────────────────
+    if args.eval_base_model:
+        base_model_name = args.base_model_path or args.model_name
+        base_eval_dir = results_root / "eval_base_model"
+        base_done = base_eval_dir / "DONE"
+        if args.skip_existing and base_done.exists():
+            print(f"Skipping existing base model evaluation: {base_eval_dir}")
+        else:
+            print(f"\n{'='*50}\nEvaluating base model: {base_model_name}\n{'='*50}")
+            eval_cmd = build_eval_cmd(base_model_name, base_eval_dir)
+            run_eval_runs(eval_cmd, base_eval_dir, "eval_base_model")
+            if not args.dry_run:
+                base_done.write_text("done\n", encoding="utf-8")
+        if not args.dry_run:
+            base_row = {"index": 0, "fraction": 0.0, "fractions": args.fractions, "train_count": 0,
+                        "train_file": "", "label": "base_model"}
+            summaries = sorted(base_eval_dir.glob(f"{args.dataset}_*_summary.json"))
+            base_row.update(average_metrics([read_metrics(s) for s in summaries]))
+            rows.append(base_row)
+
     for split in splits:
         idx = split["index"]
         adapter_dir = output_root / f"adapter_frac_{idx:02d}_of_{args.fractions}"
@@ -315,54 +387,17 @@ def main() -> None:
         if args.skip_existing and eval_done.exists():
             print(f"Skipping existing evaluation output: {eval_dir}")
         else:
-            eval_cmd = [
-                sys.executable,
-                "scripts/medrect/inference_detection_vllm.py",
-                "--model_path",
-                str(adapter_dir),
-                "--dataset",
-                args.dataset,
-                "--top_k",
-                str(args.top_k),
-                "--min_p",
-                str(args.min_p),
-                "--presence_penalty",
-                str(args.presence_penalty),
-                "--max_new_tokens",
-                str(args.max_new_tokens),
-                "--thinking_budget",
-                str(args.thinking_budget),
-                "--tensor_parallel_size",
-                str(args.tensor_parallel_size),
-                "--output_dir",
-                str(eval_dir),
-            ]
-            if args.prompt_config:
-                eval_cmd.extend(["--prompt_config", args.prompt_config])
-            # Always pass base_model_path so vLLM loads the adapter via LoRARequest
             base_for_eval = args.base_model_path or args.model_name
-            eval_cmd.extend(["--base_model_path", base_for_eval])
-            if args.temperature is not None:
-                eval_cmd.extend(["--temperature", str(args.temperature)])
-            if args.top_p is not None:
-                eval_cmd.extend(["--top_p", str(args.top_p)])
-            if args.no_thinking:
-                eval_cmd.append("--no_thinking")
-            if args.max_eval_samples:
-                eval_cmd.extend(["--max_samples", str(args.max_eval_samples)])
-            run_command(eval_cmd, log_dir / f"eval_frac_{idx:02d}.log", args.dry_run)
+            eval_cmd = build_eval_cmd(str(adapter_dir), eval_dir, base_model_path=base_for_eval)
+            run_eval_runs(eval_cmd, eval_dir, f"eval_frac_{idx:02d}")
             if not args.dry_run:
                 eval_done.write_text("done\n", encoding="utf-8")
 
-        # Delete adapter after eval to save disk — keep only the final shard (100% data)
-        is_final_shard = (idx == args.fractions)
-        if not args.dry_run and not is_final_shard and adapter_dir.exists():
-            print(f"  Removing adapter {adapter_dir} to free disk space...")
-            shutil.rmtree(adapter_dir)
-
         row = dict(split)
         if not args.dry_run:
-            row.update(read_metrics(latest_summary(eval_dir, args.dataset)))
+            summaries = sorted(eval_dir.glob(f"{args.dataset}_*_summary.json"))
+            all_metrics = [read_metrics(s) for s in summaries]
+            row.update(average_metrics(all_metrics))
         rows.append(row)
 
         csv_path = results_root / "accuracy_vs_sft_quantity.csv"
