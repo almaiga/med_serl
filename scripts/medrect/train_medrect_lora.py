@@ -386,7 +386,7 @@ def main() -> None:
         "eval_steps": args.eval_steps if has_eval else None,
         "eval_strategy": "steps" if has_eval else "no",
         "bf16": args.bf16,
-        "save_total_limit": 1,
+        "save_total_limit": None,
         "load_best_model_at_end": has_eval and not args.no_early_stopping,
         "metric_for_best_model": "eval_loss" if has_eval else None,
         "greater_is_better": False,
