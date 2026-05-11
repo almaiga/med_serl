@@ -266,7 +266,9 @@ def run_phase1_training(args: argparse.Namespace, splits: List[Dict],
         effective_train = math.ceil(train_count * (1.0 - args.eval_split)) if args.eval_split > 0 else train_count
         steps_per_epoch = max(1, math.ceil(effective_train / (args.batch_size * args.grad_accum)))
         adaptive_eval_steps = max(5, steps_per_epoch // 2)
-        adaptive_save_steps = max(adaptive_eval_steps, args.save_steps)
+        # save_steps must be a round multiple of eval_steps (HuggingFace requirement)
+        save_multiplier = max(1, args.save_steps // adaptive_eval_steps)
+        adaptive_save_steps = adaptive_eval_steps * save_multiplier
         print(f"  steps/epoch={steps_per_epoch}  eval_steps={adaptive_eval_steps}  save_steps={adaptive_save_steps}")
 
         train_cmd = launcher(args.nproc_per_node) + [
@@ -579,6 +581,9 @@ def main() -> None:
     run_phase1_training(args, splits, output_root, log_dir)
 
     # ── Phase 2: evaluate all with single vLLM session ───────────────────────
+    if args.dry_run:
+        print("\n[dry-run] Skipping Phase 2 (vLLM eval).")
+        return
     rows = run_phase2_eval(args, splits, output_root, results_root)
 
     # ── Save summary CSV + JSON + plot ────────────────────────────────────────
