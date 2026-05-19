@@ -75,6 +75,9 @@ def parse_args() -> argparse.Namespace:
                         help="Inference runs per shard to average out sampling variance")
     parser.add_argument("--eval-base-model", action="store_true",
                         help="Evaluate the base model (no LoRA) before training shards")
+    parser.add_argument("--eval-indices", default=None,
+                        help="Comma-separated shard indices to evaluate, e.g. '4,8,10'. "
+                             "Only used in Phase 2; base model eval is controlled separately.")
 
     # Training config — mirrors run_assessor_only_sft.sh defaults exactly
     parser.add_argument("--nproc-per-node", type=int, default=None)
@@ -325,6 +328,10 @@ def run_phase2_eval(
     print(f"\n{'='*60}")
     print("PHASE 2 — Single vLLM session evaluating all adapters")
     print(f"{'='*60}")
+    eval_indices = None
+    if args.eval_indices:
+        eval_indices = {int(x.strip()) for x in args.eval_indices.split(",") if x.strip()}
+        print(f"Restricting adapter eval to shard indices: {sorted(eval_indices)}")
 
     # Delayed imports so dry-run / training-only uses don't need vLLM
     import pandas as pd
@@ -527,6 +534,8 @@ def run_phase2_eval(
     # Evaluate each trained adapter
     for split in splits:
         idx = split["index"]
+        if eval_indices is not None and idx not in eval_indices:
+            continue
         adapter_dir = output_root / f"adapter_frac_{idx:02d}_of_{args.fractions}"
         eval_dir = results_root / f"eval_frac_{idx:02d}_of_{args.fractions}"
 

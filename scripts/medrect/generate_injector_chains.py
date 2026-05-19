@@ -58,8 +58,6 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.self_play.utils import (
-    number_sentences,
-    find_error_sentence_id,
     reconstruct_note,
     parse_numbered_sentences,
 )
@@ -73,10 +71,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Paths
-DEFAULT_ERROR_DATA = PROJECT_ROOT / "data_processed" / "medec_paired" / "train_val_split" / "sft_train.jsonl"
-DEFAULT_BENIGN_DATA = PROJECT_ROOT / "data_processed" / "benign_changes" / "benign_train_clean.jsonl"
-DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "sft" / "injector_reasoning_prompts.json"
+DEFAULT_ERROR_DATA = (
+    PROJECT_ROOT / "data_processed" / "medec_v2" / "ms_train.jsonl"
+)
+DEFAULT_BENIGN_DATA = (
+    PROJECT_ROOT / "data_processed" / "benign_changes" / "benign_v2.jsonl"
+)
+DEFAULT_PROMPT_CONFIG = (
+    PROJECT_ROOT / "configs" / "prompts" / "sft" / "injector_reasoning_prompts.json"
+)
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data_processed" / "medrect"
+DEFAULT_MEDEC_SPLIT_DIR = PROJECT_ROOT / "data_processed" / "medec_v2"
 
 
 # =============================================================================
@@ -100,24 +105,134 @@ class NormalizedRecord:
     replacement_term: Optional[str]
 
 
-def normalize_error_record(pair: Dict) -> Optional[NormalizedRecord]:
-    """Normalize a MEDEC sft_train.jsonl record."""
-    correct_note = pair.get("correct_note", "")
-    incorrect_note = pair.get("incorrect_note", "")
-    error_sentence = pair.get("error_sentence", "")
+def build_sentences_lookup(split_dir: Path) -> Dict[str, Dict]:
+    """Build {note_id: {sentences, error_sentence_id, corrected_sentence}} from medec_v2 ERROR rows."""
+    lookup: Dict[str, Dict] = {}
+    for fname in ("ms_train.jsonl", "ms_val.jsonl", "uw_val.jsonl"):
+        path = split_dir / fname
+        if not path.exists():
+            continue
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                if r.get("error_flag") == 1:
+                    lookup[r["note_id"]] = {
+                        "sentences": r.get("sentences", ""),
+                        "correct_sentences": r.get("correct_sentences", ""),
+                        "error_sentence_id": r.get("error_sentence_id"),
+                        "corrected_sentence": r.get("corrected_sentence", ""),
+                    }
+    logger.info("Sentences lookup: %d medec_v2 ERROR rows loaded", len(lookup))
+    return lookup
 
-    if not correct_note or not incorrect_note or not error_sentence:
+
+def get_correct_sentences(medec_row: Dict) -> str:
+    """Return correct note's numbered sentences.
+
+    Prefers the pre-built correct_sentences field from build_medec_splits.py;
+    falls back to substitution when not available (legacy data).
+    """
+    stored = medec_row.get("correct_sentences", "")
+    if stored:
+        return stored
+    # Fallback: substitute error sentence in the incorrect-note sentences
+    sentences = medec_row.get("sentences", "")
+    sid = medec_row.get("error_sentence_id")
+    corrected = medec_row.get("corrected_sentence", "")
+    if not sid or not corrected:
+        return sentences
+    lines = sentences.split("\n")
+    result = []
+    for line in lines:
+        m = re.match(r"^(\d+)\.\s+(.+)$", line.strip())
+        if m and int(m.group(1)) == sid:
+            result.append(f"{sid}. {corrected}")
+        else:
+            result.append(line)
+    return "\n".join(result)
+
+
+def find_sentence_in_numbered(
+    numbered: str, target: str, original_term: str = ""
+) -> Optional[int]:
+    """Return 1-indexed sentence number for target text in a pre-numbered string.
+
+    Tries in order:
+    1. Exact match
+    2. Normalized-whitespace match (handles CSV whitespace differences)
+    3. Substring match (handles "Mr. <NAME/>" prefix differences)
+    4. original_term search (handles misaligned multi-line original_sentence fields)
+    """
+    target = (target or "").strip()
+    if not target:
         return None
 
-    # Find which sentence was changed (match error_sentence in incorrect_note)
-    changed_sid = find_error_sentence_id(incorrect_note, error_sentence)
+    lines_parsed = []
+    for line in numbered.split("\n"):
+        m = re.match(r"^(\d+)\.\s+(.+)$", line.strip())
+        if m:
+            lines_parsed.append((int(m.group(1)), m.group(2).strip()))
 
-    input_sentences = number_sentences(correct_note)
+    # 1. Exact match
+    for sid, content in lines_parsed:
+        if content == target:
+            return sid
+
+    # 2. Normalized whitespace match
+    target_norm = re.sub(r"\s+", " ", target)
+    for sid, content in lines_parsed:
+        if re.sub(r"\s+", " ", content) == target_norm:
+            return sid
+
+    # 3. Substring match — handles prefix differences and partial sentences.
+    # Use the first non-empty line of target in case it's multi-line.
+    target_first = re.sub(r"\s+", " ", target.split("\n")[0].strip())
+    if len(target_first) >= 10:  # avoid false positives on very short strings
+        for sid, content in lines_parsed:
+            content_norm = re.sub(r"\s+", " ", content)
+            if target_first in content_norm or content_norm in target_norm:
+                return sid
+
+    # 4. original_term search — most reliable when original_sentence is misaligned
+    term = (original_term or "").strip()
+    if term and len(term) >= 4:
+        for sid, content in lines_parsed:
+            if term in content:
+                return sid
+
+    return None
+
+
+def normalize_error_record(
+    pair: Dict, sentences_lookup: Dict[str, Dict]
+) -> Optional[NormalizedRecord]:
+    """Normalize a medec_v2 ms_train/sft_split ERROR row for injector generation."""
+    note_id = pair.get("note_id", "unknown")
+    # Support both medec_v2 field names and legacy sft_train.jsonl names
+    corrected_text = pair.get("corrected_text") or pair.get("correct_note", "")
+    incorrect_note = pair.get("text") or pair.get("incorrect_note", "")
+    error_sentence = pair.get("error_sentence", "")
+
+    if not corrected_text or not error_sentence:
+        return None
+
+    medec_row = sentences_lookup.get(note_id)
+    if medec_row is None:
+        logger.warning("No sentences lookup entry for error record %s", note_id)
+        return None
+
+    input_sentences = get_correct_sentences(medec_row)
+    changed_sid = medec_row.get("error_sentence_id")
+    if changed_sid is None:
+        return None
 
     return NormalizedRecord(
-        note_id=pair.get("note_id", "unknown"),
+        note_id=note_id,
         scenario="error",
-        input_note=correct_note,
+        input_note=corrected_text,
         output_note=incorrect_note,
         input_sentences=input_sentences,
         target_sentence_original=None,
@@ -130,27 +245,30 @@ def normalize_error_record(pair: Dict) -> Optional[NormalizedRecord]:
     )
 
 
-def normalize_benign_record(record: Dict) -> Optional[NormalizedRecord]:
-    """Normalize a benign_train_clean.jsonl record."""
+def normalize_benign_record(
+    record: Dict, sentences_lookup: Dict[str, Dict]
+) -> Optional[NormalizedRecord]:
+    """Normalize a benign_v2.jsonl record (changed_sid and sentences pre-computed)."""
+    note_id = record.get("note_id", "unknown")
     original_note = record.get("original_note", "")
     modified_note = record.get("modified_note", "")
     original_sentence = record.get("original_sentence", "")
     modified_sentence = record.get("modified_sentence", "")
+    sentences = record.get("sentences", "")
+    changed_sid = record.get("changed_sid")
 
     if not original_note or not modified_note or not modified_sentence:
         return None
-
-    # Find which sentence was changed (match original_sentence in original_note)
-    changed_sid = find_error_sentence_id(original_note, original_sentence) if original_sentence else None
-
-    input_sentences = number_sentences(original_note)
+    if not sentences or changed_sid is None:
+        logger.warning("Missing sentences/changed_sid for benign %s — re-run build_benign_splits.py", note_id)
+        return None
 
     return NormalizedRecord(
-        note_id=record.get("note_id", "unknown"),
+        note_id=note_id,
         scenario="benign",
         input_note=original_note,
         output_note=modified_note,
-        input_sentences=input_sentences,
+        input_sentences=sentences,
         target_sentence_original=original_sentence,
         target_sentence_modified=modified_sentence,
         changed_sid=changed_sid,
@@ -732,6 +850,9 @@ async def run_pipeline(args: argparse.Namespace) -> None:
         config = json.load(f)
     logger.info(f"Loaded prompt config: {config_path}")
 
+    # Build sentence lookup from medec_v2 split files
+    sentences_lookup = build_sentences_lookup(Path(args.medec_split_dir))
+
     # Init components
     client = DeepSeekR1Client(
         max_concurrent=args.concurrency,
@@ -758,11 +879,15 @@ async def run_pipeline(args: argparse.Namespace) -> None:
         # Load and normalize data
         if scenario == "error":
             data_path = Path(args.error_data)
-            records = _load_and_normalize_error(data_path, args.limit)
+            records = _load_and_normalize_error(
+                data_path, args.limit, sentences_lookup
+            )
             out_file = output_dir / f"injector_error_chains_{timestamp}.jsonl"
         else:
             data_path = Path(args.benign_data)
-            records = _load_and_normalize_benign(data_path, args.limit)
+            records = _load_and_normalize_benign(
+                data_path, args.limit, sentences_lookup
+            )
             out_file = output_dir / f"injector_benign_chains_{timestamp}.jsonl"
 
         logger.info(f"Loaded {len(records)} records from {data_path}")
@@ -868,16 +993,21 @@ async def run_pipeline(args: argparse.Namespace) -> None:
             )
 
 
-def _load_and_normalize_error(path: Path, limit: Optional[int]) -> List[NormalizedRecord]:
-    """Load sft_train.jsonl and normalize."""
+def _load_and_normalize_error(
+    path: Path, limit: Optional[int], sentences_lookup: Dict[str, Dict]
+) -> List[NormalizedRecord]:
+    """Load medec_v2 ms_train/sft_split JSONL and normalize ERROR rows."""
     records = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             pair = json.loads(line)
-            rec = normalize_error_record(pair)
+            # Skip CORRECT rows — injector only processes error pairs
+            if pair.get("error_flag", 1) == 0:
+                continue
+            rec = normalize_error_record(pair, sentences_lookup)
             if rec and rec.changed_sid is not None:
                 records.append(rec)
             if limit and len(records) >= limit:
@@ -885,16 +1015,18 @@ def _load_and_normalize_error(path: Path, limit: Optional[int]) -> List[Normaliz
     return records
 
 
-def _load_and_normalize_benign(path: Path, limit: Optional[int]) -> List[NormalizedRecord]:
-    """Load benign_train_clean.jsonl and normalize."""
+def _load_and_normalize_benign(
+    path: Path, limit: Optional[int], sentences_lookup: Dict[str, Dict]
+) -> List[NormalizedRecord]:
+    """Load benign_v2.jsonl (pre-computed changed_sid) and normalize."""
     records = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             raw = json.loads(line)
-            rec = normalize_benign_record(raw)
+            rec = normalize_benign_record(raw, sentences_lookup)
             if rec and rec.changed_sid is not None:
                 records.append(rec)
             if limit and len(records) >= limit:
@@ -917,14 +1049,19 @@ def parse_args() -> argparse.Namespace:
         help="Which scenario(s) to generate (default: all)",
     )
     parser.add_argument(
+        "--medec-split-dir",
+        default=str(DEFAULT_MEDEC_SPLIT_DIR),
+        help="Path to data_processed/medec_v2/ directory (for sentence lookups)",
+    )
+    parser.add_argument(
         "--error-data",
         default=str(DEFAULT_ERROR_DATA),
-        help="Path to sft_train.jsonl (MEDEC error pairs)",
+        help="Path to medec_v2/ms_train.jsonl or sft_split.jsonl (MEDEC error pairs)",
     )
     parser.add_argument(
         "--benign-data",
         default=str(DEFAULT_BENIGN_DATA),
-        help="Path to benign_train_clean.jsonl",
+        help="Path to benign_v2.jsonl (pre-computed changed_sid + sentences)",
     )
     parser.add_argument(
         "--prompt-config",

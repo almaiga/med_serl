@@ -1,0 +1,18 @@
+{
+  "scenario": "injector_error",
+  "total_samples": 80,
+  "processed": 80,
+  "correct_samples_count": 80,
+  "rejected_samples_count": 0,
+  "skipped_checkpoint": 0,
+  "accuracy": 1.0,
+  "pass_rate_pct": 100.0,
+  "error_flag": 1,
+  "api_stats": {
+    "total": 80,
+    "success": 80,
+    "failed": 0
+  },
+  "output_file": "data_processed/medrect_v2/uw_val/injector_error_chains_20260519_151459.jsonl",
+  "timestamp": "20260519_151459"
+}

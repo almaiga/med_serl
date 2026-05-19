@@ -10,7 +10,7 @@
     "user_template": "Review the numbered clinical note below. The note contains exactly one medical error.\n\nYour task:\n1. Find the sentence containing the error.\n2. Explain why the statement could look superficially plausible.\n3. Explain the actual medical contradiction.\n4. Output the sentence number containing the error.\n\nReference information for validation only. Do not mention it directly in your reasoning:\n- Expected error sentence id: {error_sentence_id}\n- Incorrect sentence: {error_sentence}\n- Corrected sentence: {corrected_sentence}\n- Error type: {error_type}\n\nImportant notes:\n- Do not mention the instructions.\n- Do not mention the expected answer.\n- Reason as if you are evaluating the note independently.\n\nFinal output format:\n- If error found: output only the sentence number\n\nCRITICAL: Output ONLY the final answer in the last line.\n\n{sentences}"
   },
   "meta_reference_cleaning": {
-    "description": "Keywords and regex patterns for removing meta-references from assessor reasoning.",
+    "description": "Keywords and regex patterns for removing meta-references from assessor reasoning. Aligned with pfnet-research/medrect clean_reasoning_en.py.",
     "keywords": [
       "do not mention",
       "the instructions",
@@ -25,7 +25,35 @@
       "the prompt says",
       "the instruction says",
       "output only the final answer",
-      "last line"
+      "last line",
+      "told that",
+      "are told",
+      "we are told",
+      "being told",
+      "pre-verified",
+      "pre-determined",
+      "pre-confirmed",
+      "reference says",
+      "reference correction",
+      "provided correction",
+      "given correction",
+      "expected outcome",
+      "known outcome",
+      "expected error is in sentence",
+      "the error is in sentence",
+      "according to the reference",
+      "the corrected sentence should",
+      "the corrected sentence is",
+      "error type is",
+      "we need to output",
+      "we must output",
+      "need to output the sentence",
+      "pure medical evaluation",
+      "purely medical",
+      "meta-reference",
+      "error example",
+      "no-error example",
+      "the reference solution"
     ],
     "regex_patterns": [
       ".*do not mention.*",
@@ -36,7 +64,18 @@
       ".*I know.*answer.*",
       ".*the prompt says.*",
       ".*the instruction says.*",
-      ".*output only.*last line.*"
+      ".*output only.*last line.*",
+      ".*told.*expected.*",
+      ".*pre-verified.*",
+      ".*according to the reference.*",
+      ".*expected error is in sentence \\d+.*",
+      ".*the error is in sentence \\d+.*",
+      ".*corrected sentence should.*",
+      ".*error type is.*",
+      ".*we need to output.*sentence.*",
+      ".*pure medical evaluation.*",
+      ".*reviewing.*error.*example.*",
+      ".*reviewing.*no-error.*example.*"
     ]
   }
 }

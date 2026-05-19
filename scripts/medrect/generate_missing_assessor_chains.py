@@ -30,7 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.medrect.generate_injector_chains import DeepSeekR1Client, ReasoningCleaner
-from scripts.self_play.utils import find_error_sentence_id, number_sentences, parse_assessor_answer
+from scripts.self_play.utils import parse_assessor_answer, sentences_to_1indexed
 
 
 logging.basicConfig(
@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_SFT_PATH = PROJECT_ROOT / "data_processed" / "medec_paired" / "train_val_split" / "sft_train.jsonl"
+DEFAULT_SFT_PATH = PROJECT_ROOT / "data_processed" / "medec_v2" / "ms_train.jsonl"
 DEFAULT_MATCH_SUMMARY = PROJECT_ROOT / "data_processed" / "medrect" / "recovered_medrect_match_summary.json"
 DEFAULT_PROMPT_CONFIG = PROJECT_ROOT / "configs" / "prompts" / "sft" / "medrect_assessor_reasoning_prompts.json"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data_processed" / "medrect"
@@ -55,6 +55,8 @@ class PairRecord:
     error_sentence: str
     corrected_sentence: str
     error_sentence_id: int
+    sentences: str       # pre-numbered via sentences_to_1indexed() on MEDEC CSV Sentences field
+    correct_sentences: str  # pre-numbered sentences for the correct note
 
 
 @dataclass
@@ -72,7 +74,7 @@ class Task:
 
     @property
     def numbered(self) -> str:
-        return number_sentences(self.note)
+        return self.pair.correct_sentences if self.scenario == "correct" else self.pair.sentences
 
 
 def normalize(text: str) -> str:
@@ -127,7 +129,13 @@ def load_existing_sample_ids(*paths: Path) -> set[str]:
 
 
 def load_pairs(path: Path, selected_ids: set[str], limit: Optional[int]) -> List[PairRecord]:
+    """Load pairs from a medec_v2 split file (has pre-computed sentences & error_sentence_id).
+
+    Falls back gracefully if the new fields are absent (legacy sft_train.jsonl format),
+    but logs a warning since sentence numbering will not be aligned with evaluation.
+    """
     records: List[PairRecord] = []
+    n_legacy = 0
     with open(path, "r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -138,27 +146,70 @@ def load_pairs(path: Path, selected_ids: set[str], limit: Optional[int]) -> List
             if selected_ids and note_id not in selected_ids:
                 continue
 
-            incorrect_note = raw.get("incorrect_note", "")
-            error_sentence = raw.get("error_sentence", "")
-            sid = find_error_sentence_id(incorrect_note, error_sentence)
-            if sid is None:
-                logger.warning("Skipping %s: cannot locate error sentence", note_id)
+            # Skip CORRECT-only rows — we only generate pairs for ERROR notes
+            # (the correct scenario uses corrected_text as the input note)
+            error_flag = raw.get("error_flag", 1)
+            if error_flag == 0:
                 continue
+
+            # Prefer pre-computed sentence numbering from medec_v2 split files
+            sentences = raw.get("sentences", "")
+            sid = raw.get("error_sentence_id")
+
+            # Correct-scenario note: use corrected_text (reconstructed, clean text)
+            corrected_text = raw.get("corrected_text") or raw.get("correct_note", "")
+            # Number the correct note using sentences_to_1indexed if it has MEDEC format,
+            # otherwise fall back to splitting the clean corrected text line-by-line.
+            correct_sentences_raw = raw.get("correct_sentences", "")
+            if correct_sentences_raw:
+                correct_sentences = correct_sentences_raw
+            else:
+                # corrected_text is clean reconstructed prose — number it properly
+                correct_sentences = sentences_to_1indexed(corrected_text) if "\n" in corrected_text and re.match(r"^\d+\s", corrected_text) else _number_clean_text(corrected_text)
+
+            if not sentences or sid is None:
+                n_legacy += 1
+                logger.warning(
+                    "Skipping %s: missing 'sentences' or 'error_sentence_id' fields. "
+                    "Use medec_v2 split files from build_medec_splits.py.", note_id
+                )
+                continue
+
+            incorrect_note = raw.get("incorrect_note") or raw.get("text", "")
+            error_sentence = raw.get("error_sentence", "")
+            corrected_sentence = raw.get("corrected_sentence", "")
 
             records.append(
                 PairRecord(
                     note_id=note_id,
-                    correct_note=raw.get("correct_note", ""),
+                    correct_note=corrected_text,
                     incorrect_note=incorrect_note,
                     error_type=raw.get("error_type"),
                     error_sentence=error_sentence,
-                    corrected_sentence=raw.get("corrected_sentence", ""),
+                    corrected_sentence=corrected_sentence,
                     error_sentence_id=sid,
+                    sentences=sentences,
+                    correct_sentences=correct_sentences,
                 )
             )
             if limit and len(records) >= limit:
                 break
+
+    if n_legacy:
+        logger.warning("%d records skipped due to missing medec_v2 fields.", n_legacy)
     return records
+
+
+def _number_clean_text(text: str) -> str:
+    """Number a clean prose note (not MEDEC 0-indexed format) using sentences_to_1indexed logic."""
+    import re as _re
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    if len(lines) > 1:
+        # Already one sentence per line
+        return "\n".join(f"{i+1}. {l}" for i, l in enumerate(lines))
+    # Single block — split on punctuation + uppercase
+    parts = _re.split(r'(?<=[.!?])\s+(?=[A-Z])', text.strip())
+    return "\n".join(f"{i+1}. {p.strip()}" for i, p in enumerate(parts) if p.strip())
 
 
 def build_selected_ids(summary_path: Optional[Path], scope: str) -> set[str]:

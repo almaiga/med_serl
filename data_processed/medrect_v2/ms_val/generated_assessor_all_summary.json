@@ -1,0 +1,19 @@
+{
+  "scope": "all",
+  "status": "completed",
+  "started_at": "2026-05-19T15:28:12+00:00",
+  "updated_at": "2026-05-19T15:30:44+00:00",
+  "pairs_selected": 319,
+  "tasks_total": 638,
+  "completed": 638,
+  "skipped_existing": 0,
+  "accepted": 596,
+  "rejected": 42,
+  "accepted_output": "data_processed/medrect_v2/ms_val/generated_assessor_all_accepted.jsonl",
+  "rejected_output": "data_processed/medrect_v2/ms_val/generated_assessor_all_rejected.jsonl",
+  "api_stats": {
+    "total": 638,
+    "success": 638,
+    "failed": 0
+  }
+}
