@@ -101,6 +101,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", default="medrect-sft-scaling")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--eval-only", action="store_true",
+                        help="Skip Phase 1 (training) and only run Phase 2 (vLLM eval). "
+                             "Useful for adding extra eval runs to existing adapters.")
     return parser.parse_args()
 
 
@@ -578,7 +581,10 @@ def main() -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Phase 1: train all shards ─────────────────────────────────────────────
-    run_phase1_training(args, splits, output_root, log_dir)
+    if args.eval_only:
+        print("\n[eval-only] Skipping Phase 1 (training).")
+    else:
+        run_phase1_training(args, splits, output_root, log_dir)
 
     # ── Phase 2: evaluate all with single vLLM session ───────────────────────
     if args.dry_run:
