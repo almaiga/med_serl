@@ -244,10 +244,8 @@ def build_prompt(task: Task, config: Dict[str, Any]) -> tuple[str, str]:
     cfg = config["assessor_incorrect"]
     user = cfg["user_template"].format(
         sentences=task.numbered,
-        error_sentence_id=task.pair.error_sentence_id,
         error_sentence=task.pair.error_sentence,
         corrected_sentence=task.pair.corrected_sentence,
-        error_type=task.pair.error_type or "medical error",
     )
     return cfg["system_prompt"], user
 
