@@ -226,6 +226,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-steps", type=int, default=50)
     parser.add_argument("--bf16", action="store_true", default=True)
     parser.add_argument("--no-bf16", action="store_false", dest="bf16")
+    parser.add_argument("--gradient-checkpointing", action="store_true", default=True,
+                        help="Recompute activations to save VRAM (slower). On by default.")
+    parser.add_argument("--no-gradient-checkpointing", action="store_false",
+                        dest="gradient_checkpointing",
+                        help="Disable gradient checkpointing — much faster when VRAM is ample.")
     
     # LoRA arguments (paper: r=64, alpha=128 for Qwen3-32B; same for 8B)
     parser.add_argument(
@@ -394,7 +399,7 @@ def main() -> None:
         "lr_scheduler_type": "cosine",
         "dataloader_num_workers": args.dataloader_num_workers,
         "seed": args.seed,
-        "gradient_checkpointing": True,
+        "gradient_checkpointing": args.gradient_checkpointing,
         "ddp_find_unused_parameters": False,
     }
     
