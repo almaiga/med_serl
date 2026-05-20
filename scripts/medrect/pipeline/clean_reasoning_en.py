@@ -39,7 +39,8 @@ class ReasoningCleaner:
             "text claims",
             "external instructions",
             "prior knowledge",
-            "prior informationreference information",
+            "prior informationreference information",  # upstream concatenation bug — kept for compat
+            "reference information",  # added separately to catch the bug upstream missed
             "reference correction",
             "reference says",
             "sample correction",

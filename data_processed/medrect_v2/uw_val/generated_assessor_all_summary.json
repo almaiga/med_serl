@@ -1,19 +1,8 @@
 {
-  "scope": "all",
-  "status": "completed",
-  "started_at": "2026-05-19T13:56:54+00:00",
-  "updated_at": "2026-05-19T13:57:35+00:00",
-  "pairs_selected": 80,
-  "tasks_total": 160,
-  "completed": 160,
-  "skipped_existing": 0,
-  "accepted": 153,
-  "rejected": 7,
-  "accepted_output": "data_processed/medrect_v2/generated_assessor_all_accepted.jsonl",
-  "rejected_output": "data_processed/medrect_v2/generated_assessor_all_rejected.jsonl",
-  "api_stats": {
-    "total": 160,
-    "success": 160,
-    "failed": 0
-  }
+  "total": 160,
+  "accepted": 156,
+  "rejected": 4,
+  "accuracy": 0.975,
+  "correct_scenario": 80,
+  "incorrect_scenario": 80
 }

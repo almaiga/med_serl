@@ -142,7 +142,11 @@ def convert_record(
     # Build prompts from config (not hardcoded)
     system_prompt = prompt_config["system_prompt"]
     user_template = prompt_config["user_template"]
-    user_prompt = user_template.format(sentences=sentences)
+    # Injector chains already carry a pre-built user_prompt; use it directly.
+    if record.get("user_prompt"):
+        user_prompt = record["user_prompt"]
+    else:
+        user_prompt = user_template.format(sentences=sentences)
     
     # Detection-only label: CORRECT or sentence number
     if error_flag == 0 or error_flag is False:

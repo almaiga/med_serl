@@ -65,12 +65,16 @@ def sentences_to_1indexed(raw: str) -> str:
     """Convert MEDEC 0-indexed sentences to 1-indexed.
 
     "0 First sentence.\\n1 Second." → "1. First sentence.\\n2. Second."
+    Continuation lines (no leading number) are appended to the previous sentence.
     Reused from medrect/inference_detection.py for compatibility.
     """
     lines = []
     for line in raw.strip().split("\n"):
         m = re.match(r"^(\d+)\s+(.+)$", line.strip())
-        lines.append(f"{int(m.group(1)) + 1}. {m.group(2)}" if m else line)
+        if m:
+            lines.append(f"{int(m.group(1)) + 1}. {m.group(2)}")
+        elif line.strip() and lines:
+            lines[-1] = lines[-1] + " " + line.strip()
     return "\n".join(lines)
 
 

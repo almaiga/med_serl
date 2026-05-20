@@ -64,7 +64,10 @@ def sentences_to_1indexed(raw: str) -> str:
     lines = []
     for line in raw.strip().split("\n"):
         match = re.match(r"^(\d+)\s+(.+)$", line.strip())
-        lines.append(f"{int(match.group(1)) + 1}. {match.group(2)}" if match else line)
+        if match:
+            lines.append(f"{int(match.group(1)) + 1}. {match.group(2)}")
+        elif line.strip() and lines:
+            lines[-1] = lines[-1] + " " + line.strip()
     return "\n".join(lines)
 
 

@@ -13,6 +13,6 @@
     "success": 80,
     "failed": 0
   },
-  "output_file": "data_processed/medrect_v2/uw_val/injector_error_chains_20260519_151459.jsonl",
-  "timestamp": "20260519_151459"
+  "output_file": "data_processed/medrect_v2/uw_val/injector_error_chains_20260520_100247.jsonl",
+  "timestamp": "20260520_100247"
 }
