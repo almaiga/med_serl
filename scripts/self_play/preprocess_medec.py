@@ -67,7 +67,7 @@ def create_benign_example(
     user_template = injection_prompts["injector_correct_template"]
 
     # Pre-number the sentences
-    sentences = number_sentences(pair["correct_note"])
+    sentences = pair.get("correct_sentences") or number_sentences(pair["correct_note"])
 
     # Pick a random benign change type
     change_types = injection_prompts.get("benign_change_types", {})
@@ -138,11 +138,16 @@ def create_error_example(
 
     # IMPORTANT: start from the pristine note. Using incorrect_note here would ask
     # the model to "inject" an error into a note that already contains one.
-    sentences = number_sentences(pair["correct_note"])
+    sentences = pair.get("correct_sentences") or number_sentences(pair["correct_note"])
 
-    # Locate the target sentence in the correct note using corrected_sentence.
+    # Prefer MEDEC's canonical error_sentence_id (matches correct_sentences numbering,
+    # consistent with SFT + eval). Fall back to fuzzy matching only if absent.
     target_sentence_text = pair.get("corrected_sentence") or pair.get("error_sentence", "")
-    error_sentence_id = find_error_sentence_id(pair["correct_note"], target_sentence_text)
+    canonical_esid = pair.get("error_sentence_id")
+    error_sentence_id = (
+        canonical_esid if canonical_esid is not None
+        else find_error_sentence_id(pair["correct_note"], target_sentence_text)
+    )
     
     # Ground truth is the sentence number (as string), not "INCORRECT"
     ground_truth = str(error_sentence_id) if error_sentence_id else "INCORRECT"
