@@ -409,7 +409,7 @@ def main() -> None:
         sft_kwargs["max_seq_length"] = args.max_seq_length
     elif "max_length" in sig.parameters:
         sft_kwargs["max_length"] = args.max_seq_length
-    if "gradient_checkpointing_kwargs" in sig.parameters:
+    if args.gradient_checkpointing and "gradient_checkpointing_kwargs" in sig.parameters:
         sft_kwargs["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
     
     training_args = SFTConfig(**{k: v for k, v in sft_kwargs.items() if k in sig.parameters})
