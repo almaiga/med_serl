@@ -1,8 +1,8 @@
 {
   "total": 160,
-  "accepted": 156,
-  "rejected": 4,
-  "accuracy": 0.975,
+  "accepted": 146,
+  "rejected": 14,
+  "accuracy": 0.9125,
   "correct_scenario": 80,
   "incorrect_scenario": 80
 }

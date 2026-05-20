@@ -1,0 +1,18 @@
+{
+  "scenario": "injector_error",
+  "total_samples": 1219,
+  "processed": 652,
+  "correct_samples_count": 652,
+  "rejected_samples_count": 0,
+  "skipped_checkpoint": 567,
+  "accuracy": 1.0,
+  "pass_rate_pct": 100.0,
+  "error_flag": 1,
+  "api_stats": {
+    "total": 652,
+    "success": 652,
+    "failed": 0
+  },
+  "output_file": "data_processed/medrect_v2/ms_train/injector_error_chains_20260520_162036.jsonl",
+  "timestamp": "20260520_162036"
+}

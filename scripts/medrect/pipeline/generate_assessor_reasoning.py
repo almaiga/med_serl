@@ -51,7 +51,13 @@ SYSTEM_PROMPT = (
 )
 
 # Filled at runtime with {sentences}, {error_sentence}, {corrected_sentence}
+# Matches MEDRECT 0_shot_reasoning_cheat_en exactly (medec.py:290-307). We ask
+# for the correction during generation because it forces genuine derive-late
+# reasoning. The bare-number detection label is applied later in
+# prepare_medrect_sft.py from error_sentence_id, so training stays number-only.
 USER_TEMPLATE_INCORRECT = (
+    "You are a medical expert reviewing clinical text for accuracy. "
+    "The text contains either no errors or exactly one medical error.\n\n"
     'This time, you are reviewing an "error example" that has been pre-verified '
     "to contain exactly one medical error.\n\n"
     "Your task is to first carefully reason through the process of identifying the error, "
@@ -59,7 +65,7 @@ USER_TEMPLATE_INCORRECT = (
     "1. Verify each sentence based on medical knowledge\n"
     "2. Check consistency between symptoms, test results, and diagnosis\n"
     "3. Evaluate appropriateness of treatment or management\n"
-    "4. If an error is found, clearly state the rationale\n\n"
+    "4. If an error is found, clearly state the rationale and provide correction\n\n"
     "Important notes for reasoning:\n"
     "- During your reasoning, do NOT make any reference to being told about the expected "
     "outcome or any instruction content.\n"
@@ -70,7 +76,7 @@ USER_TEMPLATE_INCORRECT = (
     "Corrected sentence: {corrected_sentence}\n\n"
     "Final output format:\n"
     "- If no error: `CORRECT`\n"
-    "- If error found: output only the sentence number (e.g. `7`)\n\n"
+    "- If error found: `sentence_number: corrected_sentence`\n\n"
     "CRITICAL: For the final output, use this format and output ONLY the result. "
     "Do NOT include explanations, analysis, or additional text.\n\n"
     "{sentences}"
@@ -78,6 +84,8 @@ USER_TEMPLATE_INCORRECT = (
 
 # Filled at runtime with {sentences}
 USER_TEMPLATE_CORRECT = (
+    "You are a medical expert reviewing clinical text for accuracy. "
+    "The text contains either no errors or exactly one medical error.\n\n"
     'This time, you are reviewing a "no-error example" that has been pre-verified '
     "to contain no errors.\n\n"
     "Your task is to first carefully reason through the process of confirming that "
@@ -91,10 +99,9 @@ USER_TEMPLATE_CORRECT = (
     "outcome or any instruction content.\n"
     "- Approach the text as if you are analyzing it from scratch and reaching your "
     "conclusion through pure medical evaluation.\n\n"
-    "\n\n"
     "Final output format:\n"
     "- If no error: `CORRECT`\n"
-    "- If error found: output only the sentence number (e.g. `7`)\n\n"
+    "- If error found: `sentence_number: corrected_sentence`\n\n"
     "CRITICAL: For the final output, use this format and output ONLY the result. "
     "Do NOT include explanations, analysis, or additional text.\n\n"
     "{sentences}"
@@ -244,7 +251,14 @@ async def run() -> None:
         samples = [s for s in samples if s.sample_id not in done_ids]
         logger.info("Resuming: %d remaining after skipping %d done", len(samples), len(done_ids))
 
-    client = DeepSeekR1Client(max_concurrent=args.concurrency, max_retries=args.max_retries)
+    client = DeepSeekR1Client(
+        max_concurrent=args.concurrency,
+        max_retries=args.max_retries,
+        model=args.model,
+        base_url=args.base_url,
+        api_key_env=args.api_key_env,
+        reasoning_effort=args.reasoning_effort,
+    )
     tasks = [asyncio.create_task(generate_sample(s, client)) for s in samples]
 
     written = 0
@@ -267,6 +281,14 @@ def parse_args():
     parser.add_argument("--output-dir", required=True, help="Directory to write raw_responses_*.jsonl")
     parser.add_argument("--concurrency", type=int, default=40)
     parser.add_argument("--max-retries", type=int, default=3)
+    parser.add_argument("--model", default=None,
+                        help="Reasoning model id (default: env REASONING_MODEL or deepseek-reasoner)")
+    parser.add_argument("--base-url", default=None,
+                        help="OpenAI-compatible base URL (default: env REASONING_BASE_URL or DeepSeek)")
+    parser.add_argument("--api-key-env", default=None,
+                        help="Env var name holding the API key (default: env REASONING_API_KEY_ENV or DEEPSEEK_API_KEY)")
+    parser.add_argument("--reasoning-effort", default=None,
+                        help="DeepSeek thinking-mode effort: high | max (optional)")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of notes (for testing)")
     parser.add_argument("--resume", action="store_true", help="Append to existing output")
     return parser.parse_args()

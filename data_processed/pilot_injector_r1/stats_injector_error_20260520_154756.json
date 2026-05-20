@@ -1,0 +1,18 @@
+{
+  "scenario": "injector_error",
+  "total_samples": 20,
+  "processed": 20,
+  "correct_samples_count": 19,
+  "rejected_samples_count": 1,
+  "skipped_checkpoint": 0,
+  "accuracy": 0.95,
+  "pass_rate_pct": 95.0,
+  "error_flag": 1,
+  "api_stats": {
+    "total": 20,
+    "success": 20,
+    "failed": 0
+  },
+  "output_file": "data_processed/pilot_injector_r1/injector_error_chains_20260520_154756.jsonl",
+  "timestamp": "20260520_154756"
+}

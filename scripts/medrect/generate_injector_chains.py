@@ -396,21 +396,39 @@ class ReasoningCleaner:
 # =============================================================================
 
 class DeepSeekR1Client:
-    """Async client for DeepSeek-R1-0528 (deepseek-reasoner).
+    """Async client for an OpenAI-compatible reasoning endpoint.
 
-    DeepSeek-R1 returns reasoning_content (chain-of-thought) separately
-    from content (final answer).
+    Returns reasoning_content (chain-of-thought) separately from content
+    (final answer). Model, base_url and API key env var are configurable so
+    we can target the exact reasoning model (e.g. deepseek-r1-0528 via a
+    third-party host) rather than whatever DeepSeek's first-party alias
+    currently points to.
+
+    Defaults are read from environment:
+        REASONING_MODEL     (default "deepseek-reasoner")
+        REASONING_BASE_URL  (default "https://api.deepseek.com")
+        REASONING_API_KEY_ENV (default "DEEPSEEK_API_KEY")
+    and can be overridden via constructor args.
     """
 
     def __init__(
         self,
         max_concurrent: int = 50,
         max_retries: int = 3,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key_env: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ):
-        api_key = os.getenv("DEEPSEEK_API_KEY")
+        self.reasoning_effort = reasoning_effort
+        self.model = model or os.getenv("REASONING_MODEL", "deepseek-reasoner")
+        base_url = base_url or os.getenv("REASONING_BASE_URL", "https://api.deepseek.com")
+        api_key_env = api_key_env or os.getenv("REASONING_API_KEY_ENV", "DEEPSEEK_API_KEY")
+
+        api_key = os.getenv(api_key_env)
         if not api_key:
             raise ValueError(
-                "DEEPSEEK_API_KEY not found. Set it in .env or environment."
+                f"{api_key_env} not found. Set it in .env or environment."
             )
         if AsyncOpenAI is None:
             raise ImportError(
@@ -419,15 +437,13 @@ class DeepSeekR1Client:
 
         self.client = AsyncOpenAI(
             api_key=api_key,
-            base_url="https://api.deepseek.com",
+            base_url=base_url,
         )
-        # deepseek-reasoner = DeepSeek V3.2 Thinking Mode
-        # (supersedes R1-0528; no way to pin older version via API)
-        # Note: temperature/top_p are ignored for reasoner mode
-        self.model = "deepseek-reasoner"
         self.max_concurrent = max_concurrent
         self.max_retries = max_retries
         self.semaphore = asyncio.Semaphore(max_concurrent)
+        logger.info("Reasoning model=%s  base_url=%s  key_env=%s",
+                    self.model, base_url, api_key_env)
 
         # Stats
         self.total_calls = 0
@@ -448,12 +464,17 @@ class DeepSeekR1Client:
 
             for attempt in range(self.max_retries):
                 try:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
+                    create_kwargs = {
+                        "model": self.model,
+                        "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
+                    }
+                    if self.reasoning_effort:
+                        create_kwargs["reasoning_effort"] = self.reasoning_effort
+                    response = await self.client.chat.completions.create(
+                        **create_kwargs
                     )
 
                     choice = response.choices[0]
@@ -857,6 +878,10 @@ async def run_pipeline(args: argparse.Namespace) -> None:
     client = DeepSeekR1Client(
         max_concurrent=args.concurrency,
         max_retries=args.max_retries,
+        model=args.model,
+        base_url=args.base_url,
+        api_key_env=args.api_key_env,
+        reasoning_effort=args.reasoning_effort,
     )
     cleaner = ReasoningCleaner(config)
 
@@ -1101,6 +1126,22 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=25,
         help="Save checkpoint every N records (default: 25)",
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help="Reasoning model id (default: env REASONING_MODEL or deepseek-reasoner)",
+    )
+    parser.add_argument(
+        "--base-url", default=None,
+        help="OpenAI-compatible base URL (default: env REASONING_BASE_URL or DeepSeek)",
+    )
+    parser.add_argument(
+        "--api-key-env", default=None,
+        help="Env var name holding the API key (default: env REASONING_API_KEY_ENV or DEEPSEEK_API_KEY)",
+    )
+    parser.add_argument(
+        "--reasoning-effort", default=None,
+        help="DeepSeek thinking-mode effort: high | max (optional)",
     )
     return parser.parse_args()
 
