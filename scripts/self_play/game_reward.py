@@ -13,9 +13,12 @@ from typing import Optional
 from scripts.self_play.utils import parse_assessor_answer
 
 # Keep these values aligned with reward_function.py.
+# Retuned to break the "always CORRECT" conservatism trap (recall collapse in RL):
+# PARTIAL raised (detection sub-reward: catching an error exists beats missing) and
+# MISS steepened (false neg/pos cost), so always-CORRECT EV goes negative at 50/50.
 REWARD_EXACT = 1.0
-REWARD_PARTIAL = 0.3
-REWARD_MISS = -1.0
+REWARD_PARTIAL = 0.5
+REWARD_MISS = -1.5
 FORMAT_BONUS = 0.2
 
 VALID_JUDGE_VERDICTS = {"SAME", "CHANGED"}

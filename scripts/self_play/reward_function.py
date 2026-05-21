@@ -84,8 +84,8 @@ LOG_DIR = _DEFAULT_LOG_DIR  # kept for any external imports
 
 # Reward values (3-tier)
 REWARD_EXACT = 1.0     # Exact match (correct label + sentence)
-REWARD_PARTIAL = 0.3   # Detected error but wrong sentence number
-REWARD_MISS = -1.0     # Missed, false positive, or invalid
+REWARD_PARTIAL = 0.5   # Detected error but wrong sentence number (detection sub-reward)
+REWARD_MISS = -1.5     # Missed, false positive, or invalid (steepened vs conservatism)
 FORMAT_BONUS = 0.2     # Bonus for parseable output format
 
 # Remove-ties: samples with |reward| below this threshold are zeroed out

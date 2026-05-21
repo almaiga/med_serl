@@ -19,9 +19,9 @@ from scripts.self_play.utils import parse_assessor_answer
 
 # Reward values (3-tier)
 REWARD_EXACT = 1.0     # Exact match
-REWARD_PARTIAL = 0.3   # Detected error, wrong sentence
-REWARD_MISS = -1.0     # Missed or invalid
-FORMAT_REWARD = 0.1    # Small bonus for correct output format
+REWARD_PARTIAL = 0.5   # Detected error, wrong sentence (detection sub-reward)
+REWARD_MISS = -1.5     # Missed or invalid (steepened vs conservatism)
+FORMAT_REWARD = 0.2    # Bonus for correct output format (synced to FORMAT_BONUS)
 
 
 def parse_final_answer(response: str) -> Tuple[str, Optional[int]]:

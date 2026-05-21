@@ -48,9 +48,9 @@ DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
 DEFAULT_JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "20"))
 DEFAULT_JUDGE_WEIGHT = float(os.getenv("SIMPLE_JUDGE_WEIGHT", "0.3"))
 REWARD_EXACT = 1.0
-REWARD_PARTIAL = 0.3
+REWARD_PARTIAL = 0.5
 FORMAT_BONUS = 0.2
-REWARD_MISS = -1.0
+REWARD_MISS = -1.5
 
 
 def parse_args() -> argparse.Namespace:

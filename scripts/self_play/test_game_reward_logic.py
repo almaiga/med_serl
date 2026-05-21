@@ -111,6 +111,30 @@ class GameRewardLogicTest(unittest.TestCase):
         self.assertEqual(result.reward, 0.0)
         self.assertEqual(result.outcome, "game_invalid")
 
+    def test_retuned_constants(self):
+        # Locked-in retuned values (conservatism fix). Update intentionally if changed.
+        self.assertEqual(REWARD_EXACT, 1.0)
+        self.assertEqual(REWARD_PARTIAL, 0.5)
+        self.assertEqual(REWARD_MISS, -1.5)
+        self.assertEqual(FORMAT_BONUS, 0.2)
+
+    def test_always_correct_ev_nonpositive_at_50_50(self):
+        # The whole point of the retune: "always say CORRECT" must NOT be a safe
+        # positive-EV strategy at a 50/50 benign/error mix (it was +0.2 before).
+        benign_correct = compute_assessor_game_reward(
+            "CORRECT", judge_verdict="SAME", changed_sid=5
+        ).reward
+        error_miss = compute_assessor_game_reward(
+            "CORRECT", judge_verdict="CHANGED", changed_sid=5
+        ).reward
+        ev_always_correct = 0.5 * benign_correct + 0.5 * error_miss
+        self.assertLessEqual(ev_always_correct, 0.0)
+        # And attempting detection (even partial) must beat missing.
+        partial = compute_assessor_game_reward(
+            "3", judge_verdict="CHANGED", changed_sid=5
+        ).reward
+        self.assertGreater(partial, error_miss)
+
 
 if __name__ == "__main__":
     unittest.main()

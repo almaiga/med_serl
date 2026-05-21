@@ -224,8 +224,8 @@ def run_vllm_inference(
 def _score_assessor_output(raw_output: str, ground_truth: str) -> float:
     """3-tier assessor reward — mirrors _compute_assessor_reward in reward_function.py."""
     REWARD_EXACT = 1.0
-    REWARD_PARTIAL = 0.3
-    REWARD_MISS = -1.0
+    REWARD_PARTIAL = 0.5
+    REWARD_MISS = -1.5
     FORMAT_BONUS = 0.2
 
     label, pred_sid = parse_assessor_answer(raw_output)

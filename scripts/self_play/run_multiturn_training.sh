@@ -442,6 +442,7 @@ python3 -m verl.trainer.main_ppo \
     critic.enable=false \
     algorithm.gamma=1.0 \
     algorithm.use_kl_in_reward=True \
+    algorithm.kl_ctrl.kl_coef="${KL_COEF:-0.01}" \
     reward_model.enable=False \
     trainer.logger="$TRAINER_LOGGER" \
     trainer.project_name="$WANDB_PROJECT" \
