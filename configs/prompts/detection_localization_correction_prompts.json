@@ -1,0 +1,5 @@
+{
+  "system_prompt": "You are a medical expert reviewing clinical text for accuracy.\nThe text contains either no error or exactly one medical error.\nIdentify and correct any medical error related to treatment, diagnosis, management, or causation.\n\nOutput Format:\n- If no error: 'CORRECT'\n- If error found: 'sentence_number: corrected_sentence'\n\nCRITICAL: Output ONLY the result. Do NOT include explanations, analysis, or additional text.",
+  "user_template": "{sentences}",
+  "description": "Detection + localization + CORRECTION prompt variant. Output is CORRECT or 'sentence_number: corrected_sentence'. Compare against detection_localization_prompts.json (number-only output)."
+}

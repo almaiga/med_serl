@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""Direct-prompt a judge/detector model on test data. Model + prompt + data.
+"""Direct-prompt a model on test data. Model + prompt + data. No server.
 
-It sends each test note to the running server using the given prompt, prints the
-raw model output, and scores it against the ground truth in the data. Nothing
-else. Swap --prompt to test a different prompt; swap --data to test other notes.
-
-The served model is auto-detected from /v1/models, so you never pass a name.
+Loads the chosen model in-process with vLLM, sends each test note using the
+given prompt, prints the raw output, and scores it against the ground truth.
+Swap --model to pick the judge (MedRECT-32B or Qwen3-8B); swap --prompt to test
+a different prompt; swap --data for other notes.
 
 Data format (medec-test.json): each row has
-  sentences (numbered note), error_flag (1/0), error_sentence_id, error_sentence.
+  sentences (numbered note), error_flag (1/0), error_sentence_id.
 
 Examples:
-  # MedRECT detection prompt on held-out ms-test:
+  # MedRECT-32B, number-only detection prompt:
   python3 scripts/self_play/run_detection_prompt.py \
-    --prompt configs/prompts/detection_localization_prompts.json --n 100
+    --model pfnet/Preferred-MedRECT-32B \
+    --prompt configs/prompts/detection_localization_prompts.json --n 200
 
-  # Try a different prompt file:
+  # MedRECT-32B, correction prompt:
   python3 scripts/self_play/run_detection_prompt.py \
-    --prompt configs/prompts/my_other_prompt.json --n 100
+    --model pfnet/Preferred-MedRECT-32B \
+    --prompt configs/prompts/detection_localization_correction_prompts.json --n 200
+
+  # Qwen3-8B, same prompt:
+  python3 scripts/self_play/run_detection_prompt.py \
+    --model Qwen/Qwen3-8B \
+    --prompt configs/prompts/detection_localization_prompts.json --n 200
 """
 
 from __future__ import annotations
@@ -25,44 +31,40 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.self_play.utils import parse_assessor_answer  # noqa: E402
+from scripts.self_play.utils import parse_assessor_answer, strip_thinking  # noqa: E402
 
 DEFAULT_PROMPT = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
 DEFAULT_DATA = PROJECT_ROOT / "medrect" / "data" / "medec" / "medec-test.json"
 
 
-def detect_model(base_url: str, timeout: float) -> str:
-    with urllib.request.urlopen(base_url.rstrip("/") + "/v1/models", timeout=timeout) as r:
-        return json.loads(r.read())["data"][0]["id"]
-
-
-def ask(base_url: str, payload: dict, timeout: float) -> str:
-    req = urllib.request.Request(
-        base_url.rstrip("/") + "/v1/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())["choices"][0]["message"]["content"].strip()
+def render_prompt(tokenizer, messages, thinking: bool) -> str:
+    """Apply chat template; tolerate models whose template lacks enable_thinking."""
+    kwargs = dict(tokenize=False, add_generation_prompt=True)
+    try:
+        return tokenizer.apply_chat_template(messages, enable_thinking=thinking, **kwargs)
+    except TypeError:
+        return tokenizer.apply_chat_template(messages, **kwargs)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base-url", default="http://127.0.0.1:8002")
+    ap.add_argument("--model", default="pfnet/Preferred-MedRECT-32B",
+                    help="HF model id or path (e.g. Qwen/Qwen3-8B).")
     ap.add_argument("--prompt", type=Path, default=DEFAULT_PROMPT)
     ap.add_argument("--data", type=Path, default=DEFAULT_DATA)
-    ap.add_argument("--n", type=int, default=100, help="cases to run (balanced if possible)")
+    ap.add_argument("--n", type=int, default=200, help="cases to run (balanced if possible)")
     ap.add_argument("--show", type=int, default=10, help="raw outputs to print")
-    ap.add_argument("--max-tokens", type=int, default=64)
-    ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--max-tokens", type=int, default=128)
+    ap.add_argument("--thinking", action="store_true", help="enable model thinking (default off)")
+    ap.add_argument("--tensor-parallel-size", type=int, default=1)
+    ap.add_argument("--gpu-memory-utilization", type=float, default=0.90)
+    ap.add_argument("--max-model-len", type=int, default=8192)
     args = ap.parse_args()
 
     cfg = json.load(open(args.prompt, encoding="utf-8"))
@@ -76,39 +78,46 @@ def main() -> int:
     half = max(1, args.n // 2)
     sample = errors[:half] + corrects[:half]
 
-    model = detect_model(args.base_url, args.timeout)
-    print(f"Server : {args.base_url}")
-    print(f"Model  : {model}  (auto-detected)")
+    print(f"Model  : {args.model}")
     print(f"Prompt : {args.prompt}")
     print(f"Data   : {args.data}  ({len(sample)} cases: "
-          f"{min(half, len(errors))} error / {min(half, len(corrects))} correct)\n")
+          f"{min(half, len(errors))} error / {min(half, len(corrects))} correct)")
+    print(f"Thinking: {args.thinking}\n")
 
-    # tallies
-    err_flagged = err_total = 0      # recall: errors correctly flagged as error
-    err_localized = 0                # of flagged errors, correct sentence id
-    cor_correct = cor_total = 0      # specificity: correct notes said CORRECT
-    failures = 0
+    from transformers import AutoTokenizer
+    from vllm import LLM, SamplingParams
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    llm = LLM(
+        model=args.model,
+        dtype="bfloat16",
+        tensor_parallel_size=args.tensor_parallel_size,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        max_model_len=args.max_model_len,
+        trust_remote_code=True,
+    )
+    sampling = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=args.max_tokens)
+
+    prompts = []
+    for r in sample:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_template.format(sentences=r["sentences"])},
+        ]
+        prompts.append(render_prompt(tokenizer, messages, args.thinking))
+
+    print(f"Running inference on {len(prompts)} prompts...")
+    outputs = llm.generate(prompts, sampling)
+
+    err_flagged = err_total = 0
+    err_localized = 0
+    cor_correct = cor_total = 0
     shown = 0
 
-    for r in sample:
-        user = user_template.format(sentences=r["sentences"])
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.0,
-            "max_tokens": args.max_tokens,
-        }
-        try:
-            raw = ask(args.base_url, payload, args.timeout)
-        except Exception as exc:  # noqa: BLE001
-            failures += 1
-            print(f"[{r.get('sample_id')}] REQUEST FAILED: {exc}")
-            continue
-
-        label, sid = parse_assessor_answer(raw)
+    for r, out in zip(sample, outputs):
+        raw = out.outputs[0].text.strip()
+        _, content = strip_thinking(raw)
+        label, sid = parse_assessor_answer(content or raw)
         gt_error = r.get("error_flag") == 1
         gt_sid = r.get("error_sentence_id")
 
@@ -127,9 +136,11 @@ def main() -> int:
             shown += 1
             gt = f"ERROR@{gt_sid}" if gt_error else "CORRECT"
             pred = f"{label}@{sid}" if sid is not None else label
-            print(f"--- {r.get('sample_id')}  gt={gt}  pred={pred}  RAW={raw[:60]!r}")
+            print(f"--- {r.get('sample_id')}  gt={gt}  pred={pred}  RAW={raw[:80]!r}")
 
     print("\n" + "=" * 56)
+    print(f"Model  : {args.model}")
+    print(f"Prompt : {args.prompt.name}")
     if err_total:
         print(f"error recall (flagged as error) : {err_flagged}/{err_total} = "
               f"{err_flagged / err_total:.1%}")
@@ -138,8 +149,6 @@ def main() -> int:
     if cor_total:
         print(f"correct-note specificity        : {cor_correct}/{cor_total} = "
               f"{cor_correct / cor_total:.1%}")
-    if failures:
-        print(f"request failures                : {failures}")
     return 0
 
 
