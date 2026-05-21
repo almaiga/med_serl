@@ -71,7 +71,7 @@ def compute_injector_game_reward(
     if judge_status == "truncation":
         return 0.0, "truncation_filter", False
 
-    if judge_status in {"request_failed", "unexpected_error", "bad_response_shape", "no_json_verdict", "no_judge_url"}:
+    if judge_status in {"request_failed", "unexpected_error", "bad_response_shape", "no_json_verdict", "no_judge_url", "detected_other_sid", "no_detection_parse"}:
         return 0.0, "judge_unavailable", False
 
     if judge_status in {"semantic_abstain", "low_confidence_changed"}:

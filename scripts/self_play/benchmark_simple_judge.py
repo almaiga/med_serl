@@ -28,7 +28,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.self_play.utils import (  # noqa: E402
     parse_injector_compact,
     parse_numbered_sentences,
+    reconstruct_note,
     strip_thinking,
+)
+from scripts.self_play.judge_client import (  # noqa: E402
+    build_detection_messages,
+    load_medrect_prompt_config,
+    parse_detection_verdict,
 )
 
 
@@ -72,6 +78,16 @@ def parse_args() -> argparse.Namespace:
         "--judge-model",
         default=DEFAULT_JUDGE_MODEL,
         help="Model name or local model path for the judge.",
+    )
+    parser.add_argument(
+        "--judge-style",
+        choices=["qwen_pair", "medrect_native", "medrect_hint"],
+        default="qwen_pair",
+        help=(
+            "Judge prompting strategy. 'qwen_pair' = legacy Qwen JSON sentence-pair "
+            "judge; 'medrect_native' = MedRECT detection on the modified note; "
+            "'medrect_hint' = MedRECT detection + edit-context hint."
+        ),
     )
     parser.add_argument(
         "--device",
@@ -263,7 +279,12 @@ def build_messages(
     return messages
 
 
-def build_case(record: dict[str, Any], mode: str, prompt_cfg: dict[str, Any]) -> dict[str, Any]:
+def build_case(
+    record: dict[str, Any],
+    mode: str,
+    prompt_cfg: dict[str, Any],
+    judge_style: str = "qwen_pair",
+) -> dict[str, Any]:
     numbered_note = extract_numbered_note(str(record.get("user_prompt", "")))
     changed_sid = int(record.get("changed_sid") or record.get("error_sentence_id"))
     original_sentence = parse_numbered_sentences(numbered_note).get(changed_sid, "")
@@ -271,20 +292,36 @@ def build_case(record: dict[str, Any], mode: str, prompt_cfg: dict[str, Any]) ->
     note_id = str(record.get("sample_id", ""))
     error_type = str(record.get("error_type") or record.get("change_type") or "")
     expected_relation = "SAME" if mode == "benign" else "CHANGED"
+    modified_note = reconstruct_note(numbered_note, changed_sid, modified_sentence)
 
-    payload = {
-        "model": DEFAULT_JUDGE_MODEL,
-        "messages": build_messages(
-            prompt_cfg=prompt_cfg,
-            note_id=note_id,
-            error_type=error_type,
-            changed_sid=changed_sid,
-            original_sentence=original_sentence,
-            modified_sentence=modified_sentence,
-        ),
-        **prompt_cfg.get("sampling_params", {}),
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
+    if judge_style in ("medrect_native", "medrect_hint"):
+        medrect_cfg = load_medrect_prompt_config()
+        style = "native" if judge_style == "medrect_native" else "hint"
+        payload = {
+            "model": DEFAULT_JUDGE_MODEL,
+            "messages": build_detection_messages(
+                modified_note=modified_note,
+                changed_sid=changed_sid,
+                original_sentence=original_sentence,
+                modified_sentence=modified_sentence,
+                style=style,
+            ),
+            **medrect_cfg.get("sampling_params", {}),
+        }
+    else:
+        payload = {
+            "model": DEFAULT_JUDGE_MODEL,
+            "messages": build_messages(
+                prompt_cfg=prompt_cfg,
+                note_id=note_id,
+                error_type=error_type,
+                changed_sid=changed_sid,
+                original_sentence=original_sentence,
+                modified_sentence=modified_sentence,
+            ),
+            **prompt_cfg.get("sampling_params", {}),
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
 
     return {
         "note_id": note_id,
@@ -295,8 +332,10 @@ def build_case(record: dict[str, Any], mode: str, prompt_cfg: dict[str, Any]) ->
         "expected_sid": record.get("error_sentence_id"),
         "error_type": error_type,
         "original_note": numbered_note,
+        "modified_note": modified_note,
         "original_sentence": original_sentence,
         "modified_sentence": modified_sentence,
+        "judge_style": judge_style,
         "payload": payload,
     }
 
@@ -307,6 +346,7 @@ def sample_cases(
     prompt_cfg: dict[str, Any],
     samples: int,
     seed: int,
+    judge_style: str = "qwen_pair",
 ) -> list[dict[str, Any]]:
     if samples < 2:
         raise ValueError("--samples must be at least 2")
@@ -326,9 +366,12 @@ def sample_cases(
         )
 
     rng = random.Random(seed)
-    benign_cases = [build_case(row, "benign", prompt_cfg) for row in rng.sample(benign_rows, per_class)]
+    benign_cases = [
+        build_case(row, "benign", prompt_cfg, judge_style)
+        for row in rng.sample(benign_rows, per_class)
+    ]
     error_cases = [
-        build_case(row, "error_injection", prompt_cfg)
+        build_case(row, "error_injection", prompt_cfg, judge_style)
         for row in rng.sample(error_rows, per_class)
     ]
     mixed = benign_cases + error_cases
@@ -342,11 +385,12 @@ def find_case_by_sample_id(
     prompt_cfg: dict[str, Any],
     sample_id: str,
     sample_mode: str,
+    judge_style: str = "qwen_pair",
 ) -> dict[str, Any]:
     rows = benign_rows if sample_mode == "benign" else error_rows
     for row in rows:
         if str(row.get("sample_id", "")) == sample_id:
-            return build_case(row, sample_mode, prompt_cfg)
+            return build_case(row, sample_mode, prompt_cfg, judge_style)
     raise ValueError(f"sample_id not found in {sample_mode} file: {sample_id}")
 
 
@@ -418,23 +462,40 @@ async def run_case(
                     int(payload.get("max_tokens", 384)),
                 )
 
-        _, stripped = strip_thinking(content)
-        verdict_obj = extract_json_object(stripped) or extract_json_object(content) or {}
-        if verdict_obj:
-            verdict = str(verdict_obj.get("verdict", "ABSTAIN")).upper()
-            try:
-                score = float(verdict_obj.get("score", 0.0))
-            except (TypeError, ValueError):
-                score = 0.0
-            score = max(0.0, min(1.0, score))
-            judge_reason = str(verdict_obj.get("reason", ""))[:1000]
-            signed_judge_score = compute_signed_judge_score(verdict, score, case["expected_relation"])
+        if case.get("judge_style") in ("medrect_native", "medrect_hint"):
+            det = parse_detection_verdict(content, case.get("changed_sid"))
+            verdict = str(det["verdict"]).upper()
+            score = float(det["judge_score"])
+            judge_reason = str(det["reason"])[:1000]
+            signed_judge_score = compute_signed_judge_score(
+                verdict, score, case["expected_relation"]
+            )
             weighted_judge_score = judge_weight * signed_judge_score
             final_score = base_rule_score + weighted_judge_score
         else:
-            verdict = "ABSTAIN"
-            score = 0.0
-            judge_reason = "empty_output" if not content.strip() else "no_json_verdict"
+            _, stripped = strip_thinking(content)
+            verdict_obj = (
+                extract_json_object(stripped) or extract_json_object(content) or {}
+            )
+            if verdict_obj:
+                verdict = str(verdict_obj.get("verdict", "ABSTAIN")).upper()
+                try:
+                    score = float(verdict_obj.get("score", 0.0))
+                except (TypeError, ValueError):
+                    score = 0.0
+                score = max(0.0, min(1.0, score))
+                judge_reason = str(verdict_obj.get("reason", ""))[:1000]
+                signed_judge_score = compute_signed_judge_score(
+                    verdict, score, case["expected_relation"]
+                )
+                weighted_judge_score = judge_weight * signed_judge_score
+                final_score = base_rule_score + weighted_judge_score
+            else:
+                verdict = "ABSTAIN"
+                score = 0.0
+                judge_reason = (
+                    "empty_output" if not content.strip() else "no_json_verdict"
+                )
     except Exception as exc:
         error = str(exc)
         judge_reason = "request_failed"
@@ -595,6 +656,7 @@ def print_summary(
     judge_url: str,
     judge_model: str,
     timeout: float,
+    judge_style: str = "qwen_pair",
 ) -> None:
     latencies = sorted(r["latency_ms"] for r in results)
     matched = sum(1 for r in results if r["matched_expected"])
@@ -608,6 +670,7 @@ def print_summary(
 
     print("")
     print("=== Simple Judge Isolation Benchmark ===")
+    print(f"Judge style    : {judge_style}")
     print(f"Judge URL      : {judge_url}")
     print(f"Judge model    : {judge_model}")
     print(f"Judge timeout  : {timeout}s")
@@ -665,6 +728,7 @@ async def async_main(args: argparse.Namespace) -> int:
                 prompt_cfg=prompt_cfg,
                 sample_id=args.sample_id,
                 sample_mode=args.sample_mode,
+                judge_style=args.judge_style,
             )
         ]
     else:
@@ -674,10 +738,12 @@ async def async_main(args: argparse.Namespace) -> int:
             prompt_cfg=prompt_cfg,
             samples=args.samples,
             seed=args.seed,
+            judge_style=args.judge_style,
         )
 
     print("=== Simple Judge Isolation Setup ===")
     print(f"Prompt config  : {PROMPT_PATH}")
+    print(f"Judge style    : {args.judge_style}")
     print(f"Backend        : {args.backend}")
     print(f"Judge URL      : {args.judge_url}")
     print(f"Judge model    : {args.judge_model}")
@@ -783,6 +849,7 @@ async def async_main(args: argparse.Namespace) -> int:
         judge_url=args.judge_url,
         judge_model=args.judge_model,
         timeout=args.timeout,
+        judge_style=args.judge_style,
     )
 
     if args.output is not None:

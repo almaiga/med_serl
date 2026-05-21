@@ -1,0 +1,16 @@
+{
+  "description": "Judge prompts for using a MedRECT-style detection model (e.g. pfnet/Preferred-MedRECT-32B) as the self-play judge. The model runs error DETECTION on the modified note. Verdict mapping (done in judge_client.parse_detection_verdict): CORRECT -> SAME; flags the changed sentence -> CHANGED; flags a different sentence or unparseable -> ABSTAIN (neutral). System prompt mirrors configs/prompts/detection_localization_prompts.json so the FT model stays in-distribution (number-only output).",
+  "native": {
+    "system_prompt": "You are a medical expert reviewing clinical text for accuracy.\nThe text contains either no error or exactly one medical error.\nIdentify any medical error related to treatment, diagnosis, management, or causation.\n\nOutput Format:\n- If no error: 'CORRECT'\n- If error found: output only the sentence number (e.g. '7')\n\nCRITICAL: Output ONLY the result. Do NOT include explanations, analysis, or additional text.",
+    "user_template": "{modified_note}"
+  },
+  "hint": {
+    "system_prompt": "You are a medical expert reviewing clinical text for accuracy.\nThe text contains either no error or exactly one medical error.\nIdentify any medical error related to treatment, diagnosis, management, or causation.\n\nOutput Format:\n- If no error: 'CORRECT'\n- If error found: output only the sentence number (e.g. '7')\n\nCRITICAL: Output ONLY the result. Do NOT include explanations, analysis, or additional text.",
+    "user_template": "A reviewer edited sentence {changed_sid} of the note below.\nOriginal sentence {changed_sid}: {original_sentence}\nEdited sentence {changed_sid}: {modified_sentence}\n\nFull note (with the edit applied):\n{modified_note}"
+  },
+  "sampling_params": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "max_tokens": 64
+  }
+}

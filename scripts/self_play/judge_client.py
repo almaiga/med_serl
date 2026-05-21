@@ -16,12 +16,19 @@ from scripts.self_play.utils import normalized_edit_distance, strip_thinking
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "simple_judge_prompts.json"
+MEDRECT_PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "medrect_judge_prompts.json"
 JUDGE_URL = os.getenv("JUDGE_VLLM_URL", "")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "Qwen/Qwen3-8B")
+# "sentence_pair" = legacy Qwen JSON-verdict judge; "detection" = MedRECT-style
+# detector run on the modified note (CORRECT / sentence-number output).
+JUDGE_TYPE = os.getenv("JUDGE_TYPE", "sentence_pair")
+# Prompt style for the detection judge: "native" (note only) or "hint" (note + edit context).
+JUDGE_PROMPT_STYLE = os.getenv("JUDGE_PROMPT_STYLE", "native")
 JUDGE_TIMEOUT = float(os.getenv("SIMPLE_JUDGE_TIMEOUT", "60"))
 JUDGE_MAX_RETRIES = int(os.getenv("SIMPLE_JUDGE_MAX_RETRIES", "2"))
 
 _PROMPT_CACHE: Optional[dict] = None
+_MEDRECT_PROMPT_CACHE: Optional[dict] = None
 
 
 def load_prompt_config() -> dict:
@@ -30,6 +37,89 @@ def load_prompt_config() -> dict:
         with open(PROMPT_PATH, "r", encoding="utf-8") as f:
             _PROMPT_CACHE = json.load(f)
     return _PROMPT_CACHE
+
+
+def load_medrect_prompt_config() -> dict:
+    global _MEDRECT_PROMPT_CACHE
+    if _MEDRECT_PROMPT_CACHE is None:
+        with open(MEDRECT_PROMPT_PATH, "r", encoding="utf-8") as f:
+            _MEDRECT_PROMPT_CACHE = json.load(f)
+    return _MEDRECT_PROMPT_CACHE
+
+
+def build_detection_messages(
+    *,
+    modified_note: str,
+    changed_sid: Optional[int],
+    original_sentence: str = "",
+    modified_sentence: str = "",
+    style: Optional[str] = None,
+) -> list[dict]:
+    """Build messages for a MedRECT-style detection judge over the modified note."""
+    cfg = load_medrect_prompt_config()
+    style = style or JUDGE_PROMPT_STYLE
+    sub = cfg.get(style) or cfg["native"]
+    note = (modified_note or "")[:6000]
+    if "{original_sentence}" in sub["user_template"]:
+        user = sub["user_template"].format(
+            changed_sid=changed_sid,
+            original_sentence=(original_sentence or "")[:2000],
+            modified_sentence=(modified_sentence or "")[:2000],
+            modified_note=note,
+        )
+    else:
+        user = sub["user_template"].format(modified_note=note)
+    return [
+        {"role": "system", "content": sub["system_prompt"]},
+        {"role": "user", "content": user},
+    ]
+
+
+def parse_detection_verdict(content: str, changed_sid: Optional[int]) -> dict:
+    """Map a MedRECT detection output to a SAME/CHANGED/ABSTAIN judge verdict.
+
+    CORRECT                        -> SAME  (the edit introduced no detectable error)
+    flags the changed sentence     -> CHANGED
+    flags a different sentence / no parse -> ABSTAIN (neutral, ambiguous localization)
+    """
+    from scripts.self_play.utils import parse_assessor_answer
+
+    label, detected_sid = parse_assessor_answer(content or "")
+    if label == "CORRECT":
+        return {
+            "verdict": "SAME",
+            "status": "ok",
+            "judge_score": 1.0,
+            "reason": "detector reports no error",
+            "detected_sid": None,
+        }
+    if label == "ERROR":
+        if (
+            detected_sid is not None
+            and changed_sid is not None
+            and int(detected_sid) == int(changed_sid)
+        ):
+            return {
+                "verdict": "CHANGED",
+                "status": "ok",
+                "judge_score": 1.0,
+                "reason": f"detector flagged the changed sentence ({detected_sid})",
+                "detected_sid": detected_sid,
+            }
+        return {
+            "verdict": "ABSTAIN",
+            "status": "detected_other_sid",
+            "judge_score": 0.5,
+            "reason": f"detector flagged sentence {detected_sid}, not the changed sentence {changed_sid}",
+            "detected_sid": detected_sid,
+        }
+    return {
+        "verdict": "ABSTAIN",
+        "status": "no_detection_parse",
+        "judge_score": 0.0,
+        "reason": "detector output unparseable",
+        "detected_sid": None,
+    }
 
 
 def extract_json_object(text: str) -> Optional[dict]:
@@ -190,20 +280,34 @@ async def judge_sentence_pair(
     if norm_edit is None:
         norm_edit = normalized_edit_distance(original_sentence, modified_sentence)
 
-    prompt_cfg = load_prompt_config()
-    payload = {
-        "messages": build_judge_messages(
-            note_id=note_id,
-            error_type=error_type,
-            changed_sid=changed_sid,
-            original_sentence=original_sentence,
-            modified_sentence=modified_sentence,
-            norm_edit=norm_edit,
-            modified_note=modified_note,
-        ),
-        **prompt_cfg.get("sampling_params", {}),
-    }
-    payload["chat_template_kwargs"] = {"enable_thinking": False}
+    is_detection = JUDGE_TYPE == "detection"
+    if is_detection:
+        medrect_cfg = load_medrect_prompt_config()
+        payload = {
+            "messages": build_detection_messages(
+                modified_note=modified_note or "",
+                changed_sid=changed_sid,
+                original_sentence=original_sentence,
+                modified_sentence=modified_sentence,
+            ),
+            **medrect_cfg.get("sampling_params", {}),
+        }
+        # No enable_thinking: MedRECT detectors are non-thinking FT models.
+    else:
+        prompt_cfg = load_prompt_config()
+        payload = {
+            "messages": build_judge_messages(
+                note_id=note_id,
+                error_type=error_type,
+                changed_sid=changed_sid,
+                original_sentence=original_sentence,
+                modified_sentence=modified_sentence,
+                norm_edit=norm_edit,
+                modified_note=modified_note,
+            ),
+            **prompt_cfg.get("sampling_params", {}),
+        }
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
 
     target_url = reward_router_address or judge_url or JUDGE_URL
     if not target_url:
@@ -273,6 +377,12 @@ async def judge_sentence_pair(
             "reason": "bad_response_shape",
             "judge_output": "",
         }
+
+    if is_detection:
+        result_dict = parse_detection_verdict(content, changed_sid)
+        result_dict["norm_edit"] = float(norm_edit)
+        result_dict["judge_output"] = content[:2000]
+        return result_dict
 
     _, stripped = strip_thinking(content)
     verdict = extract_json_object(stripped) or extract_json_object(content)

@@ -1,17 +1,24 @@
 #!/bin/bash
-# Start vLLM OpenAI-compatible server for the current Qwen judge.
+# Start vLLM OpenAI-compatible server for the MedRECT detection judge.
 #
-# Run this on a SEPARATE RunPod instance (not the RL training pod).
+# Run this on a SEPARATE instance (not the RL training pod).
 # The training pod calls this server via JUDGE_VLLM_URL.
 #
 # Usage:
 #   bash scripts/self_play/start_judge_server.sh
 #
 # Env overrides:
-#   JUDGE_MODEL   — model to serve (default: Qwen/Qwen3-4B)
+#   JUDGE_MODEL   — model to serve (default: pfnet/Preferred-MedRECT-32B)
 #   JUDGE_PORT    — port to listen on (default: 8002)
-#   GPU_MEM_UTIL  — vLLM gpu_memory_utilization (default: 0.85)
+#   GPU_MEM_UTIL  — vLLM gpu_memory_utilization (default: 0.90; 32B bf16 ~65GB)
+#   MAX_MODEL_LEN — vLLM max context length (default: 4096)
 #   JUDGE_HOST    — explicit host or pod ID to advertise to the training pod
+#
+# IMPORTANT: to use the MedRECT detector as the judge, the TRAINING pod must set
+#   export JUDGE_TYPE=detection           # run MedRECT as a detector
+#   export JUDGE_PROMPT_STYLE=native      # or 'hint'
+#   export JUDGE_MODEL=pfnet/Preferred-MedRECT-32B
+# Leave JUDGE_TYPE unset (or 'sentence_pair') to use the legacy Qwen JSON judge.
 
 SCREEN_SESSION="${SCREEN_SESSION:-medserl_judge_server}"
 AUTO_SCREEN="${AUTO_SCREEN:-1}"
@@ -49,9 +56,10 @@ if [ "$AUTO_SCREEN" = "1" ] && [ -z "${STY:-}" ]; then
     exit 0
 fi
 
-JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
+JUDGE_MODEL="${JUDGE_MODEL:-pfnet/Preferred-MedRECT-32B}"
 JUDGE_PORT="${JUDGE_PORT:-8002}"
-GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 
 # Prefer a real RunPod pod identifier if the environment provides one.
 # Fallback to hostname, but warn because in some containers hostname is only
@@ -90,9 +98,9 @@ echo "=================================================="
 python3 -m vllm.entrypoints.openai.api_server \
     --model "$JUDGE_MODEL" \
     --port "$JUDGE_PORT" \
-    --tensor-parallel-size 1 \
+    --tensor-parallel-size "${TP_SIZE:-1}" \
     --gpu-memory-utilization "$GPU_MEM_UTIL" \
-    --max-model-len 4096 \
+    --max-model-len "$MAX_MODEL_LEN" \
     --dtype bfloat16 \
     --enable-prefix-caching \
     --served-model-name "$JUDGE_MODEL"
