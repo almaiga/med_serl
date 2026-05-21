@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.self_play.utils import (  # noqa: E402
+    normalized_edit_distance,
     parse_injector_compact,
     parse_numbered_sentences,
     reconstruct_note,
@@ -239,6 +240,9 @@ def build_messages(
 ) -> list[dict[str, str]]:
     messages = [{"role": "system", "content": prompt_cfg["system_prompt"]}]
     for ex in prompt_cfg.get("few_shot_examples", []):
+        ex_norm_edit = normalized_edit_distance(
+            ex["original_sentence"], ex["modified_sentence"]
+        )
         messages.append(
             {
                 "role": "user",
@@ -248,6 +252,7 @@ def build_messages(
                     changed_sid=ex.get("changed_sid", "?"),
                     original_sentence=ex["original_sentence"],
                     modified_sentence=ex["modified_sentence"],
+                    norm_edit=f"{ex_norm_edit:.2f}",
                 ),
             }
         )
@@ -264,6 +269,7 @@ def build_messages(
             }
         )
 
+    final_norm_edit = normalized_edit_distance(original_sentence, modified_sentence)
     messages.append(
         {
             "role": "user",
@@ -273,6 +279,7 @@ def build_messages(
                 changed_sid=changed_sid,
                 original_sentence=original_sentence[:2000],
                 modified_sentence=modified_sentence[:2000],
+                norm_edit=f"{final_norm_edit:.2f}",
             ),
         }
     )
