@@ -40,7 +40,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.self_play.utils import parse_assessor_answer, strip_thinking  # noqa: E402
 
 DEFAULT_PROMPT = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
-DEFAULT_DATA = PROJECT_ROOT / "medrect" / "data" / "medec" / "medec-test.json"
+DEFAULT_DATA = PROJECT_ROOT / "data_processed" / "judge_bench" / "medec_test.json"
 
 
 def render_prompt(tokenizer, messages, thinking: bool) -> str:
