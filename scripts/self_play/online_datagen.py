@@ -57,7 +57,8 @@ def _build_injector_prompt(pair: dict, injection_prompts: dict) -> list:
     import random
     from scripts.self_play.utils import number_sentences
 
-    sentences = number_sentences(pair["correct_note"])
+    # Prefer the canonical pre-numbered sentences (consistent with SFT/eval/live loop).
+    sentences = pair.get("correct_sentences") or number_sentences(pair["correct_note"])
     system_prompt = injection_prompts["system_prompt_incorrect"]
     user_template = injection_prompts["injector_error_template"]
 
@@ -174,10 +175,12 @@ def _build_assessor_example(
     injected_sentence_id: int,
     detection_prompts: dict,
 ) -> dict:
-    """Create an assessor training example from a live model injection."""
-    from scripts.self_play.utils import number_sentences
+    """Create an assessor training example from a live model injection.
 
-    numbered = number_sentences(injected_note)
+    `injected_note` is already a canonical numbered string (built via
+    reconstruct_note on the pair's canonical `sentences`), so use it as-is.
+    """
+    numbered = injected_note
     system_prompt = detection_prompts["system_prompt"]
     user_template = detection_prompts["user_template"]
     ground_truth = str(injected_sentence_id)
@@ -222,15 +225,19 @@ def _build_static_assessor_example(
     from scripts.self_play.utils import number_sentences, find_error_sentence_id
 
     if mode == "benign":
-        note_text = pair["correct_note"]
-        sentences = number_sentences(note_text)
+        # Canonical clean note sentences.
+        sentences = pair.get("correct_sentences") or number_sentences(pair["correct_note"])
         ground_truth = "CORRECT"
         error_sentence_id = None
     else:
+        # Canonical error note sentences + canonical error_sentence_id.
         note_text = pair.get("incorrect_note", pair["correct_note"])
-        sentences = number_sentences(note_text)
-        error_text = pair.get("error_sentence", "")
-        error_sentence_id = find_error_sentence_id(note_text, error_text)
+        sentences = pair.get("sentences") or number_sentences(note_text)
+        canonical_esid = pair.get("error_sentence_id")
+        error_sentence_id = (
+            canonical_esid if canonical_esid is not None
+            else find_error_sentence_id(note_text, pair.get("error_sentence", ""))
+        )
         ground_truth = str(error_sentence_id) if error_sentence_id else "INCORRECT"
 
     system_prompt = detection_prompts["system_prompt"]
@@ -339,8 +346,12 @@ def main():
     for idx, (pair, raw) in enumerate(zip(pairs, raw_outputs)):
         sid, modified_text = _parse_injector_output(raw)
         if sid is not None and modified_text:
-            # Live model injection → assessor example
-            injected_note = _reconstruct_note(pair["correct_note"], sid, modified_text)
+            # Live model injection → assessor example.
+            # Reconstruct on the canonical numbered sentences (consistent with the
+            # live agent loop, SFT and eval) instead of re-segmenting the raw note.
+            from scripts.self_play.utils import number_sentences, reconstruct_note
+            canonical = pair.get("correct_sentences") or number_sentences(pair["correct_note"])
+            injected_note = reconstruct_note(canonical, sid, modified_text)
             ex = _build_assessor_example(
                 pair, idx, injected_note, sid, detection_prompts
             )
