@@ -55,10 +55,22 @@ QWEN_PROMPT_PATH = PROJECT_ROOT / "configs" / "prompts" / "simple_judge_prompts.
 MEDRECT_PROMPT_PATH = PROJECT_ROOT / "configs" / "prompts" / "detection_localization_prompts.json"
 
 STYLE_DEFAULTS = {
-    "qwen_pair":      "Qwen/Qwen3-8B",
-    "medrect_native": "pfnet/Preferred-MedRECT-32B",
-    "medrect_hint":   "pfnet/Preferred-MedRECT-32B",
+    "qwen_pair":       "Qwen/Qwen3-8B",
+    "medrect_native":  "pfnet/Preferred-MedRECT-32B",
+    "medrect_hint":    "pfnet/Preferred-MedRECT-32B",
+    "medrect_hint_v2": "pfnet/Preferred-MedRECT-32B",
 }
+
+# Short tags for the results filename so model+style combos don't collide.
+MODEL_SHORT_TAGS = {
+    "Qwen/Qwen3-8B":                "qwen8b",
+    "Qwen/Qwen3-32B":               "qwen32b",
+    "pfnet/Preferred-MedRECT-32B":  "medrect32b",
+}
+
+
+def model_tag(m: str) -> str:
+    return MODEL_SHORT_TAGS.get(m, m.replace("/", "_").replace(":", "_"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,10 +148,45 @@ def build_medrect_hint_messages(probe: dict) -> list[dict]:
     ]
 
 
+def build_medrect_hint_v2_messages(probe: dict) -> list[dict]:
+    """Hint + explicit guidance that surface-only rewrites are NOT errors.
+
+    Targeted fix for the bucket-C over-flagging observed in v1 of the hint
+    prompt: MedRECT-32B was correctly identifying that sentence X was edited
+    and then ruling brand<->generic / abbreviation / exact-temporal swaps as
+    errors. We add a brief, exhaustive enumeration of what does NOT count as
+    a clinical error so the model's discrimination matches our reward.
+    """
+    cfg = json.load(open(MEDRECT_PROMPT_PATH, encoding="utf-8"))
+    sys_prompt = cfg["system_prompt"] + (
+        "\n\nIMPORTANT: surface-only edits that preserve clinical meaning "
+        "are NOT errors. Output CORRECT if the edit is one of:\n"
+        "- a medical abbreviation expansion or contraction "
+        "(e.g. MI <-> myocardial infarction, T2DM <-> type 2 diabetes mellitus)\n"
+        "- a brand-name <-> generic-name drug substitution "
+        "(e.g. Lipitor <-> atorvastatin, Glucophage <-> metformin)\n"
+        "- an exact temporal-unit conversion "
+        "(e.g. 1 week <-> 7 days, 1 year <-> 12 months)\n"
+        "- any other stylistic rewording with identical clinical meaning.\n"
+        "Only output a sentence number if the edit changes the clinical meaning."
+    )
+    user = (
+        f"A reviewer edited sentence {probe['changed_sid']} of the note below.\n"
+        f"Original sentence {probe['changed_sid']}: {probe['original_sentence']}\n"
+        f"Edited sentence {probe['changed_sid']}: {probe['modified_sentence']}\n\n"
+        f"Full note (with the edit applied):\n{probe['modified_note']}"
+    )
+    return [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": user},
+    ]
+
+
 PROMPT_BUILDERS = {
-    "qwen_pair":      build_qwen_pair_messages,
-    "medrect_native": build_medrect_native_messages,
-    "medrect_hint":   build_medrect_hint_messages,
+    "qwen_pair":       build_qwen_pair_messages,
+    "medrect_native":  build_medrect_native_messages,
+    "medrect_hint":    build_medrect_hint_messages,
+    "medrect_hint_v2": build_medrect_hint_v2_messages,
 }
 
 
@@ -207,9 +254,10 @@ def parse_medrect(raw: str, probe: dict) -> tuple[str, str]:
 
 
 PARSERS = {
-    "qwen_pair":      parse_qwen_pair,
-    "medrect_native": parse_medrect,
-    "medrect_hint":   parse_medrect,
+    "qwen_pair":       parse_qwen_pair,
+    "medrect_native":  parse_medrect,
+    "medrect_hint":    parse_medrect,
+    "medrect_hint_v2": parse_medrect,
 }
 
 
@@ -248,7 +296,9 @@ def main() -> int:
     args = ap.parse_args()
 
     model = args.model or STYLE_DEFAULTS[args.style]
-    out_path = args.out or (PROJECT_ROOT / "results" / "exp2" / f"{args.style}.jsonl")
+    out_path = args.out or (
+        PROJECT_ROOT / "results" / "exp2" / f"{args.style}__{model_tag(model)}.jsonl"
+    )
     thinking = args.thinking
 
     probes_all = [json.loads(l) for l in open(args.probes, encoding="utf-8") if l.strip()]
