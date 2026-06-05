@@ -249,7 +249,7 @@ def main() -> int:
 
     model = args.model or STYLE_DEFAULTS[args.style]
     out_path = args.out or (PROJECT_ROOT / "results" / "exp2" / f"{args.style}.jsonl")
-    thinking = not args.no_thinking
+    thinking = args.thinking
 
     probes_all = [json.loads(l) for l in open(args.probes, encoding="utf-8") if l.strip()]
     probes_by_bucket: dict[str, list[dict]] = defaultdict(list)
