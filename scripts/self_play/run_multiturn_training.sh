@@ -79,7 +79,9 @@ SEED_AGENT_NAME="${SEED_AGENT_NAME:-medserl_selfplay_agent}"
 TRAIN_INPUT_JSONL="${TRAIN_INPUT_JSONL:-}"
 VAL_INPUT_JSONL="${VAL_INPUT_JSONL:-}"
 
-export JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
+export JUDGE_MODEL="${JUDGE_MODEL:-pfnet/Preferred-MedRECT-32B}"
+export JUDGE_TYPE="${JUDGE_TYPE:-detection}"
+export JUDGE_PROMPT_STYLE="${JUDGE_PROMPT_STYLE:-hint_v2}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
 export VLLM_USE_V1="${VLLM_USE_V1:-1}"
 
@@ -194,6 +196,8 @@ echo "Resume mode: $RESUME_MODE"
 echo "W&B: $WANDB"
 echo "Logger: $TRAINER_LOGGER"
 echo "Judge URL: ${JUDGE_VLLM_URL:-<disabled>}"
+echo "Judge model: $JUDGE_MODEL"
+echo "Judge type: $JUDGE_TYPE   (prompt style: $JUDGE_PROMPT_STYLE)"
 echo "Require judge: $REQUIRE_JUDGE"
 echo "Game log: $MEDSERL_GAME_LOG"
 echo "=================================================="
@@ -467,6 +471,8 @@ python3 -m verl.trainer.main_ppo \
     "++ray_kwargs.runtime_env.env_vars.HYDRA_FULL_ERROR=1" \
     "++ray_kwargs.runtime_env.env_vars.VLLM_USE_V1=$VLLM_USE_V1" \
     "++ray_kwargs.runtime_env.env_vars.JUDGE_MODEL='$JUDGE_MODEL'" \
+    "++ray_kwargs.runtime_env.env_vars.JUDGE_TYPE='$JUDGE_TYPE'" \
+    "++ray_kwargs.runtime_env.env_vars.JUDGE_PROMPT_STYLE='$JUDGE_PROMPT_STYLE'" \
     "++ray_kwargs.runtime_env.env_vars.SIMPLE_JUDGE_WEIGHT=$SIMPLE_JUDGE_WEIGHT" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_GAME_LOG='$MEDSERL_GAME_LOG'" \
     "++ray_kwargs.runtime_env.env_vars.MEDSERL_ASSESSOR_MAX_NEW_TOKENS=$ASSESSOR_MAX_NEW_TOKENS" \
