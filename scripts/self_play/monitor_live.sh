@@ -1,24 +1,17 @@
 #!/usr/bin/env bash
 # monitor_live.sh
 #
-# Live snapshot of the running self-play. Reads the most recent game-log JSONL
-# (written by medical_game_interaction.py) and the most recent judge-trace
-# JSONL (written by simple_judge_reward.py), prints:
-#
-#   1. game counts (total, by mode, by outcome)
-#   2. reward trend: early window vs recent window vs latest
-#   3. judge verdict distribution per mode
-#   4. judge status mix (ok / parse failures / etc.)
-#   5. per-mode reward stats (assessor and injector)
-#   6. who's winning: distribution of (assessor_reward, injector_reward)
-#   7. K most recent full game examples (mode, edit, judge verdict, response, rewards)
+# Live snapshot of the running self-play. Uses the same field names that
+# plot_training_dynamics.py / analyze_training.py / analyze_judge_traces.py
+# already know about — judge_verdict, judge_status, assessor_outcome,
+# assessor_reward, injector_reward, injector_outcome, phase, etc.
 #
 # Usage:
-#   bash scripts/self_play/monitor_live.sh                       # default 5 examples
-#   bash scripts/self_play/monitor_live.sh /workspace/runs/v6    # custom log dir
-#   K=10 bash scripts/self_play/monitor_live.sh                  # show 10 examples
+#   bash scripts/self_play/monitor_live.sh                                 # default log dir
+#   bash scripts/self_play/monitor_live.sh /workspace/runs/v6/logs         # custom
+#   K=10 bash scripts/self_play/monitor_live.sh                            # show 10 examples
 #
-# Exit codes: 0 if logs found and parsed, 1 otherwise.
+# Exit 0 if logs found and parsed, 1 otherwise.
 
 set -uo pipefail
 
@@ -30,100 +23,115 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
-# If MEDSERL_GAME_LOG points to a specific file, use its dir.
 if [[ -n "${MEDSERL_GAME_LOG:-}" && -f "${MEDSERL_GAME_LOG}" ]]; then
-    GAME_LOG="${MEDSERL_GAME_LOG}"
-    LOG_DIR=$(dirname "${MEDSERL_GAME_LOG}")
+    LOG="${MEDSERL_GAME_LOG}"
 else
-    # Most recent game_*.jsonl in LOG_DIR. The agent loop writes these.
-    GAME_LOG=$(ls -t "${LOG_DIR}"/game_*.jsonl 2>/dev/null | head -n1 || true)
-    if [[ -z "${GAME_LOG:-}" ]]; then
-        GAME_LOG=$(ls -t "${LOG_DIR}"/{interactions,smoke}_*.jsonl 2>/dev/null | head -n1 || true)
+    LOG=$(ls -t "${LOG_DIR}"/game_*.jsonl 2>/dev/null | head -n1 || true)
+    if [[ -z "${LOG:-}" ]]; then
+        LOG=$(ls -t "${LOG_DIR}"/{interactions,smoke}_*.jsonl 2>/dev/null | head -n1 || true)
     fi
 fi
-JUDGE_LOG=$(ls -t "${LOG_DIR}"/*judge*trace*.jsonl 2>/dev/null | head -n1 || true)
 
 echo "=========================================================="
 echo " self-play live monitor"
-echo "   game log  : ${GAME_LOG:-<none>}"
-echo "   judge log : ${JUDGE_LOG:-<none>}"
+echo "   log : ${LOG:-<none>}"
 echo "=========================================================="
 
-if [[ -z "${GAME_LOG:-}" ]]; then
-    echo "no game log found under ${LOG_DIR}; check MEDSERL_GAME_LOG env or pass path"
+if [[ -z "${LOG:-}" ]]; then
+    echo "no log found under ${LOG_DIR}"
     exit 1
 fi
 
-N=$(wc -l < "$GAME_LOG" | tr -d ' ')
-echo "Total games logged: $N"
-if [[ "$N" -eq 0 ]]; then
-    echo "(empty log)"
+N_ALL=$(wc -l < "$LOG" | tr -d ' ')
+N_COMPLETE=$(jq -c 'select(.phase == "game_complete")' "$LOG" 2>/dev/null | wc -l | tr -d ' ')
+echo "Total records       : $N_ALL"
+echo "phase=game_complete : $N_COMPLETE   <-- the rows the reward fields use"
+
+if [[ "$N_ALL" -eq 0 ]]; then
     exit 0
 fi
 
-# ─── 1. games by mode + outcome ─────────────────────────────────────────────
+# ─── games by mode (count completed games only) ─────────────────────────────
 echo
-echo "--- games by mode ---"
-jq -r '.mode // "?"' "$GAME_LOG" | sort | uniq -c | sort -rn | sed 's/^/  /'
+echo "--- games by mode (phase=game_complete) ---"
+jq -r 'select(.phase=="game_complete") | .mode // "?"' "$LOG" | sort | uniq -c | sort -rn | sed 's/^/  /'
 
+# ─── judge verdict per mode ─────────────────────────────────────────────────
 echo
-echo "--- games by outcome ---"
-jq -r '.outcome // "?"' "$GAME_LOG" | sort | uniq -c | sort -rn | sed 's/^/  /'
-
-# ─── 2. reward trend: early vs recent ───────────────────────────────────────
-echo
-echo "--- assessor reward trend (mean) ---"
-EARLY_N=$(( N < 100 ? N / 4 + 1 : 100 ))
-RECENT_N=$(( N < 100 ? N / 4 + 1 : 100 ))
-{
-    echo -n "  early ${EARLY_N} : "
-    head -n "$EARLY_N"  "$GAME_LOG" | jq -r '.reward // empty' | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
-    echo -n "  recent ${RECENT_N}: "
-    tail -n "$RECENT_N" "$GAME_LOG" | jq -r '.reward // empty' | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
-    echo -n "  overall    : "
-    jq -r '.reward // empty' "$GAME_LOG"            | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
-} 2>/dev/null
-
-# ─── 3 & 4. judge verdict + status mix ──────────────────────────────────────
-if [[ -n "${JUDGE_LOG:-}" ]]; then
-    JN=$(wc -l < "$JUDGE_LOG" | tr -d ' ')
-    echo
-    echo "--- judge verdict per mode (from $JN judge calls) ---"
-    jq -r '[.mode // "?", .judge_verdict // "?"] | @tsv' "$JUDGE_LOG" \
-        | sort | uniq -c | sort -rn | sed 's/^/  /'
-    # Special focus: SAME rate on error_injection (the v5 failure cell)
-    ERR_TOT=$(jq -c 'select((.mode // "")=="error_injection")' "$JUDGE_LOG" | wc -l | tr -d ' ')
-    ERR_SAME=$(jq -c 'select((.mode // "")=="error_injection" and (.judge_verdict // "")=="SAME")' "$JUDGE_LOG" | wc -l | tr -d ' ')
-    if [[ "$ERR_TOT" -gt 0 ]]; then
-        PCT=$(awk -v s="$ERR_SAME" -v t="$ERR_TOT" 'BEGIN{printf "%.1f", 100*s/t}')
-        echo "  >> judge SAME on error_injection = ${ERR_SAME}/${ERR_TOT} = ${PCT}%   (v5: 27%; want < 5%)"
-    fi
-else
-    echo
-    echo "(no judge trace log found — skipping verdict mix)"
+echo "--- judge verdict per mode ---"
+jq -r 'select(.judge_verdict) | [.mode // "?", .judge_verdict] | @tsv' "$LOG" \
+    | sort | uniq -c | sort -rn | sed 's/^/  /'
+# v5 watchdog cell
+ERR_TOT=$(jq -c 'select(.judge_verdict and (.mode // "")=="error_injection")' "$LOG" | wc -l | tr -d ' ')
+ERR_SAME=$(jq -c 'select((.mode // "")=="error_injection" and (.judge_verdict // "")=="SAME")' "$LOG" | wc -l | tr -d ' ')
+if [[ "$ERR_TOT" -gt 0 ]]; then
+    PCT=$(awk -v s="$ERR_SAME" -v t="$ERR_TOT" 'BEGIN{printf "%.1f", 100*s/t}')
+    echo "  >> judge SAME on error_injection = ${ERR_SAME}/${ERR_TOT} = ${PCT}%   (v5: 27%; want < 5%)"
 fi
 
-# ─── 5. per-mode reward stats ───────────────────────────────────────────────
+# ─── judge status mix ───────────────────────────────────────────────────────
 echo
-echo "--- per-mode reward (mean) — assessor side ---"
-for MODE in error_injection benign; do
-    MEAN=$(jq -r "select(.mode==\"${MODE}\") | .reward // empty" "$GAME_LOG" \
-        | awk '{s+=$1;n++} END{if(n)printf "%.3f (n=%d)",s/n,n; else print "no games"}')
-    echo "  ${MODE}: ${MEAN}"
-done
+echo "--- judge_status mix ---"
+jq -r 'select(.judge_status) | .judge_status' "$LOG" | sort | uniq -c | sort -rn | sed 's/^/  /'
+
+# ─── assessor outcome distribution ──────────────────────────────────────────
+echo
+echo "--- assessor outcome (phase=game_complete) ---"
+jq -r 'select(.phase=="game_complete") | (.assessor_outcome // .outcome // "?")' "$LOG" \
+    | sort | uniq -c | sort -rn | sed 's/^/  /'
+
+# ─── injector outcome distribution ──────────────────────────────────────────
+echo
+echo "--- injector outcome ---"
+jq -r '.injector_outcome // "?"' "$LOG" | sort | uniq -c | sort -rn | sed 's/^/  /'
+
+# ─── reward trend (assessor) — early vs recent vs overall ───────────────────
+echo
+echo "--- assessor_reward trend (mean over phase=game_complete) ---"
+EARLY=$(( N_COMPLETE < 100 ? N_COMPLETE / 4 + 1 : 100 ))
+RECENT=$(( N_COMPLETE < 100 ? N_COMPLETE / 4 + 1 : 100 ))
+COMPLETE_ROWS=$(jq -c 'select(.phase=="game_complete")' "$LOG")
+{
+    echo -n "  early  ${EARLY}: "
+    echo "$COMPLETE_ROWS" | head -n "$EARLY"  | jq -r '(.assessor_reward // .reward // empty)' \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
+    echo -n "  recent ${RECENT}: "
+    echo "$COMPLETE_ROWS" | tail -n "$RECENT" | jq -r '(.assessor_reward // .reward // empty)' \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
+    echo -n "  overall   : "
+    echo "$COMPLETE_ROWS" | jq -r '(.assessor_reward // .reward // empty)' \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
+}
 
 echo
-echo "--- per-mode reward (mean) — injector side (if logged) ---"
+echo "--- injector_reward trend (mean over ALL records) ---"
+{
+    echo -n "  early  ${EARLY}: "
+    head -n "$EARLY"  "$LOG" | jq -r '(.injector_reward // empty)' \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
+    echo -n "  recent ${RECENT}: "
+    tail -n "$RECENT" "$LOG" | jq -r '(.injector_reward // empty)' \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
+    echo -n "  overall   : "
+    jq -r '(.injector_reward // empty)' "$LOG" \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f  (n=%d)\n",s/n,n; else print "no data"}'
+}
+
+# ─── per-mode reward stats ──────────────────────────────────────────────────
+echo
+echo "--- per-mode mean rewards ---"
 for MODE in error_injection benign; do
-    MEAN=$(jq -r "select(.mode==\"${MODE}\") | .injector_reward // empty" "$GAME_LOG" \
-        | awk '{s+=$1;n++} END{if(n)printf "%.3f (n=%d)",s/n,n; else print "no games"}')
-    echo "  ${MODE}: ${MEAN}"
+    A=$(echo "$COMPLETE_ROWS" | jq -r "select(.mode==\"${MODE}\") | (.assessor_reward // .reward // empty)" \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f (n=%d)",s/n,n; else print "no data"}')
+    I=$(jq -r "select(.mode==\"${MODE}\") | .injector_reward // empty" "$LOG" \
+        | awk '{s+=$1;n++} END{if(n)printf "%.3f (n=%d)",s/n,n; else print "no data"}')
+    echo "  ${MODE}:   assessor=${A}   injector=${I}"
 done
 
-# ─── 6. who is winning — assessor reward sign distribution ──────────────────
+# ─── who's winning ──────────────────────────────────────────────────────────
 echo
-echo "--- who's winning — assessor reward sign (overall) ---"
-jq -r '.reward // empty' "$GAME_LOG" | awk '
+echo "--- assessor reward sign (phase=game_complete) ---"
+echo "$COMPLETE_ROWS" | jq -r '(.assessor_reward // .reward // empty)' | awk '
 BEGIN{pos=0;zer=0;neg=0;n=0}
 {n++; if($1>0.001)pos++; else if($1<-0.001)neg++; else zer++}
 END{
@@ -133,19 +141,19 @@ END{
     printf "  negative : %4d  (%5.1f%%)\n", neg, 100*neg/n
 }'
 
-# ─── 7. K recent game examples ─────────────────────────────────────────────
+# ─── K most recent complete games ───────────────────────────────────────────
 echo
-echo "--- ${K} most recent games (full context) ---"
-tail -n "$K" "$GAME_LOG" | jq -r --arg JL "${JUDGE_LOG:-}" '
+echo "--- ${K} most recent complete games ---"
+echo "$COMPLETE_ROWS" | tail -n "$K" | jq -r '
   . as $g
   | "----------------------------------------------------------------"
     + "\n  note=\($g.note_id // "?")  mode=\($g.mode // "?")  type=\($g.error_type // "?")"
-    + "\n  ground_truth   : \($g.ground_truth // "?")"
+    + "\n  judge verdict  : \($g.judge_verdict // "?")  status=\($g.judge_status // "?")"
     + "\n  injector edit  : \(($g.modified_sentences // "")[0:160] | gsub("\n";" "))"
-    + "\n  assessor label : \($g.assessor_label // "?")  sid=\($g.assessor_pred_sid // "?")  valid_fmt=\($g.has_valid_format // "?")"
-    + "\n  outcome        : \($g.outcome // "?")"
-    + "\n  reward (assess): \($g.reward // "?")"
-    + "\n  reward (inject): \($g.injector_reward // "?")  retroactive=\($g.injector_retroactive_reward // "?")"'
+    + "\n  assessor label : \($g.assessor_label // "?")  sid=\($g.assessor_pred_sid // "?")"
+    + "\n  assessor outcome: \($g.assessor_outcome // $g.outcome // "?")"
+    + "\n  reward (assess): \($g.assessor_reward // $g.reward // "?")"
+    + "\n  reward (inject): \($g.injector_reward // "?")   inj_outcome=\($g.injector_outcome // "?")"'
 echo "----------------------------------------------------------------"
 echo
 echo "(re-run any time: bash scripts/self_play/monitor_live.sh)"
