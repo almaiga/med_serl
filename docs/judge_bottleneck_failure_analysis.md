@@ -42,7 +42,7 @@ The two runs we are comparing share the same SFT init, the same data splits, and
 | Model | F1 | Recall | Sentence acc. |
 |---|---|---|---|
 | Base Qwen3-4B (zero-shot) | 0.675 | 0.811 | 0.554 |
-| New SFT (R1 chains) | 0.593 | 0.543 | 0.453 |
+| New SFT v2 (R1 chains, retrained for v6 launch) | 0.540 | 0.459 | 0.402 |
 | **r2** (April, "broken-data" self-play) | **0.700** | **0.878** | **0.739** |
 | **v5** (May, "fixed" self-play) | 0.498 | — | — |
 
