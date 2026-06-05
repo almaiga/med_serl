@@ -23,17 +23,23 @@
 set -uo pipefail
 
 K="${K:-5}"
-LOG_DIR="${1:-scripts/self_play/logs}"
+LOG_DIR="${1:-results/self_play/interactions}"
 
 if ! command -v jq >/dev/null 2>&1; then
-    echo "ERROR: jq required" >&2
+    echo "ERROR: jq required (apt-get install -y jq)" >&2
     exit 1
 fi
 
-GAME_LOG=$(ls -t "${LOG_DIR}"/game_*.jsonl 2>/dev/null | head -n1 || true)
-if [[ -z "${GAME_LOG:-}" ]]; then
-    # Fallback to common alternative names
-    GAME_LOG=$(ls -t "${LOG_DIR}"/{interactions,smoke}_*.jsonl 2>/dev/null | head -n1 || true)
+# If MEDSERL_GAME_LOG points to a specific file, use its dir.
+if [[ -n "${MEDSERL_GAME_LOG:-}" && -f "${MEDSERL_GAME_LOG}" ]]; then
+    GAME_LOG="${MEDSERL_GAME_LOG}"
+    LOG_DIR=$(dirname "${MEDSERL_GAME_LOG}")
+else
+    # Most recent game_*.jsonl in LOG_DIR. The agent loop writes these.
+    GAME_LOG=$(ls -t "${LOG_DIR}"/game_*.jsonl 2>/dev/null | head -n1 || true)
+    if [[ -z "${GAME_LOG:-}" ]]; then
+        GAME_LOG=$(ls -t "${LOG_DIR}"/{interactions,smoke}_*.jsonl 2>/dev/null | head -n1 || true)
+    fi
 fi
 JUDGE_LOG=$(ls -t "${LOG_DIR}"/*judge*trace*.jsonl 2>/dev/null | head -n1 || true)
 
