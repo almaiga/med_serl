@@ -292,7 +292,10 @@ async def judge_sentence_pair(
             ),
             **medrect_cfg.get("sampling_params", {}),
         }
-        # No enable_thinking: MedRECT detectors are non-thinking FT models.
+        # MedRECT-32B is Qwen3-based (see Exp 1 / failure-analysis §10);
+        # thinking is enabled by default and would eat the entire token
+        # budget. Force it off so the model emits "CORRECT" or "<sid>".
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     else:
         prompt_cfg = load_prompt_config()
         payload = {
