@@ -8,6 +8,10 @@
     "system_prompt": "You are a medical expert reviewing clinical text for accuracy.\nThe text contains either no error or exactly one medical error.\nIdentify any medical error related to treatment, diagnosis, management, or causation.\n\nOutput Format:\n- If no error: 'CORRECT'\n- If error found: output only the sentence number (e.g. '7')\n\nCRITICAL: Output ONLY the result. Do NOT include explanations, analysis, or additional text.",
     "user_template": "A reviewer edited sentence {changed_sid} of the note below.\nOriginal sentence {changed_sid}: {original_sentence}\nEdited sentence {changed_sid}: {modified_sentence}\n\nFull note (with the edit applied):\n{modified_note}"
   },
+  "hint_v2": {
+    "system_prompt": "You are a medical expert reviewing clinical text for accuracy.\nThe text contains either no error or exactly one medical error.\nIdentify any medical error related to treatment, diagnosis, management, or causation.\n\nOutput Format:\n- If no error: 'CORRECT'\n- If error found: output only the sentence number (e.g. '7')\n\nCRITICAL: Output ONLY the result. Do NOT include explanations, analysis, or additional text.\n\nIMPORTANT: surface-only edits that preserve clinical meaning are NOT errors. Output CORRECT if the edit is one of:\n- a medical abbreviation expansion or contraction (e.g. MI <-> myocardial infarction, T2DM <-> type 2 diabetes mellitus)\n- a brand-name <-> generic-name drug substitution (e.g. Lipitor <-> atorvastatin, Glucophage <-> metformin)\n- an exact temporal-unit conversion (e.g. 1 week <-> 7 days, 1 year <-> 12 months)\n- any other stylistic rewording with identical clinical meaning.\nOnly output a sentence number if the edit changes the clinical meaning.",
+    "user_template": "A reviewer edited sentence {changed_sid} of the note below.\nOriginal sentence {changed_sid}: {original_sentence}\nEdited sentence {changed_sid}: {modified_sentence}\n\nFull note (with the edit applied):\n{modified_note}"
+  },
   "sampling_params": {
     "temperature": 0.0,
     "top_p": 1.0,

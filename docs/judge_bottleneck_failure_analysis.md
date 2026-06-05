@@ -79,6 +79,14 @@ The reason we know the diagnosis is wrong is **r2**. r2 was trained with exactly
 
 In other words: the +0.2 EV trap is real, but it is not the binding constraint. Something else gates the policy that the reward retune did not address.
 
+A second problem with the §3 calc — discovered only at pre-flight time after we had
+the verdict distributions from §5 and Exp 1 — is that the math implicitly assumed
+the judge agrees with reality 100 % of the time. Under that assumption v5's retuned
+constants give `EV(always-CORRECT) = -0.05`, formally negative. Under the *actual*
+Qwen3-8B verdict distribution (27 % free-reward for missing real errors), v5's
+constants still give `EV(always-CORRECT) ≈ +0.23` — i.e. the trap stayed open after
+the retune anyway. We document the full calculation in §11.
+
 ---
 
 ## 4. The real mechanism: a judge-inverted reward
@@ -278,6 +286,177 @@ The decision rule from §8 was: MedRECT must dominate Qwen3-8B on A + B + D **wi
 
 ---
 
-## 10. Updated lesson, in two sentences
+## 10. Exp 1: held-out real MEDEC errors
 
-> In an adversarial self-play game with a frozen judge, the judge's calibration on the held-out distribution is the binding constraint, and both directions of judge bias (recall collapse and precision over-flag) are addressable by judge replacement and prompt design — not by reward shaping. Before tuning the reward, scale or replace the judge, then verify with a controlled probe set that the new judge has not simply moved the bias from one direction to the other.
+The Exp 2 probe set used deterministic, hand-constructed analog swaps to *test*
+the binding-constraint failure mode in isolation. Exp 1 evaluates the chosen
+judge configuration (`medrect_hint_v2 @ MedRECT-32B`, thinking off) on the
+311 real MEDEC ms-test records with `error_flag = 1` — the genuine subtle
+errors a held-out clinical reviewer wrote, on notes MedRECT has never seen.
+
+| Metric | Value | v5 (Qwen3-8B) reference |
+|---|---:|---|
+| Real held-out errors evaluated | 311 | — |
+| Recall (judge ruled CHANGED) | **99.7 % (310/311)** | ≈ 73 % |
+| Miss rate (judge ruled SAME) | **0.0 % (0/311)** | **27 %** |
+| Off-target (ABSTAIN) | 0.3 % (1/311) | — |
+
+Per MEDEC error type (uniform recall — no error class is systematically
+mishandled):
+
+| Error type | Recall |
+|---|---:|
+| management     | 97/97 = 100 % |
+| treatment      | 51/51 = 100 % |
+| pharmacotherapy | 36/36 = 100 % |
+| causalOrganism | 11/11 = 100 % |
+| diagnosis      | 115/116 = 99 % |
+
+The single off-target case (`ms-test-55`, diagnosis: `schizoid personality
+disorder` → `social anxiety disorder`) is a localisation miss, not a recall
+miss: the judge correctly detected an error and returned a sentence id, but
+flagged a different sentence than the hint indicated. Under
+`compute_injector_game_reward`, this maps to `judge_unavailable` → zero reward
+for both players → a neutralised game rather than a reward-hack failure.
+
+**Effective reward-hack rate on real held-out errors: 0 %.**
+
+The v5 binding constraint (27 % of injected errors mislabelled SAME by the
+Qwen3-8B judge, which then penalised the assessor 489 times for correctly
+catching real errors and rewarded it 185 times for missing them; see §5.2)
+no longer applies under the chosen judge configuration. Exp 2 had already
+shown this on hand-constructed probes; Exp 1 confirms it on the same
+distribution the self-play reward is evaluated against.
+
+## 11. Pre-flight Check 1 — reward EV under measured judge calibration
+
+Before committing GPU-days to a new self-play run, we recomputed the assessor's
+expected per-game reward by plugging the verdict distributions measured in
+production (§5 for the Qwen3-8B baseline; Exp 1 for the chosen judge on real
+errors; Exp 2 Bucket C for the chosen judge on benign synonym edits) into the
+reward formula in `compute_assessor_game_reward`. The script is
+`scripts/self_play/reward_ev_check.py`; it is deterministic and reproducible.
+
+We compare two reward recipes — `r2`: (PARTIAL = +0.3, MISS = −1.0); `v5`:
+(PARTIAL = +0.5, MISS = −1.5) — under two judges:
+
+- **broken** (Qwen3-8B, v5 logs): `error → CHANGED 0.546, SAME 0.273,
+  ABSTAIN 0.182`; `benign → CHANGED 0.116, SAME 0.823, ABSTAIN 0.061`.
+- **calibrated** (MedRECT-32B + hint_v2, Exp 1 + Exp 2): `error → CHANGED 0.997,
+  SAME 0.000, ABSTAIN 0.003`; `benign → CHANGED 0.233, SAME 0.767, ABSTAIN 0.000`.
+
+The headline metric is the per-game EV gap between a *perfect discriminator*
+(flags every real error at the right sentence id, never flags benign edits)
+and the *always-CORRECT* policy. A positive gap means the reward gradient
+points at the right policy; a wider gap means a stronger signal.
+
+| Judge | Recipe | EV(perfect) | EV(always-CORRECT) | gap |
+|---|---|---:|---:|---:|
+| Qwen3-8B (broken) | r2 | +0.666 | **+0.393** | +0.273 |
+| Qwen3-8B (broken) | v5 | +0.569 | **+0.227** | +0.341 |
+| MedRECT-32B + hint_v2 | r2 | +0.965 | −0.032 | +0.997 |
+| MedRECT-32B + hint_v2 | v5 | +0.907 | **−0.339** | **+1.246** |
+
+(EV ceiling — perfect judge + perfect policy under either recipe — is +1.200
+per game. The MedRECT-32B + hint_v2 + v5 perfect-policy EV of +0.907 is
++0.293 below this ceiling; that gap is the residual reward-hack surface
+attributable to the new judge's 23 % over-flag rate on synonym-class
+benigns, and is the upper bound on remaining bias under the chosen judge.)
+
+### Three findings from Check 1
+
+**1. v5's reward retune did *not* close the EV trap under the broken judge.**
+The §3 calc assumed the judge agrees with reality. The actual Qwen3-8B
+distribution rewards the assessor 27 % of error games for saying CORRECT (the
+"judge missed it, you agree, take +1.2") and rewards it on 82 % of benign games
+for the same answer. The net `EV(always-CORRECT)` under v5 reward + broken
+judge is **+0.227** — the conservatism trap stayed open after the steepening,
+which is why v5 still slid into "always-CORRECT" despite the retune.
+
+**2. Under the calibrated judge, v5's reward gives a 25 % wider gradient than
+r2's.** Gap under MedRECT-32B + hint_v2: r2 = +0.997, v5 = **+1.246**. The
+steeper MISS now penalises only genuine false-negatives/positives (because the
+judge's CHANGED matches reality almost perfectly), while the larger PARTIAL
+sub-reward keeps the right strategy's EV high. **The v5 reward retune, which
+backfired under the broken judge, is the correct choice under the calibrated
+judge.**
+
+**3. The judge is the dominant intervention; the reward retune is a refinement
+on top of it.** Even with r2's *old* constants, swapping Qwen3-8B for
+MedRECT-32B + hint_v2 closes the trap (`EV(always-CORRECT)` drops from +0.393
+to −0.032). v5's reward then sharpens an already-correct gradient by another
+25 %. This separates the two interventions cleanly: the judge fixes the sign of
+the gradient, the reward fixes its magnitude.
+
+### Implication for the run
+
+This is the empirical pre-flight that the combination `{v5 reward + calibrated
+judge + clean SFT}` has the right per-game incentive structure before we
+commit the compute. The full RL run still has to answer the two open questions
+the math cannot:
+
+- Does KL = 0.01 anchored to the R1-chains SFT (recall 0.543) cap the policy
+  below the base model's zero-shot recall of 0.811?
+- Does the actual injector-generated edit distribution match the verdict
+  statistics measured on Exp 1's real errors and Exp 2's hand-crafted
+  benigns?
+
+The first is unavoidable by experiment; the second can be answered cheaply by
+a smoke run with log inspection before the full run.
+
+## 12. Conclusions
+
+1. The judge's calibration on the held-out distribution is the binding
+   constraint on test-time policy quality in adversarial self-play with a
+   frozen judge. Both reward-shaping interventions in v5 (steeper symmetric
+   `REWARD_MISS`, 10× KL anchor) acted downstream of this constraint and
+   amplified rather than fixed the underlying failure.
+2. Two judge interventions independently lift the constraint:
+   - **Scale alone:** Qwen3-8B → Qwen3-32B at the same JSON sentence-pair
+     prompt lifts probe-set accuracy from 43 % to 87 %.
+   - **Targeted swap:** MedRECT-32B with a reframed detection prompt + an
+     explicit synonym carve-out lifts probe-set accuracy to 93 %, and
+     real-error recall to 99.7 % with a 0 % miss rate.
+   The first is the simpler counterfactual, the second is the production
+   recommendation because it dominates on the bucket-A failure mode that
+   drove the v5 collapse.
+3. Task reframing (detection on the modified note → comparison of original
+   vs edited sentence with both in scope) is the highest-leverage single
+   prompt change for using a fine-tuned medical detector as a self-play
+   judge. The same MedRECT-32B that scores 9 % on its native task scores
+   93 % under the reframed prompt; the medical knowledge is intact, the
+   localisation failure is what was killing it.
+4. Both directions of judge-induced reward hack — recall collapse on subtle
+   errors (v5) and precision over-flag on benign rewrites (v1 hint
+   prompt) — are addressable by judge design. The v1 → v2 prompt iteration
+   moved Bucket C from 13 % to 77 % without regressing on any other bucket,
+   demonstrating that the mirror failure mode predicted in §6 is preventable.
+5. The recommended judge for any further self-play in this project is
+   `medrect_hint_v2 @ MedRECT-32B`, evaluated with thinking off. r2
+   (F1 0.700 on MEDEC test) is *not* a defensible research deliverable on
+   its own: it was bootstrapped from a pre-R1-chains SFT, trained under the
+   broken Qwen3-8B judge, and §6 + §11 attribute its test-time performance
+   to an aggressive-policy artefact that compensated for judge bias rather
+   than to a methodologically sound recipe. The paper's headline model must
+   come from a self-play run under the corrected pipeline (clean SFT,
+   calibrated judge, the v5 reward retune validated against the calibrated
+   judge in §11).
+6. The v5 reward retune (`REWARD_PARTIAL = 0.5`, `REWARD_MISS = −1.5`) and
+   the v5 KL anchor (`kl_coef = 0.01`) are *correct* under the calibrated
+   judge, and *both* contribute to a 25 % wider gradient than r2's
+   constants (§11). Reverting to r2's reward at this point would weaken
+   the gradient signal without any methodological gain. The §3 doc text
+   was previously inconsistent on this point because the EV calc assumed
+   the judge agrees with reality; §11 corrects that with the empirical
+   verdict distribution.
+
+## 13. The lesson, in two sentences
+
+> In an adversarial self-play game with a frozen judge, the judge's
+> calibration on the held-out distribution is the binding constraint, and
+> both directions of judge bias (recall collapse and precision over-flag)
+> are addressable by judge replacement and prompt design — not by reward
+> shaping. Before tuning the reward, scale or replace the judge, then
+> verify with a controlled probe set and a held-out real-error eval that
+> the new judge has not simply moved the bias from one direction to the
+> other.
