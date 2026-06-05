@@ -235,9 +235,11 @@ def main() -> int:
                     help="probes per bucket to evaluate (capped by available)")
     ap.add_argument("--show", type=int, default=4,
                     help="raw outputs to print per bucket")
-    ap.add_argument("--max-tokens", type=int, default=128)
-    ap.add_argument("--no-thinking", action="store_true",
-                    help="disable model thinking (recommended for the judge: it should answer directly)")
+    ap.add_argument("--max-tokens", type=int, default=256)
+    ap.add_argument("--thinking", action="store_true",
+                    help="enable model thinking. Default OFF: a judge should answer directly. "
+                         "MedRECT-32B is Qwen3-based and will burn tokens on a <think> block "
+                         "if thinking is on, leaving no budget for the actual verdict.")
     ap.add_argument("--tensor-parallel-size", type=int, default=1)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.90)
     ap.add_argument("--max-model-len", type=int, default=8192)
