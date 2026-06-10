@@ -297,8 +297,9 @@ def maybe_write_plot(csv_path: Path, png_path: Path) -> None:
 
 def run_phase1_training(args: argparse.Namespace, splits: List[Dict],
                         output_root: Path, log_dir: Path) -> None:
+    n_shards = len(splits)
     print(f"\n{'='*60}")
-    print(f"PHASE 1 — Training {args.fractions} shards (all adapters kept on disk)")
+    print(f"PHASE 1 — Training {n_shards} shards (all adapters kept on disk)")
     print(f"{'='*60}")
 
     for split in splits:
