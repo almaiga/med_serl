@@ -309,7 +309,7 @@ def run_phase1_training(args: argparse.Namespace, splits: List[Dict],
         train_done = adapter_dir / "adapter_config.json"
 
         print(f"\n{'─'*50}")
-        print(f"Shard {idx}/{args.fractions}  ({train_count} samples)  →  {adapter_dir.name}")
+        print(f"Shard {idx}/{n_shards}  ({train_count} samples)  →  {adapter_dir.name}")
         print(f"{'─'*50}")
 
         if args.skip_existing and train_done.exists():
@@ -374,6 +374,7 @@ def run_phase2_eval(
     output_root: Path,
     results_root: Path,
 ) -> List[Dict]:
+    n_shards = len(splits)
     print(f"\n{'='*60}")
     print("PHASE 2 — Single vLLM session evaluating all adapters")
     print(f"{'='*60}")
@@ -575,7 +576,7 @@ def run_phase2_eval(
         base_eval_dir = results_root / "eval_base_model"
         base_metrics = _eval_adapter(None, base_eval_dir, base_model, lora_uid=0)
         if base_metrics and not args.dry_run:
-            row: Dict = dict(index=0, fraction=0.0, fractions=args.fractions,
+            row: Dict = dict(index=0, fraction=0.0, fractions=n_shards,
                              train_count=0, train_file="", label="base_model")
             row.update(base_metrics)
             all_rows.append(row)
@@ -586,10 +587,10 @@ def run_phase2_eval(
         if eval_indices is not None and idx not in eval_indices:
             continue
         adapter_dir = output_root / f"adapter_frac_{idx:02d}_of_{n_shards}"
-        eval_dir = results_root / f"eval_frac_{idx:02d}_of_{args.fractions}"
+        eval_dir = results_root / f"eval_frac_{idx:02d}_of_{n_shards}"
 
         print(f"\n{'='*50}")
-        print(f"Evaluating shard {idx}/{args.fractions}  ({split['train_count']} training samples)")
+        print(f"Evaluating shard {idx}/{n_shards}  ({split['train_count']} training samples)")
         print(f"  Adapter: {adapter_dir}")
         print(f"{'='*50}")
 
