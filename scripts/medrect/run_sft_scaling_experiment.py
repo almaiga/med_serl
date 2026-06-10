@@ -53,6 +53,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--experiment-name", default=None)
     parser.add_argument("--fractions", type=int, default=10,
                         help="Number of cumulative data fractions to train (default: 10)")
+    parser.add_argument("--custom-counts", default=None,
+                        help="Comma-separated explicit row counts, e.g. '1086,2172,3258,4424,5430'. "
+                             "When set, overrides --fractions. Counts can exceed len(train-file) "
+                             "if --heldout-file is supplied; overflow rows come from the heldout file.")
+    parser.add_argument("--heldout-file", default=None,
+                        help="Optional second JSONL appended to the training pool. Used for shards "
+                             "whose count exceeds len(--train-file); rows are taken from the heldout "
+                             "file in shuffled order to preserve the cumulative-subset property.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--overwrite-splits", action="store_true")
     parser.add_argument("--skip-existing", action="store_true",
@@ -132,28 +140,68 @@ def write_jsonl(path: Path, records: List[Dict]) -> None:
 
 
 def make_cumulative_splits(
-    records: List[Dict], split_dir: Path, fractions: int, seed: int, overwrite: bool
+    records: List[Dict],
+    split_dir: Path,
+    fractions: int,
+    seed: int,
+    overwrite: bool,
+    custom_counts: Optional[List[int]] = None,
+    heldout_records: Optional[List[Dict]] = None,
 ) -> List[Dict]:
-    if fractions < 1:
-        raise ValueError("--fractions must be >= 1")
+    """Build cumulative training shards.
+
+    Default: split into `fractions` equal cumulative shards (1/N, 2/N, ..., N/N).
+    With `custom_counts`: build one shard per count in the list, in increasing order.
+    Counts may exceed len(records) when `heldout_records` is supplied — overflow rows
+    come from heldout (shuffled, deterministic) so the cumulative-subset property
+    holds across all shards.
+    """
     split_dir.mkdir(parents=True, exist_ok=True)
     shuffled = list(records)
     random.Random(seed).shuffle(shuffled)
-    total = len(shuffled)
+    base_total = len(shuffled)
+
+    shuffled_heldout = list(heldout_records or [])
+    random.Random(seed + 1).shuffle(shuffled_heldout)
+    pool = shuffled + shuffled_heldout
+    pool_total = len(pool)
+
+    if custom_counts is not None:
+        counts = sorted(custom_counts)
+        if counts != list(custom_counts):
+            raise ValueError(f"--custom-counts must be non-decreasing, got {custom_counts}")
+        if counts[-1] > pool_total:
+            raise ValueError(
+                f"largest custom count {counts[-1]} exceeds pool size "
+                f"{pool_total} ({base_total} train + {len(shuffled_heldout)} heldout)"
+            )
+        n_shards = len(counts)
+    else:
+        if fractions < 1:
+            raise ValueError("--fractions must be >= 1")
+        counts = [math.ceil(base_total * (idx / fractions)) for idx in range(1, fractions + 1)]
+        n_shards = fractions
+
     manifest = []
-    for idx in range(1, fractions + 1):
-        fraction = idx / fractions
-        count = math.ceil(total * fraction)
-        path = split_dir / f"train_frac_{idx:02d}_of_{fractions}.jsonl"
+    for idx, count in enumerate(counts, start=1):
+        fraction = count / pool_total
+        path = split_dir / f"train_frac_{idx:02d}_of_{n_shards}.jsonl"
         if overwrite or not path.exists():
-            write_jsonl(path, shuffled[:count])
+            write_jsonl(path, pool[:count])
         manifest.append(dict(
-            index=idx, fractions=fractions, fraction=fraction,
+            index=idx, fractions=n_shards, fraction=fraction,
             train_count=count, train_file=str(path),
         ))
     manifest_path = split_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(dict(seed=seed, total_records=total, splits=manifest), f, indent=2)
+        json.dump(dict(
+            seed=seed,
+            base_records=base_total,
+            heldout_records=len(shuffled_heldout),
+            pool_total=pool_total,
+            custom_counts=list(custom_counts) if custom_counts is not None else None,
+            splits=manifest,
+        ), f, indent=2)
     return manifest
 
 
@@ -256,7 +304,7 @@ def run_phase1_training(args: argparse.Namespace, splits: List[Dict],
     for split in splits:
         idx = split["index"]
         train_count = split["train_count"]
-        adapter_dir = output_root / f"adapter_frac_{idx:02d}_of_{args.fractions}"
+        adapter_dir = output_root / f"adapter_frac_{idx:02d}_of_{n_shards}"
         train_done = adapter_dir / "adapter_config.json"
 
         print(f"\n{'─'*50}")
@@ -536,7 +584,7 @@ def run_phase2_eval(
         idx = split["index"]
         if eval_indices is not None and idx not in eval_indices:
             continue
-        adapter_dir = output_root / f"adapter_frac_{idx:02d}_of_{args.fractions}"
+        adapter_dir = output_root / f"adapter_frac_{idx:02d}_of_{n_shards}"
         eval_dir = results_root / f"eval_frac_{idx:02d}_of_{args.fractions}"
 
         print(f"\n{'='*50}")
@@ -582,9 +630,19 @@ def main() -> None:
     print(f"{'='*60}")
 
     records = load_jsonl(Path(args.train_file))
+    custom_counts = None
+    if args.custom_counts:
+        custom_counts = [int(x.strip()) for x in args.custom_counts.split(",") if x.strip()]
+    heldout_records = None
+    if args.heldout_file:
+        heldout_records = load_jsonl(Path(args.heldout_file))
+        print(f"  Heldout   : {args.heldout_file}  ({len(heldout_records)} rows appended to pool)")
+    if custom_counts is not None:
+        print(f"  Counts    : {custom_counts}  (overriding --fractions)")
     splits = make_cumulative_splits(
         records, split_dir=split_dir, fractions=args.fractions,
         seed=args.seed, overwrite=args.overwrite_splits,
+        custom_counts=custom_counts, heldout_records=heldout_records,
     )
 
     log_dir.mkdir(parents=True, exist_ok=True)
