@@ -59,25 +59,30 @@ def main() -> None:
         n = load(root / f"{key}__no-thinking")
         rows.append((key, t, n))
 
-    # ── F1 matrix ────────────────────────────────────────────────────────────
+    # ── Accuracy + F1 matrix ─────────────────────────────────────────────────
     print()
-    print("=" * 78)
-    print(f"{'model':<20} {'F1 think':>9} {'F1 no-th':>9} {'Δ think':>8}  "
-          f"{'verdict':<22}")
-    print("=" * 78)
+    print("=" * 96)
+    print(f"{'model':<20} {'acc think':>9} {'acc no-th':>9} {'Δacc':>7}   "
+          f"{'F1 think':>9} {'F1 no-th':>9} {'ΔF1':>7}  {'verdict':<16}")
+    print("=" * 96)
     for key, t, n in rows:
         if t is None or n is None:
             print(f"{key:<20} {'(incomplete — missing a run)':<40}")
             continue
-        delta = t["f1"] - n["f1"]
-        if delta >= 0.08:
+        d_acc = t["acc"] - n["acc"]
+        d_f1 = t["f1"] - n["f1"]
+        # verdict keys on the larger of the two deltas (reasoning shows up in
+        # whichever metric the model is being scored on)
+        d_max = max(d_acc, d_f1)
+        if d_max >= 0.08:
             verdict = "reasons"
-        elif delta <= 0.02:
+        elif d_max <= 0.02:
             verdict = "pattern/recall"
         else:
             verdict = "mixed"
-        print(f"{key:<20} {fmt(t['f1']):>9} {fmt(n['f1']):>9} "
-              f"{delta:>+8.3f}  {verdict:<22}")
+        print(f"{key:<20} {fmt(t['acc']):>9} {fmt(n['acc']):>9} "
+              f"{d_acc:>+7.3f}   {fmt(t['f1']):>9} {fmt(n['f1']):>9} "
+              f"{d_f1:>+7.3f}  {verdict:<16}")
 
     # ── Full breakdown ───────────────────────────────────────────────────────
     print()
