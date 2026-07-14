@@ -24,7 +24,7 @@ MODELS=(
   "base4b:Qwen/Qwen3-4B"
   "base8b:Qwen/Qwen3-8B"
   "sft_v2:Abdine/qwen3-4b-medrect-mixed-v2"
-  "selfplay_step66:Abdine/qwen3-4b-medserl-v6-step66"
+  "selfplay_r2:Abdine/qwen3-4b-medrect-mixed-r2"
 )
 
 for entry in "${MODELS[@]}"; do
