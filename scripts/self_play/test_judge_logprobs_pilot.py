@@ -80,13 +80,38 @@ USER_HINT_V2 = (
 
 # ── Robust dataset loading ──────────────────────────────────────────────────
 
-def load_all_games(dataset_id: str, split_hint: str) -> List[Dict]:
-    """Fetch the interactions dataset from HF, coping with unknown split names.
+def load_all_games_from_local(paths: List[str]) -> List[Dict]:
+    """Read game logs from local JSONL files (supports globs)."""
+    import glob
+    all_files: List[str] = []
+    for p in paths:
+        matched = sorted(glob.glob(p))
+        if not matched:
+            print(f"  WARN: no files match glob '{p}'")
+        all_files.extend(matched)
 
-    Our upload put files under `v6_run2/*.jsonl`, so the auto-detected split
-    might be 'train', 'v6_run2', or something else. Try the hint first, then
-    fall back to whatever exists.
-    """
+    games: List[Dict] = []
+    for fp in all_files:
+        with open(fp) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    games.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        print(f"  loaded {fp}")
+
+    if not games:
+        raise SystemExit("No records found in local logs.")
+    print(f"  total: {len(games)} rows from {len(all_files)} file(s)")
+    print(f"  fields (from first row): {sorted(games[0].keys())}")
+    return games
+
+
+def load_all_games_from_hf(dataset_id: str, split_hint: str) -> List[Dict]:
+    """Fetch the interactions dataset from HF, coping with unknown split names."""
     from datasets import load_dataset
 
     try:
@@ -225,9 +250,15 @@ def summarize_first_token(logprobs_seq, tokenizer) -> Dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--output", default="results/judge_logprobs_pilot.json")
-    ap.add_argument("--dataset", default="Abdine/medserl-v6-run2-interactions")
+    ap.add_argument("--dataset", default="Abdine/medserl-v6-run2-interactions",
+                    help="HF dataset id; ignored if --local-logs is set")
     ap.add_argument("--split", default="train",
                     help="split hint; script falls back to whatever's available")
+    ap.add_argument("--local-logs", nargs="+", default=None,
+                    help="Read game logs from local JSONL paths / globs "
+                         "instead of the HF dataset. Example: "
+                         "--local-logs 'results/self_play/interactions/"
+                         "game_20260608_*.jsonl'")
     ap.add_argument("--model", default="pfnet/Preferred-MedRECT-32B")
     ap.add_argument("--tensor-parallel-size", type=int, default=1)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.9)
@@ -243,17 +274,45 @@ def main() -> None:
     print(f"Model         : {args.model}")
     print(f"TP size       : {args.tensor_parallel_size}")
     print(f"Prompt style  : {args.prompt_style}")
-    print(f"Dataset       : {args.dataset}")
+    if args.local_logs:
+        print(f"Local logs    : {args.local_logs}")
+    else:
+        print(f"Dataset       : {args.dataset}")
     if args.dry_run:
         print("Mode          : DRY RUN (no model load, no inference)")
     print()
 
     # ── Load dataset first (cheap; catches schema issues before GPU work) ──
-    print(f"[1/3] Loading dataset {args.dataset}...")
-    games = load_all_games(args.dataset, args.split)
+    if args.local_logs:
+        print(f"[1/3] Loading local logs...")
+        games = load_all_games_from_local(args.local_logs)
+    else:
+        print(f"[1/3] Loading HF dataset {args.dataset}...")
+        games = load_all_games_from_hf(args.dataset, args.split)
+
+    # Two modes:
+    #   --local-logs  → iterate EVERY row in the file, use its failure_mode
+    #                   field as the audit label (synthetic dataset)
+    #   HF dataset    → filter to hardcoded AUDIT_CASES (production game logs)
+    if args.local_logs:
+        iterable = [
+            (
+                g.get("note_id", "?"),
+                g.get("mode", "?"),
+                g.get("failure_mode") or g.get("audit") or "unknown",
+                g.get("expected_verdict"),
+                g.get("expected_sid"),
+            )
+            for g in games
+        ]
+    else:
+        iterable = [
+            (nid, mode, audit, None, None)
+            for nid, mode, audit in AUDIT_CASES
+        ]
 
     prompts_built: List[Dict] = []
-    for note_id, mode, audit in AUDIT_CASES:
+    for note_id, mode, audit, exp_verdict, exp_sid in iterable:
         game = find_game(games, note_id, mode)
         if game is None:
             print(f"  MISS  {note_id} ({mode}): no matching game_complete row")
@@ -264,6 +323,7 @@ def main() -> None:
             continue
         prompts_built.append(dict(
             note_id=note_id, mode=mode, audit=audit,
+            expected_verdict=exp_verdict, expected_sid=exp_sid,
             original_verdict=game.get("judge_verdict"),
             messages=p["messages"],
             used_hint_v2=p["used_hint_v2"],
@@ -364,10 +424,24 @@ def main() -> None:
         )
 
     # ── Heuristic GO/NO-GO ──────────────────────────────────────────────────
-    difficult_labels = {"REAL JUDGE FAILURE", "JUDGE OVER-FLAG", "AMBIGUOUS"}
+    # Both label sets from the audit (production logs) and synthetic dataset.
+    difficult_labels = {
+        # from AUDIT_CASES
+        "REAL JUDGE FAILURE", "JUDGE OVER-FLAG", "AMBIGUOUS",
+        # from synthetic dataset failure_mode field
+        "real_judge_failure", "judge_over_flag_candidate",
+    }
+    easy_labels = {
+        # from AUDIT_CASES
+        "INJECTOR FAILURE", "INJECTOR OVER-EDIT",
+        "INJECTOR FAILURE (truncation)", "INJECTOR FAILURE (garbled)",
+        # from synthetic dataset failure_mode field
+        "clear_error", "meaning_preserving_benign",
+        "injector_truncation", "injector_garbled",
+    }
     difficult = [r for r in results if r["audit"] in difficult_labels
                  and r["p_top"] is not None]
-    easy = [r for r in results if r["audit"] not in difficult_labels
+    easy = [r for r in results if r["audit"] in easy_labels
             and r["p_top"] is not None]
 
     print()

@@ -1,0 +1,27 @@
+{
+  "total_cases": 48,
+  "by_mode": {
+    "error_injection": 20,
+    "benign": 28
+  },
+  "by_failure_mode": {
+    "clear_error": 8,
+    "meaning_preserving_benign": 8,
+    "medium_error": 6,
+    "meaning_preserving_medium": 6,
+    "real_judge_failure": 6,
+    "judge_over_flag_candidate": 4,
+    "injector_over_edit": 4,
+    "injector_truncation": 3,
+    "injector_garbled": 3
+  },
+  "by_difficulty": {
+    "easy": 22,
+    "medium": 17,
+    "hard": 9
+  },
+  "by_expected_verdict": {
+    "CHANGED": 30,
+    "CORRECT": 18
+  }
+}
