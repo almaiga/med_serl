@@ -292,10 +292,14 @@ async def judge_sentence_pair(
             ),
             **medrect_cfg.get("sampling_params", {}),
         }
-        # MedRECT-32B is Qwen3-based (see Exp 1 / failure-analysis §10);
-        # thinking is enabled by default and would eat the entire token
-        # budget. Force it off so the model emits "CORRECT" or "<sid>".
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        # MedRECT-32B is Qwen3-based. Thinking must stay ON: with it OFF the
+        # judge is blind to plausible clinical errors (0/6 on medium and 0/6
+        # on subtle errors in the 48-case synthetic test; 44/48 with thinking).
+        # The v6 run trained against the thinking-OFF judge and that is why
+        # self-play plateaued. parse_assessor_answer strips <think>...</think>,
+        # and max_tokens in medrect_judge_prompts.json is sized (2048) so the
+        # model finishes reasoning AND emits the verdict within budget.
+        payload["chat_template_kwargs"] = {"enable_thinking": True}
     else:
         prompt_cfg = load_prompt_config()
         payload = {
