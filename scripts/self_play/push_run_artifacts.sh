@@ -111,6 +111,28 @@ else
     echo "WARN: no trainer logs under $TRAIN_LOG_DIR (skipping)"
 fi
 
+# ── 4. eval results (if any) ──────────────────────────────────────────────────
+EVAL_DIR="${EVAL_DIR:-results/detection}"
+LATEST_EVAL=$(find "$EVAL_DIR" -name "*.json" -newer /etc/hostname 2>/dev/null | head -1)
+[[ -z "$LATEST_EVAL" ]] && LATEST_EVAL=$(find "$EVAL_DIR" -name "*.json" 2>/dev/null | head -1)
+if [[ -n "${LATEST_EVAL:-}" ]]; then
+    echo
+    echo "--- pushing eval results -> ${LOGS_REPO}/detection_results ---"
+    if python3 scripts/self_play/hf_push_verified.py \
+        --local "$EVAL_DIR" \
+        --repo "$LOGS_REPO" --repo-type dataset --private \
+        --path-in-repo detection_results \
+        --allow-patterns "*.json,*.jsonl,*.csv" \
+        --require "$(basename "$LATEST_EVAL")" \
+        --commit-message "detection eval results"; then
+        PUSHED="$PUSHED ${LOGS_REPO}(detection_results)"
+    else
+        FAILURES=$((FAILURES + 1))
+    fi
+else
+    echo "WARN: no eval results under $EVAL_DIR (skipping)"
+fi
+
 # ── summary ──────────────────────────────────────────────────────────────────
 echo
 echo "=========================================================="
