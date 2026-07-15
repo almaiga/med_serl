@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Diagnose a smoke game log: is the judge actually fine, and where is the
-token budget being blown? Reads an existing game log — no GPU, no cost.
+"""Diagnose a smoke game log using the REAL per-turn token telemetry.
 
-Answers three questions so we can pick the injector fix WITHOUT a wasted re-smoke:
-  1. JUDGE HEALTH ON VALID INPUTS — when the injector hands the judge a real
-     edit, does the judge rule OK? (If yes, the low "judge ok%" is an injector
-     artifact, not a judge problem.)
-  2. INJECTOR FAILURE ANATOMY — do the failures have <think> but no </think>?
-     That means the injector ran OUT OF TOKENS mid-reasoning (budget too small),
-     not that it produced a bad format.
-  3. ASSESSOR HEADROOM — does the assessor close its </think> and sit well under
-     its cap? If so, we can safely shave the assessor's budget and give it to the
-     injector. If the assessor is itself near the edge, we can't — disable
-     injector thinking instead.
+Reads an existing game log — no GPU, no cost. Answers:
+  1. JUDGE HEALTH ON VALID INPUTS — when the injector hands a real edit, does the
+     judge rule OK? (If yes, low overall judge-ok% is an injector artifact.)
+  2. TOKEN BUDGET — where do the 8192 tokens actually go? Uses injector_token_count,
+     assessor_reasoning_token_count, assessor_final_token_count, prompt counts —
+     NOT char length (injector_output is clipped to 4000 chars in the log, so char
+     length is meaningless).
+  3. WHO IS STARVED — for each role, how often does generation hit its cap (ran out
+     of tokens), and does that line up with parse failures?
+  4. HEADROOM — per-game total sequence length vs the 8192 response cap.
 
 Usage:
     python3 scripts/self_play/diagnose_smoke.py
@@ -23,36 +21,25 @@ import glob
 import json
 import sys
 
-
-INJ_KEYS = ("injector_output", "injector_raw", "raw_injector", "injector_text",
-            "injector_response", "injector_completion")
-ASS_KEYS = ("assessor_output", "assessor_raw", "raw_assessor", "assessor_text",
-            "assessor_response", "assessor_completion", "assessor_think")
+RESP_CAP = 8192  # ROLLOUT_RESPONSE_LENGTH
 
 
-def _first(row, keys):
-    for k in keys:
-        v = row.get(k)
-        if v:
-            return v
-    return ""
+def _nums(rows, key):
+    return [r[key] for r in rows if isinstance(r.get(key), (int, float))]
 
 
-def _anatomy(texts, label):
-    n = len(texts)
-    if not n:
-        print(f"  ({label}: none)")
+def _summ(vals, cap=None, label=""):
+    if not vals:
+        print(f"  {label:<34} (none)")
         return
-    n_open = sum("<think>" in t for t in texts)
-    n_close = sum("</think>" in t for t in texts)
-    lens = sorted(len(t) for t in texts)
-    p50 = lens[len(lens) // 2]
-    p90 = lens[min(len(lens) - 1, int(len(lens) * 0.9))]
-    print(f"  {label}: n={n}")
-    print(f"    have <think>  : {n_open}/{n}")
-    print(f"    have </think> : {n_close}/{n}   "
-          f"{'<-- ran OUT mid-think (budget too small)' if n_close < n_open else '(closed OK)'}")
-    print(f"    char len p50/p90/max: {p50} / {p90} / {lens[-1]}")
+    s = sorted(vals)
+    p50 = s[len(s) // 2]
+    p90 = s[min(len(s) - 1, int(len(s) * 0.9))]
+    tail = ""
+    if cap:
+        at_cap = sum(1 for v in vals if v >= cap - 2)
+        tail = f"   at-cap(>={cap}): {at_cap}/{len(vals)} = {100*at_cap/len(vals):.0f}%"
+    print(f"  {label:<34} p50={p50:>5.0f}  p90={p90:>5.0f}  max={s[-1]:>5.0f}{tail}")
 
 
 def main() -> None:
@@ -70,72 +57,80 @@ def main() -> None:
     print(f"log: {log}")
     print(f"rows: {len(rows)}   game_complete: {len(complete)}\n")
 
-    # show available keys once so we can adapt if a field name differs
-    sample = complete[0] if complete else (rows[0] if rows else {})
-    print("available keys on a game_complete row:")
-    print("  " + ", ".join(sorted(sample.keys())))
-    print()
-
     # ── 1. JUDGE HEALTH ON VALID INPUTS ──────────────────────────────────────
     print("=" * 72)
     print("1. JUDGE HEALTH ON VALID INPUTS")
     valid_inj = {"exact_match", "wrong_edit_type", "partial_match"}
     got_edit = [r for r in complete if r.get("injector_outcome") in valid_inj]
-    js_on_valid = collections.Counter(r.get("judge_status") for r in got_edit)
-    n_valid = len(got_edit)
-    ok_on_valid = js_on_valid.get("ok", 0)
-    print(f"  games where injector produced a real edit: {n_valid}")
-    print(f"  judge_status on those: {dict(js_on_valid)}")
-    if n_valid:
-        print(f"  judge ok on valid input: {ok_on_valid}/{n_valid} = "
-              f"{100*ok_on_valid/n_valid:.0f}%   "
-              f"{'<-- JUDGE IS FINE; low overall ok% is an injector artifact' if ok_on_valid/n_valid > 0.9 else '<-- judge itself is failing on valid input, investigate'}")
+    js = collections.Counter(r.get("judge_status") for r in got_edit)
+    n = len(got_edit)
+    ok = js.get("ok", 0)
+    print(f"  games where injector produced a real edit: {n}")
+    print(f"  judge_status on those: {dict(js)}")
+    if n:
+        verdict = ("JUDGE FINE; low overall ok% is an injector artifact"
+                   if ok / n > 0.9 else "judge itself failing on valid input — investigate")
+        print(f"  judge ok on valid input: {ok}/{n} = {100*ok/n:.0f}%   <-- {verdict}")
     print()
 
-    # ── 2. INJECTOR FAILURE ANATOMY ──────────────────────────────────────────
+    # ── 2. TOKEN BUDGET (real counts) ────────────────────────────────────────
     print("=" * 72)
-    print("2. INJECTOR FAILURE ANATOMY")
+    print("2. TOKEN BUDGET — where the 8192 goes (real token counts)")
+    inj_cap = int((_nums(complete, "injector_max_new_tokens") or [0])[0])
+    ath_cap = int((_nums(complete, "assessor_think_max_new_tokens") or [0])[0])
+    afn_cap = int((_nums(complete, "assessor_final_max_new_tokens") or [0])[0])
+    print(f"  caps: injector={inj_cap}  assessor_think={ath_cap}  assessor_final={afn_cap}")
+    _summ(_nums(complete, "injector_context_token_count"), label="prompt (injector_context)")
+    _summ(_nums(complete, "injector_token_count"), cap=inj_cap, label="injector generation")
+    _summ(_nums(complete, "assessor_prompt_token_count"), label="assessor prompt")
+    _summ(_nums(complete, "assessor_reasoning_token_count"), cap=ath_cap, label="assessor reasoning")
+    _summ(_nums(complete, "assessor_final_token_count"), cap=afn_cap, label="assessor final")
+    print()
+
+    # ── 3. WHO IS STARVED (cap-hit vs failure) ───────────────────────────────
+    print("=" * 72)
+    print("3. WHO IS STARVED — cap-hit rate and link to failures")
     inj_fail = [r for r in complete
                 if r.get("injector_outcome") in ("parse_failure", "truncation_filter")]
-    _anatomy([_first(r, INJ_KEYS) for r in inj_fail], "injector failures")
+    inj_fail_atcap = sum(1 for r in inj_fail
+                         if isinstance(r.get("injector_token_count"), (int, float))
+                         and r["injector_token_count"] >= inj_cap - 2)
+    print(f"  injector failures: {len(inj_fail)}")
+    if inj_fail:
+        print(f"    of those, hit the injector cap ({inj_cap}): {inj_fail_atcap}/{len(inj_fail)}"
+              f"  <-- these ran OUT of tokens mid-think")
+    ath_hit = sum(1 for r in complete if r.get("assessor_think_cap_hit"))
+    afn_hit = sum(1 for r in complete if r.get("assessor_final_cap_hit"))
+    print(f"  assessor think_cap_hit : {ath_hit}/{len(complete)} = {100*ath_hit/max(len(complete),1):.0f}%")
+    print(f"  assessor final_cap_hit : {afn_hit}/{len(complete)} = {100*afn_hit/max(len(complete),1):.0f}%")
     print()
 
-    # ── 3. ASSESSOR HEADROOM ─────────────────────────────────────────────────
+    # ── 4. TOTAL SEQUENCE vs 8192 ────────────────────────────────────────────
     print("=" * 72)
-    print("3. ASSESSOR HEADROOM (can we donate its budget to the injector?)")
-    ass_texts = [_first(r, ASS_KEYS) for r in complete]
-    ass_texts = [t for t in ass_texts if t]
-    _anatomy(ass_texts, "assessor outputs (all)")
-    ass_out = collections.Counter(r.get("assessor_outcome") for r in complete)
-    print(f"  assessor_outcome: {dict(ass_out)}")
-    print("  (if assessor closes </think> on ~all and no 'truncation'/'invalid_format'"
-          " spike, it HAS headroom to give tokens to the injector)")
+    print(f"4. TOTAL RESPONSE LENGTH vs cap {RESP_CAP}")
+    totals = []
+    for r in complete:
+        g = r.get("injector_token_count", 0) or 0
+        ap = r.get("assessor_prompt_token_count", 0) or 0
+        at = r.get("assessor_token_count",
+                   (r.get("assessor_reasoning_token_count", 0) or 0)
+                   + (r.get("assessor_final_token_count", 0) or 0)) or 0
+        totals.append(g + ap + at)  # generated portion of the multi-turn response
+    _summ(totals, cap=RESP_CAP, label="response tokens (inj+assessor)")
+    if totals:
+        over = sum(1 for t in totals if t >= RESP_CAP - 2)
+        print(f"  games at/over the {RESP_CAP} response cap: {over}/{len(totals)}")
+    print("  (this is the GENERATED span the 8192 cap governs; if p90 is already near")
+    print("   8192, both roles are being truncated and the budget is the real limit)")
     print()
 
-    # ── RECOMMENDATION ───────────────────────────────────────────────────────
+    # ── READOUT ──────────────────────────────────────────────────────────────
     print("=" * 72)
-    print("RECOMMENDATION")
-    inj_starved = inj_fail and (
-        sum("<think>" in _first(r, INJ_KEYS) for r in inj_fail)
-        > sum("</think>" in _first(r, INJ_KEYS) for r in inj_fail))
-    ass_closes = ass_texts and (
-        sum("</think>" in t for t in ass_texts) >= 0.9 * sum("<think>" in t for t in ass_texts)
-        if any("<think>" in t for t in ass_texts) else True)
-    ass_lens = sorted(len(t) for t in ass_texts) if ass_texts else [0]
-    ass_p90 = ass_lens[min(len(ass_lens) - 1, int(len(ass_lens) * 0.9))]
-
-    if inj_starved and ass_closes:
-        print("  * Injector is starved mid-think AND assessor closes its think block.")
-        print("  * FIX: rebalance budget — cut assessor_think_max_new_tokens by ~512,")
-        print("    raise injector_max_new_tokens 1536 -> 2048. Total stays < 8192.")
-        print(f"    (assessor p90 char len ~{ass_p90}; confirm it's not near its token cap)")
-    elif inj_starved and not ass_closes:
-        print("  * Injector is starved BUT assessor also near its edge — no spare budget.")
-        print("  * FIX: disable injector thinking (enable_thinking=False for injector);")
-        print("    a one-sentence edit doesn't need long CoT. Frees budget outright.")
-    else:
-        print("  * Injector failures are NOT simple mid-think starvation — inspect the")
-        print("    LAST-chars dump (run inspect_injector_fails.py) before changing budgets.")
+    print("READOUT")
+    print("  - Section 1 tells us the judge is fine (or not).")
+    print("  - If injector failures mostly hit the cap AND assessor think_cap_hit is")
+    print("    high, BOTH roles are starved -> forced-close for the injector + decide")
+    print("    whether 8192 must rise. Section 4 quantifies how tight it is.")
 
 
 if __name__ == "__main__":
