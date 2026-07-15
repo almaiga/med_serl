@@ -34,11 +34,25 @@ def main() -> None:
     print()
 
     # ── judge health ────────────────────────────────────────────────────────
+    # Judge ok% is measured ONLY on games where the injector produced a valid
+    # edit — when the injector fails to parse, the judge is never really
+    # consulted, so counting those as judge failures is an injector artifact
+    # (verified 2026-07-15: judge was 26/26 = 100% on valid input while overall
+    # ok% read 54%).
     js = collections.Counter(r.get("judge_status") for r in rows if r.get("judge_status"))
     tot = sum(js.values())
     print("judge_status   :", dict(js))
-    ok_pct = 100 * js.get("ok", 0) / tot if tot else 0
-    print(f"  judge ok     : {ok_pct:.0f}%   (want > 90%)")
+    valid_inj = {"exact_match", "wrong_edit_type", "partial_match"}
+    got_edit = [r for r in complete if r.get("injector_outcome") in valid_inj]
+    ok_on_valid = sum(1 for r in got_edit if r.get("judge_status") == "ok")
+    ok_pct = 100 * ok_on_valid / len(got_edit) if got_edit else 0
+    print(f"  judge ok     : {ok_on_valid}/{len(got_edit)} = {ok_pct:.0f}% on valid injector edits   (want > 90%)")
+
+    inj_fail = [r for r in complete
+                if r.get("injector_outcome") in ("parse_failure", "truncation_filter")]
+    inj_fail_pct = 100 * len(inj_fail) / len(complete) if complete else 0
+    print(f"injector waste : {len(inj_fail)}/{len(complete)} = {inj_fail_pct:.0f}%   "
+          f"(informational; ~25-30% expected at 1024 budget, -1.5 pressures it down)")
 
     err = [r for r in complete if r.get("mode") == "error_injection" and r.get("judge_verdict")]
     same = [r for r in err if r.get("judge_verdict") == "SAME"]

@@ -1,7 +1,7 @@
 - name: medserl_selfplay_agent
   _target_: scripts.self_play.agent_loop.medserl_selfplay_agent.MedSerlSelfPlayAgentLoop
   detection_prompts_path: configs/prompts/detection_localization_prompts.json
-  injector_max_new_tokens: 1536
+  injector_max_new_tokens: 1024  # v6-proven envelope: 66 steps, zero tensor crashes. Raising this overflows response_length=8192 (crash at 2048; 1536 left <300 margin). Injector overlong-think is penalized -1.5, which pressures compression.
   assessor_max_new_tokens: 2048
   assessor_think_max_new_tokens: 2048
   assessor_final_max_new_tokens: 256
