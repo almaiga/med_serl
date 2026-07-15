@@ -47,7 +47,9 @@ SFT reference. Test set: MEDEC (MS 597 + UW 328 = 925 samples, ~51% error rate).
 | **r2** | Apr | Qwen3-8B | KL≈0.001, MISS −1.0, PARTIAL 0.3 | **0.700** | **0.878** | 0.739 | ⚠️ model lost |
 | **v5** | May | Qwen3-8B | KL 0.01, MISS −1.5, PARTIAL 0.5 | 0.498 | — | — | ⚠️ model lost |
 | **v6 / step_66** | Jun | MedRECT-32B **thinking OFF**, hint_v2 | KL 0.01, injector budget 1024 | ~0.612 | — | ~0.623 | ⚠️ model lost, plateaued |
-| **v7 (clean)** | — | MedRECT-32B **thinking ON**, hint_v2 | KL 0.01, injector budget 1536, response_len 8192 | — | — | — | 🧪 PLANNED |
+| **v7 (clean)** | Jul 15 | MedRECT-32B **thinking ON**, hint_v2 | KL 0.01, injector budget 1536, response_len 8192 | — | — | — | ▶ RUNNING; step33 on HF ✅ |
+
+**v7 progress notes (2026-07-15):** launched on v6's exact code (rollout files unchanged since Apr–May; only judge thinking + injector budget differ). Through step ~33 / ~336 games: judge 100% ok on valid edits, SAME-on-error 12%, assessor exact% 28→53% and reward −0.49→+0.20 across windows — first clean evidence of the assessor learning under a calibrated judge. Injector does NOT compress its thinking (think-tok flat ~700–760, reward holding positive) — long CoT pays for the injector; the "−1.5 teaches compression" hypothesis looks wrong so far. Ops: judge thinking load caused 60s-timeout `request_failed` on ~2% of games (neutralized, not poisoned) → timeout raised to 180s + judge moving to TP=2 at restart. **Checkpoint `Abdine/qwen3-4b-medserl-v7-step33` pushed and independently verified on HF (16.09 GB weights listed from a second machine); run logs in `Abdine/medserl-v7-run-logs`.** Unlike r2/v5/v6, this checkpoint cannot be silently lost.
 
 **Important provenance notes:**
 - Base / SFT-v2 / r2 / v5 F1 numbers are from [judge_bottleneck_failure_analysis.md §2](judge_bottleneck_failure_analysis.md). These are the canonical paper numbers.
