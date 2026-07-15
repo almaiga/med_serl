@@ -161,6 +161,15 @@ def main() -> None:
     rows = []
     for c, out in zip(cases, outputs):
         text = out.outputs[0].text
+        gen_tokens = len(out.outputs[0].token_ids)
+        # Explicit thinking measurement: is there a closed <think> block, and
+        # how many tokens are inside it (the actual reasoning)?
+        think_present = "</think>" in text
+        if think_present:
+            reasoning_text = text.split("</think>")[0].replace("<think>", "")
+            reasoning_tokens = len(tok(reasoning_text).input_ids)
+        else:
+            reasoning_tokens = 0
         parsed = parse_answer(text)
         verdict = score(c["expected_verdict"], c["expected_sid"], parsed)
         by_cat[c["failure_mode"]][verdict] += 1
@@ -171,22 +180,46 @@ def main() -> None:
             expected_sid=c["expected_sid"],
             said_verdict=parsed["verdict"], said_sid=parsed["sid"],
             result=verdict,
-            gen_tokens=len(out.outputs[0].token_ids),
+            gen_tokens=gen_tokens,
+            think_present=think_present,
+            reasoning_tokens=reasoning_tokens,
         ))
 
     # ── Per-case table ──────────────────────────────────────────────────────
-    print("=" * 92)
+    print("=" * 104)
     print(f"{'note_id':<20} {'failure_mode':<26} {'exp':>8} {'said':>9} "
-          f"{'result':>11}")
-    print("=" * 92)
+          f"{'think?':>7} {'rtoks':>6} {'result':>11}")
+    print("=" * 104)
     for r in rows:
         exp = r["expected_verdict"][:8] if r["expected_verdict"] else "?"
         said = (r["said_verdict"] or "?")
         if r["said_sid"] is not None:
             said = f"{said}:{r['said_sid']}"
         mark = "OK " if r["result"] == "HIT" else "XX "
+        th = "yes" if r["think_present"] else "NO"
         print(f"{r['note_id']:<20} {r['failure_mode']:<26} {exp:>8} "
-              f"{said:>9} {mark+r['result']:>11}")
+              f"{said:>9} {th:>7} {r['reasoning_tokens']:>6} "
+              f"{mark+r['result']:>11}")
+
+    # ── Thinking activation summary (the double-check) ──────────────────────
+    n_think = sum(1 for r in rows if r["think_present"])
+    rtoks = [r["reasoning_tokens"] for r in rows if r["think_present"]]
+    avg_rtok = sum(rtoks) / len(rtoks) if rtoks else 0
+    print()
+    print("=" * 60)
+    print("THINKING ACTIVATION CHECK")
+    print("=" * 60)
+    print(f"  cases with closed <think> block : {n_think}/{len(rows)}")
+    print(f"  reasoning tokens  min/avg/max   : "
+          f"{min(rtoks) if rtoks else 0}/{avg_rtok:.0f}/{max(rtoks) if rtoks else 0}")
+    if n_think == len(rows) and avg_rtok > 50:
+        print("  => THINKING GENUINELY ACTIVE (every case reasoned, "
+              "hundreds of reasoning tokens)")
+    elif n_think == 0:
+        print("  => THINKING OFF — no <think> blocks. Do NOT trust accuracy.")
+    else:
+        print(f"  => PARTIAL — {n_think}/{len(rows)} reasoned. Investigate the "
+              "cases with think?=NO before trusting results.")
 
     # ── Per-category accuracy ───────────────────────────────────────────────
     print()
