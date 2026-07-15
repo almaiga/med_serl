@@ -63,9 +63,10 @@ def _injector_trend(complete: list, n_windows: int = 6) -> None:
 
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--all":
-        logs = sorted(glob.glob("results/self_play/interactions/game_*.jsonl"))
+        game_dir = sys.argv[2] if len(sys.argv) > 2 else "results/self_play/interactions"
+        logs = sorted(glob.glob(f"{game_dir}/game_*.jsonl"))
         if not logs:
-            print("no game logs under results/self_play/interactions/")
+            print(f"no game logs under {game_dir}/")
             sys.exit(1)
         log = f"{len(logs)} files: {logs[0]} .. {logs[-1]}"
         rows = []

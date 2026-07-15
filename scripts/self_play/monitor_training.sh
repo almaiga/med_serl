@@ -36,84 +36,20 @@ echo "=========================================================="
 
 WARN=0
 
-# ── PPO metrics from the latest step line ────────────────────────────────────
+# ── PPO metrics: multi-step, multi-metric trend (pure Python, no jq) ─────────
 if [[ -n "${TRAIN_LOG:-}" && -f "$TRAIN_LOG" ]]; then
-    LAST=$(grep -oE "step:[0-9]+ - .*perf/throughput:[0-9.]+" "$TRAIN_LOG" | tail -1)
-    if [[ -n "$LAST" ]]; then
-        get() { echo "$LAST" | grep -oE "$1:[-0-9.eE]+" | head -1 | cut -d: -f2; }
-        echo
-        echo "--- PPO training (latest step) ---"
-        printf "  global_step        : %s\n" "$(get 'training/global_step')"
-        printf "  epoch              : %s\n" "$(get 'training/epoch')"
-        printf "  critic/score/mean  : %s\n" "$(get 'critic/score/mean')"
-        printf "  critic/rewards/mean: %s\n" "$(get 'critic/rewards/mean')"
-        printf "  reward_kl_penalty  : %s\n" "$(get 'actor/reward_kl_penalty')"
-        printf "  grad_norm          : %s\n" "$(get 'actor/grad_norm')"
-        printf "  pg_loss            : %s\n" "$(get 'actor/pg_loss')"
-        printf "  lr                 : %s\n" "$(get 'actor/lr')"
-        printf "  response_len/mean  : %s\n" "$(get 'response_length/mean')"
-        printf "  throughput tok/s   : %s\n" "$(get 'perf/throughput')"
-
-        GN=$(get 'actor/grad_norm')
-        if [[ -n "$GN" ]] && awk "BEGIN{exit !($GN>10)}"; then
-            echo "  ** WARN: grad_norm ${GN} > 10 (instability)"; WARN=1
-        fi
-
-        # score/mean trend over last 10 steps
-        echo
-        echo "--- critic/score/mean trend (last 10 steps) ---"
-        grep -oE "training/global_step:[0-9]+|critic/score/mean:[-0-9.eE]+" "$TRAIN_LOG" \
-          | paste - - | tail -10 \
-          | sed -E 's#training/global_step:([0-9]+).*critic/score/mean:([-0-9.eE]+)#  step \1  score \2#'
-    else
-        echo "  (no step lines yet — trainer still warming up?)"
-    fi
+    echo
+    python3 scripts/self_play/train_metrics.py "$TRAIN_LOG" --last 12 || WARN=1
 else
     echo "  (no trainer log found)"
 fi
 
-# ── Judge / game health from interaction logs ────────────────────────────────
-LOG=$(ls -t "${GAME_DIR}"/game_*.jsonl 2>/dev/null | head -1)
-if [[ -n "${LOG:-}" ]] && command -v jq >/dev/null 2>&1; then
-    N=$(jq -c 'select(.phase=="game_complete")' "$LOG" 2>/dev/null | wc -l | tr -d ' ')
-    echo
-    echo "--- game health : $(basename "$LOG") ($N complete games) ---"
-
-    echo "  judge_status:"
-    jq -r 'select(.judge_status) | .judge_status' "$LOG" | sort | uniq -c | sed 's/^/    /'
-    OKN=$(jq -c 'select((.judge_status//"")=="ok")' "$LOG" | wc -l | tr -d ' ')
-    ALLJ=$(jq -c 'select(.judge_status)' "$LOG" | wc -l | tr -d ' ')
-    if [[ "$ALLJ" -gt 0 ]]; then
-        PCT=$(awk -v a="$OKN" -v b="$ALLJ" 'BEGIN{printf "%.0f",100*a/b}')
-        echo "    judge_status=ok : ${PCT}%"
-        [[ "$PCT" -lt 70 ]] && { echo "    ** WARN: judge ok < 70% (wiring/thinking?)"; WARN=1; }
-    fi
-
-    ET=$(jq -c 'select((.mode//"")=="error_injection" and .judge_verdict)' "$LOG" | wc -l | tr -d ' ')
-    ES=$(jq -c 'select((.mode//"")=="error_injection" and (.judge_verdict//"")=="SAME")' "$LOG" | wc -l | tr -d ' ')
-    if [[ "$ET" -gt 0 ]]; then
-        SP=$(awk -v s="$ES" -v t="$ET" 'BEGIN{printf "%.1f",100*s/t}')
-        echo "  judge SAME-on-error : ${ES}/${ET} = ${SP}%  (want < 15% now that thinking is on)"
-        awk "BEGIN{exit !($SP>15)}" && { echo "    ** WARN: SAME-on-error > 15% (judge missing errors)"; WARN=1; }
-    fi
-
-    echo "  assessor outcomes:"
-    jq -r 'select(.phase=="game_complete") | (.assessor_outcome // "?")' "$LOG" \
-      | sort | uniq -c | sort -rn | sed 's/^/    /'
-    GI=$(jq -c 'select(.phase=="game_complete" and (.assessor_outcome//"")=="game_invalid")' "$LOG" | wc -l | tr -d ' ')
-    if [[ "$N" -gt 0 ]]; then
-        GIP=$(awk -v g="$GI" -v n="$N" 'BEGIN{printf "%.0f",100*g/n}')
-        [[ "$GIP" -gt 25 ]] && { echo "    ** WARN: game_invalid ${GIP}% > 25% (wasted rollouts)"; WARN=1; }
-    fi
-
-    echo "  assessor_reward (early vs recent, complete games):"
-    ROWS=$(jq -c 'select(.phase=="game_complete")' "$LOG")
-    echo "$ROWS" | head -50 | jq -r '.assessor_reward // empty' | awk '{s+=$1;n++} END{if(n)printf "    early 50 : %+.3f\n",s/n}'
-    echo "$ROWS" | tail -50 | jq -r '.assessor_reward // empty' | awk '{s+=$1;n++} END{if(n)printf "    recent 50: %+.3f\n",s/n}'
-else
-    echo
-    echo "  (no game logs under ${GAME_DIR}, or jq missing)"
-fi
+# ── Judge / game health + injector adaptation trend (pure Python, no jq) ─────
+echo
+echo "--- game health (all logs, chronological) ---"
+GH_OUT=$(python3 scripts/self_play/game_health.py --all "$GAME_DIR" 2>&1)
+echo "$GH_OUT" | sed 's/^/  /'
+echo "$GH_OUT" | grep -q "VERDICT: SMOKE FAIL" && WARN=1
 
 # ── Checkpoints ──────────────────────────────────────────────────────────────
 echo
