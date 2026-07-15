@@ -6,8 +6,10 @@ numbers: judge_status ok%, SAME-on-error%, game_invalid%, plus outcome/verdict
 breakdowns and reward trend. Pure stdlib — no jq, no deps.
 
 Usage:
-    python3 scripts/self_play/game_health.py
-    python3 scripts/self_play/game_health.py results/self_play/interactions/game_XXplay.jsonl
+    python3 scripts/self_play/game_health.py            # latest log
+    python3 scripts/self_play/game_health.py <log.jsonl>
+    python3 scripts/self_play/game_health.py --all      # all logs, chronological
+                                                        # (full-run trend across restarts)
 """
 
 import collections
@@ -16,17 +18,70 @@ import json
 import sys
 
 
+def _injector_trend(complete: list, n_windows: int = 6) -> None:
+    """Chronological windows: is the injector learning to fit its budget?
+
+    THE metric to watch during the v7 run: if -1.5 on parse_failure teaches
+    the model to compress its thinking, waste%/at-cap% should FALL and mean
+    injector tokens should drift DOWN over training. If they stay flat, the
+    penalty is not shaping the injector and the wastage is a fixed tax.
+    """
+    if len(complete) < n_windows * 4:
+        n_windows = max(1, len(complete) // 4)
+    if n_windows < 2:
+        return
+    size = len(complete) / n_windows
+    caps = [r.get("injector_max_new_tokens") for r in complete
+            if isinstance(r.get("injector_max_new_tokens"), (int, float))]
+    cap = int(caps[-1]) if caps else 0
+    print()
+    print(f"--- injector trend ({n_windows} chronological windows, cap={cap}) ---")
+    print(f"  {'window':<8} {'games':>5} {'waste%':>7} {'at-cap%':>8} "
+          f"{'mean-tok':>9} {'SAME-on-err%':>13} {'mean-reward':>12}")
+    for w in range(n_windows):
+        chunk = complete[int(w * size):int((w + 1) * size)]
+        if not chunk:
+            continue
+        waste = sum(1 for r in chunk if r.get("injector_outcome")
+                    in ("parse_failure", "truncation_filter"))
+        toks = [r.get("injector_token_count") for r in chunk
+                if isinstance(r.get("injector_token_count"), (int, float))]
+        at_cap = sum(1 for t in toks if cap and t >= cap - 2)
+        err = [r for r in chunk if r.get("mode") == "error_injection"
+               and r.get("judge_verdict")]
+        same = sum(1 for r in err if r.get("judge_verdict") == "SAME")
+        rew = [r.get("assessor_reward") for r in chunk
+               if r.get("assessor_reward") is not None]
+        print(f"  {w + 1:<8} {len(chunk):>5} "
+              f"{100 * waste / len(chunk):>6.0f}% "
+              f"{100 * at_cap / max(len(toks), 1):>7.0f}% "
+              f"{sum(toks) / max(len(toks), 1):>9.0f} "
+              f"{100 * same / max(len(err), 1):>12.0f}% "
+              f"{sum(rew) / max(len(rew), 1):>+12.3f}")
+    print("  (want: waste%/at-cap% falling, mean-tok drifting down = model adapting)")
+
+
 def main() -> None:
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and sys.argv[1] == "--all":
+        logs = sorted(glob.glob("results/self_play/interactions/game_*.jsonl"))
+        if not logs:
+            print("no game logs under results/self_play/interactions/")
+            sys.exit(1)
+        log = f"{len(logs)} files: {logs[0]} .. {logs[-1]}"
+        rows = []
+        for lf in logs:
+            rows.extend(json.loads(ln) for ln in open(lf) if ln.strip())
+    elif len(sys.argv) > 1:
         log = sys.argv[1]
+        rows = [json.loads(ln) for ln in open(log) if ln.strip()]
     else:
         logs = sorted(glob.glob("results/self_play/interactions/game_*.jsonl"))
         if not logs:
             print("no game logs under results/self_play/interactions/")
             sys.exit(1)
         log = logs[-1]
+        rows = [json.loads(ln) for ln in open(log) if ln.strip()]
 
-    rows = [json.loads(l) for l in open(log) if l.strip()]
     complete = [r for r in rows if r.get("phase") == "game_complete"]
 
     print(f"log            : {log}")
@@ -52,7 +107,7 @@ def main() -> None:
                 if r.get("injector_outcome") in ("parse_failure", "truncation_filter")]
     inj_fail_pct = 100 * len(inj_fail) / len(complete) if complete else 0
     print(f"injector waste : {len(inj_fail)}/{len(complete)} = {inj_fail_pct:.0f}%   "
-          f"(informational; ~25-30% expected at 1024 budget, -1.5 pressures it down)")
+          f"(informational; ~25-35% expected early, -1.5 should pressure it down — see trend)")
 
     err = [r for r in complete if r.get("mode") == "error_injection" and r.get("judge_verdict")]
     same = [r for r in err if r.get("judge_verdict") == "SAME"]
@@ -79,6 +134,9 @@ def main() -> None:
         pos = sum(1 for x in ar if x > 0.001)
         print(f"assessor_reward: mean {mean:+.3f}   positive {pos}/{len(ar)} "
               f"({100*pos/len(ar):.0f}%)")
+
+    # ── injector adaptation trend ───────────────────────────────────────────
+    _injector_trend(complete)
 
     # ── verdict ─────────────────────────────────────────────────────────────
     print()
