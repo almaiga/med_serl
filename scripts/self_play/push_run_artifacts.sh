@@ -44,6 +44,10 @@ if [[ -z "$CKPTS" ]]; then
 fi
 for ck in $CKPTS; do
     step=$(basename "$ck" | sed 's/global_step_//')
+    if [[ -f "$ck/.hf_pushed" ]]; then
+        echo "skip: step $step already pushed+verified (marker $ck/.hf_pushed; delete it to force re-push)"
+        continue
+    fi
     hfdir="$ck/actor/huggingface"
     if [[ ! -d "$hfdir" ]]; then
         echo "FAIL: $ck has no actor/huggingface dir (hf_model not saved?)"
