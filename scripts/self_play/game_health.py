@@ -18,52 +18,118 @@ import json
 import sys
 
 
-def _injector_trend(complete: list, n_windows: int = 6) -> None:
-    """Chronological windows: is the injector learning to fit its budget?
+def _trend_verdict(vals: list, *, good: str) -> str:
+    """Compare first-half mean vs second-half mean of a row's windows.
 
-    THE metric to watch during the v7 run: if -1.5 on parse_failure teaches
-    the model to compress its thinking, waste%/at-cap% should FALL and mean
-    injector tokens should drift DOWN over training. If they stay flat, the
-    penalty is not shaping the injector and the wastage is a fixed tax.
+    good='down' → falling is healthy; good='up' → rising is healthy;
+    good='info' → direction reported without judgement.
     """
-    if len(complete) < n_windows * 4:
-        n_windows = max(1, len(complete) // 4)
-    if n_windows < 2:
+    vals = [v for v in vals if v is not None]
+    if len(vals) < 4:
+        return ""
+    half = len(vals) // 2
+    a = sum(vals[:half]) / half
+    b = sum(vals[half:]) / (len(vals) - half)
+    spread = max(abs(a), abs(b), 1e-9)
+    if abs(b - a) / spread < 0.15:
+        arrow, direction = "→", "flat"
+    elif b > a:
+        arrow, direction = "↑", "up"
+    else:
+        arrow, direction = "↓", "down"
+    if good == "info" or direction == "flat":
+        return arrow
+    return f"{arrow} {'good' if direction == good else 'BAD'}"
+
+
+def _per_role_trend(complete: list, win_size: int = 50, max_windows: int = 8) -> None:
+    """Transposed per-role trend: metrics as rows, time as columns (left→right).
+
+    Fixed-size windows (default 50 games) so cells stay comparable as the run
+    grows; shows the most recent `max_windows`. THE view for the v7 questions:
+    is the injector compressing (waste/at-cap/think-tok), who is winning
+    (inj-rew vs ass-rew), and is the judge holding (SAME-on-err)?
+    """
+    if len(complete) < win_size:
+        win_size = max(10, len(complete) // 3)
+    chunks = [complete[i:i + win_size]
+              for i in range(0, len(complete), win_size)]
+    chunks = [c for c in chunks if len(c) >= max(5, win_size // 3)][-max_windows:]
+    if len(chunks) < 2:
         return
-    size = len(complete) / n_windows
     caps = [r.get("injector_max_new_tokens") for r in complete
             if isinstance(r.get("injector_max_new_tokens"), (int, float))]
     cap = int(caps[-1]) if caps else 0
-    print()
-    print(f"--- per-role trend ({n_windows} chronological windows, cap={cap}) ---")
-    print(f"  {'window':<7} {'games':>5} {'waste%':>7} {'at-cap%':>8} "
-          f"{'mean-tok':>9} {'SAME-on-err%':>13} {'inj-rew':>8} {'ass-rew':>8}")
-    for w in range(n_windows):
-        chunk = complete[int(w * size):int((w + 1) * size)]
-        if not chunk:
-            continue
-        waste = sum(1 for r in chunk if r.get("injector_outcome")
-                    in ("parse_failure", "truncation_filter"))
-        toks = [r.get("injector_token_count") for r in chunk
-                if isinstance(r.get("injector_token_count"), (int, float))]
-        at_cap = sum(1 for t in toks if cap and t >= cap - 2)
-        err = [r for r in chunk if r.get("mode") == "error_injection"
+
+    def per_window(fn):
+        return [fn(c) for c in chunks]
+
+    def mean(xs):
+        xs = [x for x in xs if x is not None]
+        return sum(xs) / len(xs) if xs else None
+
+    waste = per_window(lambda c: 100 * sum(
+        1 for r in c if r.get("injector_outcome")
+        in ("parse_failure", "truncation_filter")) / len(c))
+    atcap = per_window(lambda c: (lambda t: 100 * sum(
+        1 for x in t if cap and x >= cap - 2) / max(len(t), 1))(
+        [r.get("injector_token_count") for r in c
+         if isinstance(r.get("injector_token_count"), (int, float))]))
+    itok = per_window(lambda c: mean(
+        [r.get("injector_token_count") for r in c
+         if isinstance(r.get("injector_token_count"), (int, float))]))
+    irew = per_window(lambda c: mean([r.get("injector_reward") for r in c]))
+    aexact = per_window(lambda c: 100 * sum(
+        1 for r in c if r.get("assessor_outcome") == "exact_match") / len(c))
+    arew = per_window(lambda c: mean([r.get("assessor_reward") for r in c]))
+
+    def same_pct(c):
+        err = [r for r in c if r.get("mode") == "error_injection"
                and r.get("judge_verdict")]
-        same = sum(1 for r in err if r.get("judge_verdict") == "SAME")
-        irew = [r.get("injector_reward") for r in chunk
-                if r.get("injector_reward") is not None]
-        arew = [r.get("assessor_reward") for r in chunk
-                if r.get("assessor_reward") is not None]
-        print(f"  {w + 1:<7} {len(chunk):>5} "
-              f"{100 * waste / len(chunk):>6.0f}% "
-              f"{100 * at_cap / max(len(toks), 1):>7.0f}% "
-              f"{sum(toks) / max(len(toks), 1):>9.0f} "
-              f"{100 * same / max(len(err), 1):>12.0f}% "
-              f"{sum(irew) / max(len(irew), 1):>+8.3f} "
-              f"{sum(arew) / max(len(arew), 1):>+8.3f}")
-    print("  (adapting: waste%/at-cap%/mean-tok falling."
-          " adversarial balance: inj-rew up while ass-rew down = injector"
-          " winning; both should oscillate, not diverge)")
+        if not err:
+            return None
+        return 100 * sum(1 for r in err
+                         if r.get("judge_verdict") == "SAME") / len(err)
+    same = per_window(same_pct)
+
+    def fmt(v, kind):
+        if v is None:
+            return "    -"
+        if kind == "pct":
+            return f"{v:4.0f}%"
+        if kind == "tok":
+            return f"{v:5.0f}"
+        return f"{v:+.2f}"
+
+    def row(label, vals, kind, good):
+        cells = " ".join(f"{fmt(v, kind):>6}" for v in vals)
+        print(f"  {label:<15} {cells}   {_trend_verdict(vals, good=good)}")
+
+    heads = " ".join(f"{'w' + str(i + 1):>6}" for i in range(len(chunks)))
+    print()
+    print(f"--- per-role trend (windows of {win_size} games, oldest→newest, "
+          f"injector cap={cap}) ---")
+    print(f"  {'':<15} {heads}   trend")
+    print("  INJECTOR")
+    row("  waste%", waste, "pct", "down")
+    row("  at-cap%", atcap, "pct", "down")
+    row("  think-tok", itok, "tok", "info")
+    row("  reward", irew, "rew", "info")
+    print("  ASSESSOR")
+    row("  exact%", aexact, "pct", "up")
+    row("  reward", arew, "rew", "up")
+    print("  JUDGE")
+    row("  SAME-on-err%", same, "pct", "down")
+
+    ib = mean(irew[-3:])
+    ab = mean(arew[-3:])
+    if ib is not None and ab is not None:
+        gap = ib - ab
+        who = ("injector ahead" if gap > 0.15
+               else "assessor ahead" if gap < -0.15 else "balanced")
+        print(f"  balance (last 3 windows): inj {ib:+.2f} vs ass {ab:+.2f} → {who}")
+    print("  (healthy: waste/at-cap ↓, exact%/ass-reward ↑, SAME-on-err < 15%,"
+          " rewards oscillate rather than diverge)")
 
 
 def main() -> None:
@@ -164,8 +230,8 @@ def main() -> None:
             line += f"   assigned(coupled) mean {sum(ia)/len(ia):+.3f}"
         print(line)
 
-    # ── injector adaptation trend ───────────────────────────────────────────
-    _injector_trend(complete)
+    # ── per-role adaptation trend ───────────────────────────────────────────
+    _per_role_trend(complete)
 
     # ── verdict ─────────────────────────────────────────────────────────────
     print()
