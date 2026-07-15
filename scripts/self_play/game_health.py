@@ -35,9 +35,9 @@ def _injector_trend(complete: list, n_windows: int = 6) -> None:
             if isinstance(r.get("injector_max_new_tokens"), (int, float))]
     cap = int(caps[-1]) if caps else 0
     print()
-    print(f"--- injector trend ({n_windows} chronological windows, cap={cap}) ---")
-    print(f"  {'window':<8} {'games':>5} {'waste%':>7} {'at-cap%':>8} "
-          f"{'mean-tok':>9} {'SAME-on-err%':>13} {'mean-reward':>12}")
+    print(f"--- per-role trend ({n_windows} chronological windows, cap={cap}) ---")
+    print(f"  {'window':<7} {'games':>5} {'waste%':>7} {'at-cap%':>8} "
+          f"{'mean-tok':>9} {'SAME-on-err%':>13} {'inj-rew':>8} {'ass-rew':>8}")
     for w in range(n_windows):
         chunk = complete[int(w * size):int((w + 1) * size)]
         if not chunk:
@@ -50,23 +50,40 @@ def _injector_trend(complete: list, n_windows: int = 6) -> None:
         err = [r for r in chunk if r.get("mode") == "error_injection"
                and r.get("judge_verdict")]
         same = sum(1 for r in err if r.get("judge_verdict") == "SAME")
-        rew = [r.get("assessor_reward") for r in chunk
-               if r.get("assessor_reward") is not None]
-        print(f"  {w + 1:<8} {len(chunk):>5} "
+        irew = [r.get("injector_reward") for r in chunk
+                if r.get("injector_reward") is not None]
+        arew = [r.get("assessor_reward") for r in chunk
+                if r.get("assessor_reward") is not None]
+        print(f"  {w + 1:<7} {len(chunk):>5} "
               f"{100 * waste / len(chunk):>6.0f}% "
               f"{100 * at_cap / max(len(toks), 1):>7.0f}% "
               f"{sum(toks) / max(len(toks), 1):>9.0f} "
               f"{100 * same / max(len(err), 1):>12.0f}% "
-              f"{sum(rew) / max(len(rew), 1):>+12.3f}")
-    print("  (want: waste%/at-cap% falling, mean-tok drifting down = model adapting)")
+              f"{sum(irew) / max(len(irew), 1):>+8.3f} "
+              f"{sum(arew) / max(len(arew), 1):>+8.3f}")
+    print("  (adapting: waste%/at-cap%/mean-tok falling."
+          " adversarial balance: inj-rew up while ass-rew down = injector"
+          " winning; both should oscillate, not diverge)")
 
 
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--all":
-        game_dir = sys.argv[2] if len(sys.argv) > 2 else "results/self_play/interactions"
+        # --all [dir] [--since YYYYMMDD_HHMMSS]: scope to the current run so
+        # old runs' logs don't pollute the trend windows.
+        args = sys.argv[2:]
+        since = ""
+        if "--since" in args:
+            i = args.index("--since")
+            since = args[i + 1]
+            args = args[:i] + args[i + 2:]
+        game_dir = args[0] if args else "results/self_play/interactions"
         logs = sorted(glob.glob(f"{game_dir}/game_*.jsonl"))
+        if since:
+            logs = [p for p in logs
+                    if p.split("game_")[-1].replace(".jsonl", "") >= since]
         if not logs:
-            print(f"no game logs under {game_dir}/")
+            print(f"no game logs under {game_dir}/"
+                  + (f" since {since}" if since else ""))
             sys.exit(1)
         log = f"{len(logs)} files: {logs[0]} .. {logs[-1]}"
         rows = []
@@ -135,6 +152,17 @@ def main() -> None:
         pos = sum(1 for x in ar if x > 0.001)
         print(f"assessor_reward: mean {mean:+.3f}   positive {pos}/{len(ar)} "
               f"({100*pos/len(ar):.0f}%)")
+    ir = [r.get("injector_reward") for r in complete
+          if r.get("injector_reward") is not None]
+    ia = [r.get("injector_assigned_reward") for r in complete
+          if r.get("injector_assigned_reward") is not None]
+    if ir:
+        ipos = sum(1 for x in ir if x > 0.001)
+        line = (f"injector_reward: mean {sum(ir)/len(ir):+.3f}   "
+                f"positive {ipos}/{len(ir)} ({100*ipos/len(ir):.0f}%)")
+        if ia:
+            line += f"   assigned(coupled) mean {sum(ia)/len(ia):+.3f}"
+        print(line)
 
     # ── injector adaptation trend ───────────────────────────────────────────
     _injector_trend(complete)

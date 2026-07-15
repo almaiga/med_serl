@@ -44,10 +44,17 @@ else
     echo "  (no trainer log found)"
 fi
 
-# ── Judge / game health + injector adaptation trend (pure Python, no jq) ─────
+# ── Judge / game health + per-role trend (pure Python, no jq) ────────────────
+# Scope game logs to the CURRENT run: derive its start from the trainer log
+# filename timestamp (autorestart wrapper keeps one log per run), so earlier
+# runs' games don't pollute the trend windows. Override with GAME_SINCE=... .
+SINCE="${GAME_SINCE:-}"
+if [[ -z "$SINCE" && -n "${TRAIN_LOG:-}" ]]; then
+    SINCE=$(basename "$TRAIN_LOG" | grep -oE '[0-9]{8}_[0-9]{6}' | head -1)
+fi
 echo
-echo "--- game health (all logs, chronological) ---"
-GH_OUT=$(python3 scripts/self_play/game_health.py --all "$GAME_DIR" 2>&1)
+echo "--- game health (run logs since ${SINCE:-beginning}, chronological) ---"
+GH_OUT=$(python3 scripts/self_play/game_health.py --all "$GAME_DIR" ${SINCE:+--since "$SINCE"} 2>&1)
 echo "$GH_OUT" | sed 's/^/  /'
 echo "$GH_OUT" | grep -q "VERDICT: SMOKE FAIL" && WARN=1
 
