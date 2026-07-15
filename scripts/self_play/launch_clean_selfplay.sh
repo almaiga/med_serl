@@ -51,6 +51,12 @@ export MAX_AUTORESTARTS="${MAX_AUTORESTARTS:-500}"
 export CHECKPOINT_RESTART_GRACE_SEC="${CHECKPOINT_RESTART_GRACE_SEC:-30}"
 export RUNNER_SCRIPT="${RUNNER_SCRIPT:-scripts/self_play/run_multiturn_training.sh}"
 
+# Checkpoint watcher: auto-start in its own screen session (START_WATCHER=0 to skip)
+export REPO_PREFIX="${REPO_PREFIX:-Abdine/qwen3-4b-medserl-v7-step}"
+export PRIVATE="${PRIVATE:-1}"
+START_WATCHER="${START_WATCHER:-1}"
+WATCHER_SESSION="medserl_ckpt_watcher"
+
 echo "=========================================================="
 echo " LAUNCH clean self-play v7"
 echo "   actor        : $ACTOR_MODEL"
@@ -58,15 +64,30 @@ echo "   judge        : $JUDGE_MODEL ($JUDGE_TYPE / $JUDGE_PROMPT_STYLE)"
 echo "   judge url    : $JUDGE_VLLM_URL"
 echo "   output       : $OUTPUT_DIR   resume=$RESUME_MODE  keep_all=$([[ $KEEP_ONLY_LATEST_CHECKPOINT == 0 ]] && echo yes)"
 echo "   batch/mini   : $TRAIN_BATCH_SIZE / $PPO_MINI_BATCH_SIZE   kl=$KL_COEF"
+echo "   ckpt watcher : ${REPO_PREFIX}<N>  private=$PRIVATE"
 echo "=========================================================="
-echo
-echo ">> In a SEPARATE terminal, start the verified checkpoint pusher NOW:"
-echo "   OUTPUT_DIR=$OUTPUT_DIR REPO_PREFIX=Abdine/qwen3-4b-medserl-v7-step \\"
-echo "     PRIVATE=1 bash scripts/self_play/checkpoint_watcher.sh"
-echo
-echo ">> And monitor with:"
-echo "   watch -n 30 bash scripts/self_play/monitor_training.sh"
-echo
-read -r -p "Checkpoint watcher started? Press Enter to launch training, Ctrl-C to abort... " _
 
-exec bash scripts/self_play/run_online_selfplay_autorestart.sh
+if [[ "$START_WATCHER" == "1" ]]; then
+    if ! command -v screen >/dev/null 2>&1; then
+        echo "ERROR: 'screen' not installed (apt-get install -y screen)"; exit 1
+    fi
+    if screen -list | grep -q "\.${WATCHER_SESSION}[[:space:]]"; then
+        echo ">> checkpoint watcher already running (screen -r ${WATCHER_SESSION})"
+    else
+        mkdir -p logs/screen
+        screen -L -Logfile "logs/screen/ckpt_watcher_$(date +%Y%m%d_%H%M%S).log" \
+            -dmS "$WATCHER_SESSION" bash -lc \
+            "OUTPUT_DIR=$(printf '%q' "$OUTPUT_DIR") REPO_PREFIX=$(printf '%q' "$REPO_PREFIX") PRIVATE=$(printf '%q' "$PRIVATE") bash scripts/self_play/checkpoint_watcher.sh"
+        echo ">> checkpoint watcher started in screen '${WATCHER_SESSION}'"
+    fi
+fi
+
+# Training: the autorestart wrapper self-launches into its own screen session
+# (AUTO_SCREEN=1 above), so this command returns and both jobs run detached.
+bash scripts/self_play/run_online_selfplay_autorestart.sh
+
+echo
+echo ">> Both running in screen. Useful commands:"
+echo "   screen -ls                                   # list sessions"
+echo "   screen -r ${WATCHER_SESSION}                 # attach watcher (Ctrl-A d to detach)"
+echo "   bash scripts/self_play/monitor_training.sh   # health snapshot"
