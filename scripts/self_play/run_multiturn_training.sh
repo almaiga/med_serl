@@ -83,6 +83,10 @@ export JUDGE_MODEL="${JUDGE_MODEL:-pfnet/Preferred-MedRECT-32B}"
 export JUDGE_TYPE="${JUDGE_TYPE:-detection}"
 export JUDGE_PROMPT_STYLE="${JUDGE_PROMPT_STYLE:-hint_v2}"
 export SIMPLE_JUDGE_WEIGHT="${SIMPLE_JUDGE_WEIGHT:-0.3}"
+# Thinking-on judge generates 500-2000 reasoning tokens per verdict on a 32B
+# model; rollout bursts queue past the old 60s default and retries amplify the
+# load. A slow success (one 180s wait) beats a fast failure (3x60s for nothing).
+export SIMPLE_JUDGE_TIMEOUT="${SIMPLE_JUDGE_TIMEOUT:-180}"
 export VLLM_USE_V1="${VLLM_USE_V1:-1}"
 
 if [ "$SMOKE" = "1" ]; then
